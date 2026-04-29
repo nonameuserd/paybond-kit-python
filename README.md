@@ -107,3 +107,14 @@ python3 scripts/verify_release.py
 ```
 
 This builds wheel and sdist artifacts, inspects them for stray local files, validates metadata/extras, and smoke-installs the built wheel in a temporary virtual environment.
+
+## Publish to PyPI
+
+From `kit/python`:
+
+```bash
+export MATURIN_PYPI_TOKEN="pypi-..."
+./scripts/publish_release.sh
+```
+
+This reruns release verification and then publishes the sdist and wheel with `maturin publish --sdist --non-interactive`.
