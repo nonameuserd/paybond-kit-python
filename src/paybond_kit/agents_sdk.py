@@ -1,7 +1,7 @@
 """
 OpenAI Agents SDK integration — capability verification guardrails bound to Harbor.
 
-Requires ``pip install --pre "paybond-kit[agents]"``.
+Requires ``pip install "paybond-kit[agents]"``.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise ImportError(
         "openai-agents is required for paybond_kit.agents_sdk. Install with "
-        '`pip install --pre "paybond-kit[agents]"`.'
+        '`pip install "paybond-kit[agents]"`.'
     ) from exc
 
 

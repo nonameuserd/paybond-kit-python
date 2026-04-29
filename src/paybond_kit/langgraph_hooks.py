@@ -1,7 +1,7 @@
 """
 LangGraph integration — async tool-call wrapper that verifies Harbor capabilities before execution.
 
-Requires ``pip install --pre "paybond-kit[langgraph]"``.
+Requires ``pip install "paybond-kit[langgraph]"``.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def paybond_awrap_tool_call_capability(
     except ImportError as exc:  # pragma: no cover
         raise ImportError(
             "langchain-core is required for paybond_kit.langgraph_hooks. "
-            'Install with `pip install --pre "paybond-kit[langgraph]"`.'
+            'Install with `pip install "paybond-kit[langgraph]"`.'
         ) from exc
 
     async def _awrap(

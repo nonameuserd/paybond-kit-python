@@ -4,10 +4,10 @@ Paybond Kit for Python provides a tenant-bound Harbor client, gateway-authentica
 
 It does **not** currently expose a first-class Signal client or Signal analytics/reputation API surface. Signal remains a separate platform surface today.
 
-This package is being prepared for the public prerelease line. Install the prerelease build with:
+Install the public package with:
 
 ```bash
-pip install --pre "paybond-kit[agents,langgraph]"
+pip install "paybond-kit[agents,langgraph]"
 ```
 
 ## Open source
