@@ -1,0 +1,51 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "paybond-kit"
+version = "0.2.0rc1"
+description = "Paybond Kit — Harbor client, evidence signing, and OpenAI Agents SDK hooks (MVP_PLAN.md §4.7)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+keywords = ["paybond", "harbor", "agents", "python", "escrow", "capabilities"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Rust",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = ["httpx>=0.27,<1"]
+
+[project.urls]
+Homepage = "https://github.com/nonameuserd/paybond-kit-python"
+Documentation = "https://github.com/nonameuserd/paybond-kit-python"
+Repository = "https://github.com/nonameuserd/paybond-kit-python.git"
+Issues = "https://github.com/nonameuserd/paybond-kit-python/issues"
+
+[project.optional-dependencies]
+agents = ["openai-agents>=0.14.2,<0.15"]
+langgraph = ["langgraph>=0.2.50", "langchain-core>=0.3.0"]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.24",
+  "respx>=0.21",
+  "langgraph>=0.2.50",
+  "langchain-core>=0.3.0",
+]
+
+[tool.maturin]
+manifest-path = "rust/Cargo.toml"
+module-name = "paybond_kit._native"
+python-source = "src"
+include = ["LICENSE"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
