@@ -117,4 +117,4 @@ export MATURIN_PYPI_TOKEN="pypi-..."
 ./scripts/publish_release.sh
 ```
 
-This reruns release verification and then publishes the sdist and wheel with `maturin publish --sdist --non-interactive`.
+This reruns release verification and then publishes the sdist and wheel with `maturin publish --non-interactive`.

@@ -20,4 +20,4 @@ if [[ -z "${MATURIN_PYPI_TOKEN:-}" ]]; then
 fi
 
 python3 "${ROOT}/scripts/verify_release.py"
-"${MATURIN_BIN}" publish --sdist --non-interactive
+"${MATURIN_BIN}" publish --non-interactive
