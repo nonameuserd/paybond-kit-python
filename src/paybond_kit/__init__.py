@@ -15,6 +15,11 @@ from paybond_kit.harbor import (
     VerifyCapabilityResult,
 )
 from paybond_kit.paybond import Paybond, PaybondIntents
+from paybond_kit.signal import (
+    GatewaySignalClient,
+    ServiceAccountSignalSession,
+    SignalHttpError,
+)
 from paybond_kit.signing import sign_payee_evidence_binding
 
 __all__ = [
@@ -25,7 +30,10 @@ __all__ = [
     "Paybond",
     "PaybondCapabilityBinding",
     "PaybondIntents",
+    "GatewaySignalClient",
     "ServiceAccountHarborSession",
+    "ServiceAccountSignalSession",
+    "SignalHttpError",
     "TenantBindingError",
     "VerifyCapabilityResult",
     "sign_payee_evidence_binding",

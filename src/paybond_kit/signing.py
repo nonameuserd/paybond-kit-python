@@ -44,7 +44,7 @@ def sign_payee_evidence_binding(
     except ImportError as exc:  # pragma: no cover - exercised when wheel lacks native
         raise ImportError(
             "paybond_kit._native is required for evidence signing. Install a published wheel with "
-            "`pip install --pre paybond-kit`, or from a checkout run `maturin develop` "
+            "`pip install paybond-kit`, or from a checkout run `maturin develop` "
             "(Rust toolchain required)."
         ) from exc
 

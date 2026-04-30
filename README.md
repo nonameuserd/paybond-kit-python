@@ -1,8 +1,6 @@
 # `paybond-kit`
 
-Paybond Kit for Python provides a tenant-bound Harbor client, gateway-authenticated service-account sessions, canonical signing for intent creation and evidence submission, tenant-scoped ledger provenance reads, plus first-party hooks for the OpenAI Agents SDK and LangGraph.
-
-It does **not** currently expose a first-class Signal client or Signal analytics/reputation API surface. Signal remains a separate platform surface today.
+Paybond Kit for Python provides a tenant-bound Harbor client, gateway-authenticated service-account sessions, canonical signing for intent creation and evidence submission, tenant-scoped ledger provenance reads, tenant-scoped Signal analytics and reputation reads, plus first-party hooks for the OpenAI Agents SDK and LangGraph.
 
 Install the public package with:
 
@@ -24,7 +22,7 @@ Published wheels bundle the `paybond_kit._native` extension. `maturin develop` i
 
 ## Tenant isolation
 
-Every session is bound to the tenant realm echoed by the gateway `POST /v1/auth/harbor-access` exchange.
+Every session is bound to the tenant realm echoed by gateway-authenticated service-account introspection and Harbor access exchange flows.
 
 - Do not pass tenant ids by hand for normal SDK usage.
 - Construct one `Paybond` session per tenant/service account.
@@ -66,6 +64,8 @@ asyncio.run(main())
 
 - `Paybond.open(...)` for gateway-authenticated, tenant-derived Harbor sessions
 - `HarborClient` for capability verification, intent creation, evidence submission, and ledger reads
+- `GatewaySignalClient` and `ServiceAccountSignalSession` for tenant-scoped Signal reads
+- `paybond.signal` on `Paybond` sessions opened from one service-account API key
 - `PaybondIntents` helpers for principal-side and payee-side signing flows
 - Optional extras for `agents` and `langgraph`
 
@@ -73,8 +73,6 @@ asyncio.run(main())
 
 ## What it does not include
 
-- No first-class `SignalClient`
-- No Signal reputation or analytics fetch API
 - No operator-tier settlement or console workflows
 
 ## Source build

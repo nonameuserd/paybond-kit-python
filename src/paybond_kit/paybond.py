@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 from paybond_kit.credentials import ServiceAccountHarborSession
 from paybond_kit.harbor import HarborClient
+from paybond_kit.signal import GatewaySignalClient
 
 
 @dataclass
@@ -46,7 +47,7 @@ class PaybondIntents:
         except ImportError as exc:
             raise ImportError(
                 "paybond_kit._native is required for intent creation. Install a published wheel "
-                "with `pip install --pre paybond-kit`, or from a checkout run "
+                "with `pip install paybond-kit`, or from a checkout run "
                 "`maturin develop` (Rust toolchain required)."
             ) from exc
 
@@ -120,6 +121,7 @@ class Paybond:
     """
 
     harbor: HarborClient
+    signal: GatewaySignalClient
     intents: PaybondIntents
     _session: ServiceAccountHarborSession
 
@@ -145,6 +147,12 @@ class Paybond:
         tenant = session.harbor.tenant_id
         return cls(
             harbor=session.harbor,
+            signal=GatewaySignalClient(
+                gateway_base_url,
+                tenant,
+                static_gateway_bearer_token=api_key,
+                max_retries=max_retries,
+            ),
             intents=PaybondIntents(session.harbor, tenant),
             _session=session,
         )
@@ -153,4 +161,5 @@ class Paybond:
         await self._session.rotate_harbor_token()
 
     async def aclose(self) -> None:
+        await self.signal.aclose()
         await self._session.aclose()

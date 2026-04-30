@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "paybond-kit"
-version = "0.1.0"
+version = "0.2.0"
 description = "Paybond Kit for Python: tenant-bound Harbor sessions, evidence signing, and agent-runtime hooks."
 readme = "README.md"
 requires-python = ">=3.11"
