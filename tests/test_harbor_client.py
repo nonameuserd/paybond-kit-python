@@ -91,6 +91,72 @@ async def test_verify_http_error_surfaces_status() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_fund_intent_returns_x402_challenge() -> None:
+    intent_id = uuid.uuid4()
+    respx.post(f"https://harbor.test/intents/{intent_id}/fund").mock(
+        return_value=httpx.Response(
+            402,
+            headers={"payment-required": "x402-requirements"},
+            json={
+                "intent_id": str(intent_id),
+                "tenant": "tenant-a",
+                "state": "open",
+                "settlement_rail": "x402_usdc_base",
+                "currency": "usd",
+                "amount_cents": 2000,
+                "funded": False,
+                "funding": {
+                    "settlement_rail": "x402_usdc_base",
+                    "harbor_fund_endpoint": f"/intents/{intent_id}/fund",
+                    "status": "authorization_pending",
+                    "payment_session_id": "paymentSession_test",
+                    "payment_url": "https://pay.coinbase.com/payment-sessions/paymentSession_test",
+                    "asset": "usdc",
+                    "network": "base",
+                },
+            },
+        )
+    )
+    client = HarborClient("https://harbor.test", "tenant-a")
+    try:
+        out = await client.fund_intent(intent_id)
+        assert out.status_code == 402
+        assert out.payment_required == "x402-requirements"
+        assert out.settlement_rail == "x402_usdc_base"
+        assert out.funding is not None
+        assert out.funding.payment_session_id == "paymentSession_test"
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_fund_intent_rejects_unknown_settlement_rail() -> None:
+    intent_id = uuid.uuid4()
+    respx.post(f"https://harbor.test/intents/{intent_id}/fund").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "intent_id": str(intent_id),
+                "tenant": "tenant-a",
+                "state": "open",
+                "settlement_rail": "bogus",
+                "currency": "usd",
+                "amount_cents": 2000,
+                "funded": False,
+            },
+        )
+    )
+    client = HarborClient("https://harbor.test", "tenant-a")
+    try:
+        with pytest.raises(HarborHttpError, match="must be one of"):
+            await client.fund_intent(intent_id)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_ledger_tip_rejects_tenant_mismatch() -> None:
     respx.get("https://harbor.test/ledger/v1/tip").mock(
         return_value=httpx.Response(

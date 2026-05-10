@@ -9,8 +9,11 @@ from paybond_kit.credentials import (
     ServiceAccountHarborSession,
 )
 from paybond_kit.harbor import (
+    FundIntentResult,
     HarborClient,
     HarborHttpError,
+    IntentFundingResult,
+    SettlementRail,
     TenantBindingError,
     VerifyCapabilityResult,
 )
@@ -25,8 +28,11 @@ from paybond_kit.signing import sign_payee_evidence_binding
 __all__ = [
     "GatewayAuthError",
     "GatewayHarborTokenProvider",
+    "FundIntentResult",
     "HarborClient",
     "HarborHttpError",
+    "IntentFundingResult",
+    "SettlementRail",
     "Paybond",
     "PaybondCapabilityBinding",
     "PaybondIntents",

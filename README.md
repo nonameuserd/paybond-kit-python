@@ -1,6 +1,6 @@
 # `paybond-kit`
 
-Paybond Kit for Python provides a tenant-bound Harbor client, gateway-authenticated service-account sessions, canonical signing for intent creation and evidence submission, tenant-scoped ledger provenance reads, tenant-scoped Signal analytics and reputation reads, plus first-party hooks for the OpenAI Agents SDK and LangGraph.
+Paybond Kit for Python provides a tenant-bound Harbor client, gateway-authenticated service-account sessions, canonical signing for intent creation and evidence submission, x402 / USDC-on-Base intent funding helpers, tenant-scoped ledger provenance reads, tenant-scoped Signal analytics and reputation reads, plus first-party hooks for the OpenAI Agents SDK and LangGraph.
 
 Install the public package with:
 
@@ -63,13 +63,15 @@ asyncio.run(main())
 ## What the package includes
 
 - `Paybond.open(...)` for gateway-authenticated, tenant-derived Harbor sessions
-- `HarborClient` for capability verification, intent creation, evidence submission, and ledger reads
+- `HarborClient` for capability verification, intent creation, x402 funding, evidence submission, and ledger reads
 - `GatewaySignalClient` and `ServiceAccountSignalSession` for tenant-scoped Signal reads
 - `paybond.signal` on `Paybond` sessions opened from one service-account API key
-- `PaybondIntents` helpers for principal-side and payee-side signing flows
+- `PaybondIntents` helpers for principal-side signing, x402 funding, and payee-side signing flows
 - Optional extras for `agents` and `langgraph`
 
 `allowed_tools` values are your own tool or operation names, not a Paybond-owned catalog. Harbor enforces string matching against whatever names you chose when creating the intent.
+
+`settlement_rail` on intent creation is only a rail request. Stripe destinations and x402 receive addresses stay tenant-owned server-side config and are never supplied by the SDK caller.
 
 ## What it does not include
 

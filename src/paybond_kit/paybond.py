@@ -8,13 +8,18 @@ from typing import Any, Mapping
 from uuid import UUID, uuid4
 
 from paybond_kit.credentials import ServiceAccountHarborSession
-from paybond_kit.harbor import HarborClient
+from paybond_kit.harbor import (
+    FundIntentResult,
+    HarborClient,
+    SettlementRail,
+    validate_settlement_rail,
+)
 from paybond_kit.signal import GatewaySignalClient
 
 
 @dataclass
 class PaybondIntents:
-    """Tenant-scoped intent helpers (principal-signed intent create, payee evidence)."""
+    """Tenant-scoped intent helpers (principal-signed intent create, x402 funding, payee evidence)."""
 
     _harbor: HarborClient
     _tenant_id: str
@@ -34,6 +39,7 @@ class PaybondIntents:
         allowed_tools: list[str],
         intent_id: UUID | None = None,
         predicate_ref: str = "",
+        settlement_rail: SettlementRail | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         """
@@ -41,7 +47,14 @@ class PaybondIntents:
 
         ``principal_signing_seed`` must be 32 bytes. ``tenant_id`` comes from the gateway exchange
         and must match ``x-tenant-id`` on the Harbor request (enforced by :class:`HarborClient`).
+        ``settlement_rail`` only requests one allowed rail; Harbor resolves the destination from
+        canonical tenant settlement config.
         """
+        if settlement_rail is not None:
+            settlement_rail = validate_settlement_rail(
+                settlement_rail,
+                field="settlement_rail",
+            )
         try:
             from paybond_kit import _native
         except ImportError as exc:
@@ -70,7 +83,28 @@ class PaybondIntents:
             json.dumps(allowed_tools),
         )
         body = json.loads(wire)
+        if settlement_rail is not None:
+            body["settlement_rail"] = settlement_rail
         return await self._harbor.create_intent(body, idempotency_key=idempotency_key)
+
+    async def fund(
+        self,
+        intent_id: UUID,
+        *,
+        payment_signature: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> FundIntentResult:
+        """
+        Advance Harbor ``POST /intents/{intent_id}/fund`` for x402 / USDC-on-Base intents.
+
+        When Harbor responds with ``402``, use the returned ``payment_required`` challenge with
+        your x402 wallet or facilitator, then retry with ``payment_signature=...``.
+        """
+        return await self._harbor.fund_intent(
+            intent_id,
+            payment_signature=payment_signature,
+            idempotency_key=idempotency_key,
+        )
 
     async def submit_evidence(
         self,

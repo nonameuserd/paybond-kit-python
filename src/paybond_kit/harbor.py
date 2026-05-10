@@ -6,11 +6,23 @@ import asyncio
 import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, TypeAlias
 from urllib.parse import urlencode
 from uuid import UUID
 
 import httpx
+
+SettlementRail: TypeAlias = Literal["stripe_connect", "x402_usdc_base"]
+_SETTLEMENT_RAIL_VALUES = frozenset({"stripe_connect", "x402_usdc_base"})
+
+
+def validate_settlement_rail(value: str, *, field: str = "settlement_rail") -> SettlementRail:
+    value = value.strip()
+    if value not in _SETTLEMENT_RAIL_VALUES:
+        raise ValueError(
+            f"{field} must be one of {', '.join(sorted(_SETTLEMENT_RAIL_VALUES))}"
+        )
+    return value
 
 
 @dataclass(frozen=True)
@@ -23,6 +35,47 @@ class VerifyCapabilityResult:
     intent_id: UUID
     code: str | None
     message: str | None
+
+
+@dataclass(frozen=True)
+class IntentFundingResult:
+    """Structured Harbor funding payload for x402 / USDC-on-Base intent funding."""
+
+    settlement_rail: SettlementRail
+    harbor_fund_endpoint: str | None
+    status: str | None
+    payment_session_id: str | None
+    payment_url: str | None
+    asset: str | None
+    network: str | None
+    authorization_id: str | None
+    capture_id: str | None
+    void_id: str | None
+    refund_id: str | None
+    source_address: str | None
+    target_address: str | None
+    authorization_expires_at: str | None
+    capture_expires_at: str | None
+    refund_expires_at: str | None
+    onchain_transaction_hashes: dict[str, list[str]] | None
+
+
+@dataclass(frozen=True)
+class FundIntentResult:
+    """Structured result for ``POST /intents/{intent_id}/fund``."""
+
+    status_code: int
+    payment_required: str | None
+    payment_response: str | None
+    intent_id: UUID
+    tenant: str
+    state: str
+    settlement_rail: SettlementRail
+    currency: str
+    amount_cents: int
+    funded: bool
+    capability_token: str | None
+    funding: IntentFundingResult | None
 
 
 class TenantBindingError(RuntimeError):
@@ -293,6 +346,131 @@ class HarborClient:
             body_text=response.text,
         )
 
+    async def fund_intent(
+        self,
+        intent_id: UUID,
+        *,
+        payment_signature: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> FundIntentResult:
+        """
+        Call ``POST /intents/{intent_id}/fund`` for x402 / USDC-on-Base funding.
+
+        Harbor returns:
+        - ``402`` with ``payment_required`` when a wallet or facilitator must sign
+        - ``202`` while authorization is pending
+        - ``200`` once the intent is funded
+        """
+        path = f"intents/{intent_id}/fund"
+        url = f"{self._base}{path}"
+        extra: dict[str, str] = {}
+        if idempotency_key is not None and idempotency_key.strip() != "":
+            extra["idempotency-key"] = idempotency_key.strip()
+        if payment_signature is not None and payment_signature.strip() != "":
+            extra["payment-signature"] = payment_signature.strip()
+        response = await self._post_json_with_retries(path, extra, {})
+        if response.status_code not in (200, 202, 402):
+            raise HarborHttpError(
+                f"Harbor fund intent HTTP {response.status_code}: {response.text}",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        body = response.json()
+        if not isinstance(body, dict):
+            raise HarborHttpError(
+                "Harbor fund intent response was not a JSON object",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+
+        tenant = str(body.get("tenant", ""))
+        echoed_intent_id = UUID(str(body.get("intent_id", "")))
+        if tenant != self._tenant:
+            raise TenantBindingError(
+                f"fund tenant mismatch: client={self._tenant!r} harbor={tenant!r}"
+            )
+        if echoed_intent_id != intent_id:
+            raise TenantBindingError(
+                f"fund intent mismatch: requested={intent_id} harbor={echoed_intent_id}"
+            )
+
+        state = body.get("state")
+        settlement_rail = body.get("settlement_rail")
+        currency = body.get("currency")
+        amount_cents = body.get("amount_cents")
+        if not isinstance(state, str) or not state.strip():
+            raise HarborHttpError(
+                "Harbor fund intent response missing state",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        if not isinstance(settlement_rail, str) or not settlement_rail.strip():
+            raise HarborHttpError(
+                "Harbor fund intent response missing settlement_rail",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        try:
+            settlement_rail = validate_settlement_rail(
+                settlement_rail,
+                field="Harbor fund intent response settlement_rail",
+            )
+        except ValueError as exc:
+            raise HarborHttpError(
+                str(exc),
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            ) from exc
+        if not isinstance(currency, str) or not currency.strip():
+            raise HarborHttpError(
+                "Harbor fund intent response missing currency",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        if not isinstance(amount_cents, int):
+            raise HarborHttpError(
+                "Harbor fund intent response missing amount_cents",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+
+        funding_raw = body.get("funding")
+        try:
+            funding = (
+                _parse_intent_funding_result(funding_raw)
+                if isinstance(funding_raw, dict)
+                else None
+            )
+        except ValueError as exc:
+            raise HarborHttpError(
+                f"Harbor fund intent response invalid: {exc}",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            ) from exc
+        capability_token = body.get("capability_token")
+        return FundIntentResult(
+            status_code=response.status_code,
+            payment_required=response.headers.get("payment-required"),
+            payment_response=response.headers.get("payment-response"),
+            intent_id=echoed_intent_id,
+            tenant=tenant,
+            state=state,
+            settlement_rail=settlement_rail,
+            currency=currency,
+            amount_cents=amount_cents,
+            funded=bool(body.get("funded")),
+            capability_token=capability_token if isinstance(capability_token, str) else None,
+            funding=funding,
+        )
+
     async def submit_evidence(
         self,
         intent_id: UUID,
@@ -473,6 +651,78 @@ class HarborClient:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+def _optional_nonempty_string(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _string_list(value: Any, *, field: str) -> list[str]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError(f"invalid {field}")
+    return [str(item) for item in value]
+
+
+def _parse_intent_funding_result(value: dict[str, Any]) -> IntentFundingResult:
+    onchain_raw = value.get("onchain_transaction_hashes")
+    onchain: dict[str, list[str]] | None = None
+    if onchain_raw is not None:
+        if not isinstance(onchain_raw, dict):
+            raise ValueError("invalid funding.onchain_transaction_hashes")
+        parsed: dict[str, list[str]] = {}
+        if "authorizations" in onchain_raw:
+            parsed["authorizations"] = _string_list(
+                onchain_raw["authorizations"],
+                field="funding.onchain_transaction_hashes.authorizations",
+            )
+        if "captures" in onchain_raw:
+            parsed["captures"] = _string_list(
+                onchain_raw["captures"],
+                field="funding.onchain_transaction_hashes.captures",
+            )
+        if "voids" in onchain_raw:
+            parsed["voids"] = _string_list(
+                onchain_raw["voids"],
+                field="funding.onchain_transaction_hashes.voids",
+            )
+        if "refunds" in onchain_raw:
+            parsed["refunds"] = _string_list(
+                onchain_raw["refunds"],
+                field="funding.onchain_transaction_hashes.refunds",
+            )
+        onchain = parsed
+
+    settlement_rail = value.get("settlement_rail")
+    if not isinstance(settlement_rail, str) or not settlement_rail.strip():
+        raise ValueError("invalid funding.settlement_rail")
+    settlement_rail = validate_settlement_rail(
+        settlement_rail,
+        field="funding.settlement_rail",
+    )
+
+    return IntentFundingResult(
+        settlement_rail=settlement_rail,
+        harbor_fund_endpoint=_optional_nonempty_string(value.get("harbor_fund_endpoint")),
+        status=_optional_nonempty_string(value.get("status")),
+        payment_session_id=_optional_nonempty_string(value.get("payment_session_id")),
+        payment_url=_optional_nonempty_string(value.get("payment_url")),
+        asset=_optional_nonempty_string(value.get("asset")),
+        network=_optional_nonempty_string(value.get("network")),
+        authorization_id=_optional_nonempty_string(value.get("authorization_id")),
+        capture_id=_optional_nonempty_string(value.get("capture_id")),
+        void_id=_optional_nonempty_string(value.get("void_id")),
+        refund_id=_optional_nonempty_string(value.get("refund_id")),
+        source_address=_optional_nonempty_string(value.get("source_address")),
+        target_address=_optional_nonempty_string(value.get("target_address")),
+        authorization_expires_at=_optional_nonempty_string(
+            value.get("authorization_expires_at")
+        ),
+        capture_expires_at=_optional_nonempty_string(value.get("capture_expires_at")),
+        refund_expires_at=_optional_nonempty_string(value.get("refund_expires_at")),
+        onchain_transaction_hashes=onchain,
+    )
 
 
 def _backoff_seconds(attempt: int) -> float:
