@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import random
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypedDict
 from urllib.parse import quote
 
 import httpx
@@ -30,6 +30,120 @@ class SignalHttpError(RuntimeError):
         self.status_code = status_code
         self.url = url
         self.body_text = body_text
+
+
+class SignalMetrics(TypedDict):
+    terminal_intents: int
+    released: int
+    refunded: int
+    disputed: int
+    success_rate_bps: int
+    dispute_rate_bps: int
+    refund_rate_bps: int
+    mean_latency_nanos: int
+    latency_sample_count: int
+    receipted_volume_cents: int
+
+
+class SignalConfidence(TypedDict):
+    band: str
+    support_score: int
+    summary: str
+
+
+class SignalSupportDepth(TypedDict):
+    band: str
+    terminal_intents: int
+    receipted_volume_cents: int
+    history_depth: int
+    latency_sample_count: int
+
+
+class SignalExplanationMetricDelta(TypedDict):
+    metric: str
+    previous: int
+    current: int
+    delta: int
+
+
+class SignalExplanationDelta(TypedDict):
+    basis: str
+    previous_score: int
+    score_delta: int
+    previous_ledger_watermark_seq: int
+    changed_metrics: list[SignalExplanationMetricDelta]
+    reason_codes_added: list[str]
+    reason_codes_removed: list[str]
+    summary: str
+
+
+class SignalSignedReceipt(TypedDict, total=False):
+    schema_version: int
+    receipt_version: str
+    tenant_id: str
+    operator_did: str
+    score_version: str
+    scoring_model: str
+    scoring_narrative: str
+    explanation_summary: str
+    ledger_watermark_seq: int
+    reason_codes: list[str]
+    confidence: SignalConfidence
+    support_depth: SignalSupportDepth
+    review_state: str
+    explanation_delta: SignalExplanationDelta
+    metrics: SignalMetrics
+    score: int
+    signing_algorithm: str
+    message_digest_hex: str
+    signing_public_key_hex: str
+    signature_hex: str
+
+
+class SignalReceiptEnvelope(TypedDict):
+    schema_version: int
+    updated_at: str
+    receipt: SignalSignedReceipt
+
+
+class SignalPortfolioOperator(TypedDict, total=False):
+    operator_did: str
+    receipt_version: str
+    score: int
+    ledger_watermark_seq: int
+    receipt_message_digest_hex: str
+    confidence: SignalConfidence
+    support_depth: SignalSupportDepth
+    review_state: str
+    explanation_delta: SignalExplanationDelta
+
+
+class SignalSignedPortfolioArtifact(TypedDict):
+    schema_version: int
+    artifact_version: str
+    kind: str
+    tenant_id: str
+    score_model_version: str
+    scoring_model: str
+    checkpoint_last_ledger_seq: int
+    operators: list[SignalPortfolioOperator]
+    signing_algorithm: str
+    message_digest_hex: str
+    signing_public_key_hex: str
+    signature_hex: str
+
+
+class SignalPortfolioSummary(TypedDict):
+    schema_version: int
+    tenant_id: str
+    score_model_version: str
+    scoring_model: str
+    checkpoint_last_ledger_seq: int
+    operator_count: int
+    average_score: int
+    total_terminal_intents: int
+    total_receipted_volume_cents: int
+    operators_under_review: int
 
 
 class GatewaySignalClient:
@@ -100,7 +214,7 @@ class GatewaySignalClient:
 
     async def get_reputation_receipt(
         self, operator_did: str, *, score_version: str | None = None
-    ) -> dict[str, Any] | None:
+    ) -> SignalReceiptEnvelope | None:
         query = f"?score_version={score_version}" if score_version else ""
         path = f"reputation/{quote(operator_did, safe='')}{query}"
         url = f"{self._base}{path}"
@@ -130,11 +244,11 @@ class GatewaySignalClient:
             raise RuntimeError(
                 f"signal receipt operator mismatch: requested={operator_did!r} gateway={echoed_operator!r}"
             )
-        return body
+        return body  # type: ignore[return-value]
 
     async def get_portfolio_summary(
         self, *, score_version: str | None = None
-    ) -> dict[str, Any]:
+    ) -> SignalPortfolioSummary:
         query = f"?score_version={score_version}" if score_version else ""
         path = f"signal/v1/portfolio/summary{query}"
         url = f"{self._base}{path}"
@@ -150,7 +264,27 @@ class GatewaySignalClient:
         if not isinstance(body, dict):
             raise RuntimeError("signal portfolio summary response was not a JSON object")
         self._assert_tenant(body, url=url)
-        return body
+        return body  # type: ignore[return-value]
+
+    async def get_signed_portfolio_artifact(
+        self, *, score_version: str | None = None
+    ) -> SignalSignedPortfolioArtifact:
+        query = f"?score_version={score_version}" if score_version else ""
+        path = f"signal/v1/portfolio/signed-export{query}"
+        url = f"{self._base}{path}"
+        response = await self._get_json_with_retries(path)
+        if response.status_code >= 400:
+            raise SignalHttpError(
+                f"Signal signed portfolio artifact HTTP {response.status_code}: {response.text}",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        body = response.json()
+        if not isinstance(body, dict):
+            raise RuntimeError("signal signed portfolio artifact response was not a JSON object")
+        self._assert_tenant(body, url=url)
+        return body  # type: ignore[return-value]
 
     async def get_operator_explanation(
         self, operator_did: str, *, score_version: str | None = None

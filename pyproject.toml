@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "paybond-kit"
-version = "0.3.0"
+version = "0.4.0"
 description = "Paybond Kit for Python: tenant-bound Harbor sessions, evidence signing, and agent-runtime hooks."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,10 +29,15 @@ Documentation = "https://github.com/nonameuserd/paybond-kit-python"
 Repository = "https://github.com/nonameuserd/paybond-kit-python.git"
 Issues = "https://github.com/nonameuserd/paybond-kit-python/issues"
 
+[project.scripts]
+paybond-mcp-server = "paybond_kit.mcp_server:main"
+
 [project.optional-dependencies]
 agents = ["openai-agents>=0.14.2,<0.15"]
 langgraph = ["langgraph>=0.2.50", "langchain-core>=0.3.0"]
+mcp = ["mcp>=1.27,<2"]
 dev = [
+  "mcp>=1.27,<2",
   "pytest>=8",
   "pytest-asyncio>=0.24",
   "respx>=0.21",

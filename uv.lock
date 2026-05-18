@@ -786,7 +786,7 @@ wheels = [
 
 [[package]]
 name = "paybond-kit"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
@@ -799,6 +799,7 @@ agents = [
 dev = [
     { name = "langchain-core" },
     { name = "langgraph" },
+    { name = "mcp" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "respx" },
@@ -806,6 +807,9 @@ dev = [
 langgraph = [
     { name = "langchain-core" },
     { name = "langgraph" },
+]
+mcp = [
+    { name = "mcp" },
 ]
 
 [package.metadata]
@@ -815,12 +819,14 @@ requires-dist = [
     { name = "langchain-core", marker = "extra == 'langgraph'", specifier = ">=0.3.0" },
     { name = "langgraph", marker = "extra == 'dev'", specifier = ">=0.2.50" },
     { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=0.2.50" },
+    { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.27,<2" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.27,<2" },
     { name = "openai-agents", marker = "extra == 'agents'", specifier = ">=0.14.2,<0.15" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "respx", marker = "extra == 'dev'", specifier = ">=0.21" },
 ]
-provides-extras = ["agents", "langgraph", "dev"]
+provides-extras = ["agents", "langgraph", "mcp", "dev"]
 
 [[package]]
 name = "pluggy"

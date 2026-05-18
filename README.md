@@ -64,14 +64,20 @@ asyncio.run(main())
 
 - `Paybond.open(...)` for gateway-authenticated, tenant-derived Harbor sessions
 - `HarborClient` for capability verification, intent creation, x402 funding, evidence submission, and ledger reads
-- `GatewaySignalClient` and `ServiceAccountSignalSession` for tenant-scoped Signal reads
+- Protocol-v2 helpers for mandate verification, replay-safe recognition proof verification, receipt reads, and A2A discovery
+- `GatewaySignalClient` and `ServiceAccountSignalSession` for tenant-scoped Signal reads and signed portfolio artifacts
 - `paybond.signal` on `Paybond` sessions opened from one service-account API key
 - `PaybondIntents` helpers for principal-side signing, x402 funding, and payee-side signing flows
 - Optional extras for `agents` and `langgraph`
+- Optional extra for `mcp` with the tenant-bound `paybond-mcp-server` CLI
 
 `allowed_tools` values are your own tool or operation names, not a Paybond-owned catalog. Harbor enforces string matching against whatever names you chose when creating the intent.
 
 `settlement_rail` on intent creation is only a rail request. Stripe destinations and x402 receive addresses stay tenant-owned server-side config and are never supplied by the SDK caller.
+
+The protocol-v2 surface is trust-first: signed mandates, recognition proofs, and receipts work across supported settlement adapters instead of treating any single rail as the product boundary.
+
+Gateway-backed protocol helpers raise `ProtocolHttpError` with parsed `error_code` and `error_message` fields when the gateway returns a JSON error envelope. Recognition-gated flows surface `unregistered_key`, `revoked_key`, `mandate_agent_key_mismatch`, and `protocol_binding_mismatch` explicitly.
 
 ## What it does not include
 
@@ -95,6 +101,7 @@ Use this path when you are editing the package itself or rebuilding the bundled 
 - Long-form docs: `docs/kit/`
 - Python quickstart: `docs/kit/quickstart-python.md`
 - Python SDK reference: `docs/kit/sdk-reference-python.md`
+- MCP server guide: `docs/kit/mcp-server.md`
 - OpenAI Agents example: `examples/paybond-kit-openai-agents-python/`
 - LangGraph example: `examples/paybond-kit-langgraph-python/`
 

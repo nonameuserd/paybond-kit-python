@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 from uuid import UUID, uuid4
 
+from paybond_kit.a2a import GatewayA2AClient
 from paybond_kit.credentials import ServiceAccountHarborSession
 from paybond_kit.harbor import (
     FundIntentResult,
@@ -14,6 +15,7 @@ from paybond_kit.harbor import (
     SettlementRail,
     validate_settlement_rail,
 )
+from paybond_kit.protocol import GatewayProtocolClient
 from paybond_kit.signal import GatewaySignalClient
 
 
@@ -156,6 +158,8 @@ class Paybond:
 
     harbor: HarborClient
     signal: GatewaySignalClient
+    a2a: GatewayA2AClient
+    protocol: GatewayProtocolClient
     intents: PaybondIntents
     _session: ServiceAccountHarborSession
 
@@ -187,6 +191,17 @@ class Paybond:
                 static_gateway_bearer_token=api_key,
                 max_retries=max_retries,
             ),
+            a2a=GatewayA2AClient(
+                gateway_base_url,
+                static_gateway_bearer_token=api_key,
+                max_retries=max_retries,
+            ),
+            protocol=GatewayProtocolClient(
+                gateway_base_url,
+                tenant,
+                static_gateway_bearer_token=api_key,
+                max_retries=max_retries,
+            ),
             intents=PaybondIntents(session.harbor, tenant),
             _session=session,
         )
@@ -195,5 +210,7 @@ class Paybond:
         await self._session.rotate_harbor_token()
 
     async def aclose(self) -> None:
+        await self.protocol.aclose()
+        await self.a2a.aclose()
         await self.signal.aclose()
         await self._session.aclose()
