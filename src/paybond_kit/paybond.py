@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 
 from paybond_kit.a2a import GatewayA2AClient
 from paybond_kit.credentials import ServiceAccountHarborSession
+from paybond_kit.fraud import GatewayFraudClient
 from paybond_kit.harbor import (
     FundIntentResult,
     HarborClient,
@@ -158,6 +159,7 @@ class Paybond:
 
     harbor: HarborClient
     signal: GatewaySignalClient
+    fraud: GatewayFraudClient
     a2a: GatewayA2AClient
     protocol: GatewayProtocolClient
     intents: PaybondIntents
@@ -191,6 +193,12 @@ class Paybond:
                 static_gateway_bearer_token=api_key,
                 max_retries=max_retries,
             ),
+            fraud=GatewayFraudClient(
+                gateway_base_url,
+                tenant,
+                static_gateway_bearer_token=api_key,
+                max_retries=max_retries,
+            ),
             a2a=GatewayA2AClient(
                 gateway_base_url,
                 static_gateway_bearer_token=api_key,
@@ -212,5 +220,6 @@ class Paybond:
     async def aclose(self) -> None:
         await self.protocol.aclose()
         await self.a2a.aclose()
+        await self.fraud.aclose()
         await self.signal.aclose()
         await self._session.aclose()

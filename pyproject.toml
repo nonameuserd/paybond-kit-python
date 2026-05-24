@@ -4,21 +4,42 @@ build-backend = "maturin"
 
 [project]
 name = "paybond-kit"
-version = "0.4.0"
+version = "0.5.0"
 description = "Paybond Kit for Python: tenant-bound Harbor sessions, evidence signing, and agent-runtime hooks."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
-keywords = ["paybond", "harbor", "agents", "python", "escrow", "capabilities"]
+keywords = [
+  "paybond",
+  "harbor",
+  "kit",
+  "agents",
+  "agent-runtime",
+  "agent-payments",
+  "escrow",
+  "intent-escrow",
+  "capabilities",
+  "capability-verification",
+  "tenant-bound",
+  "x402",
+  "usdc",
+  "mcp",
+  "reputation",
+  "python",
+]
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
+  "Intended Audience :: Financial and Insurance Industry",
+  "Intended Audience :: Information Technology",
   "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Rust",
+  "Topic :: Office/Business :: Financial",
+  "Topic :: Security",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = ["httpx>=0.27,<1"]

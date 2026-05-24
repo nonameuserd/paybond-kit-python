@@ -39,6 +39,8 @@ async def test_gateway_only_server_exposes_gateway_first_mutation_tools() -> Non
         assert "paybond_get_a2a_agent_card" in names
         assert "paybond_get_principal" in names
         assert "paybond_get_signed_portfolio_artifact" in names
+        assert "paybond_get_fraud_assessment" in names
+        assert "paybond_get_fraud_metrics" in names
         assert "paybond_verify_agent_mandate_v1" in names
         assert "paybond_import_agent_mandate_v1" in names
         assert "paybond_get_settlement_receipt_v1" in names
@@ -144,6 +146,118 @@ async def test_get_signed_portfolio_artifact_tool_returns_portable_document() ->
         _, structured = await server.call_tool("paybond_get_signed_portfolio_artifact", {})
         assert structured["tenant_id"] == "tenant-a"
         assert structured["kind"] == "paybond.signal.portfolio_snapshot"
+    finally:
+        await _close_server(server)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_fraud_assessment_tool_returns_operator_assessment() -> None:
+    respx.get("https://gateway.test/v1/auth/principal").mock(
+        return_value=httpx.Response(200, json={"tenant_id": "tenant-a"})
+    )
+    respx.get(
+        "https://gateway.test/signal/v1/operators/did%3Aexample%3Aalpha/review-status"
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "schema_version": 1,
+                "tenant_id": "tenant-a",
+                "operator_did": "did:example:alpha",
+                "score_model_version": "1.0",
+                "review_state": "open",
+                "review_reasons": ["FRAUD_REVIEW"],
+                "fraud_signals": [],
+                "fraud_assessment": {
+                    "fraud_signal_version": "1.0.4",
+                    "level": "high",
+                    "highest_severity": "high",
+                    "review_priority": "high",
+                    "signal_count": 1,
+                    "severe_signal_count": 1,
+                    "summary": "level=high",
+                },
+            },
+        )
+    )
+    server = build_mcp_server(
+        PaybondMCPSettings(
+            gateway_base_url="https://gateway.test",
+            api_key=_api_key(),
+        )
+    )
+    try:
+        _, structured = await server.call_tool(
+            "paybond_get_fraud_assessment",
+            {"operator_did": "did:example:alpha"},
+        )
+        structured = structured.get("result", structured)
+        assert structured["tenant_id"] == "tenant-a"
+        assert structured["operator_did"] == "did:example:alpha"
+        assert structured["fraud_assessment"]["level"] == "high"
+    finally:
+        await _close_server(server)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_get_fraud_metrics_tool_returns_tenant_metrics() -> None:
+    respx.get("https://gateway.test/v1/auth/principal").mock(
+        return_value=httpx.Response(200, json={"tenant_id": "tenant-a"})
+    )
+    respx.get("https://gateway.test/signal/v1/fraud/metrics?window=7d").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "schema_version": 1,
+                "tenant_id": "tenant-a",
+                "score_model_version": "1.0",
+                "fraud_signal_version": "1.0.4",
+                "window": "7d",
+                "window_started_at": "2026-05-16T00:00:00Z",
+                "window_ended_at": "2026-05-23T00:00:00Z",
+                "generated_at": "2026-05-23T00:00:00Z",
+                "flagged_operator_count": 2,
+                "critical_signal_count": 1,
+                "high_signal_count": 1,
+                "elevated_signal_count": 0,
+                "review_open_count": 1,
+                "review_load_count": 1,
+                "reviewed_count": 2,
+                "labeled_outcome_count": 1,
+                "confirmed_risk_count": 1,
+                "false_positive_count": 0,
+                "needs_more_evidence_count": 1,
+                "review_precision_bps": 10000,
+                "false_positive_rate_bps": 0,
+                "confirmed_risk_rate_bps": 5000,
+                "labeled_coverage_bps": 5000,
+                "median_time_to_review_seconds": 300,
+                "refund_burst_count": 1,
+                "dispute_cluster_count": 0,
+                "replay_appeal_abuse_count": 0,
+                "critical_signal_hold_candidate_count": 1,
+                "provider_signal_count": 0,
+                "stale_label_gap_seconds": 900,
+                "stale_signal_family_label_gap_count": 0,
+                "backtest_summary": "precision_bps=10000",
+            },
+        )
+    )
+    server = build_mcp_server(
+        PaybondMCPSettings(
+            gateway_base_url="https://gateway.test",
+            api_key=_api_key(),
+        )
+    )
+    try:
+        _, structured = await server.call_tool(
+            "paybond_get_fraud_metrics",
+            {"window": "7d"},
+        )
+        assert structured["tenant_id"] == "tenant-a"
+        assert structured["flagged_operator_count"] == 2
     finally:
         await _close_server(server)
 

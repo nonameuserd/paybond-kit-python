@@ -1,12 +1,25 @@
 # `paybond-kit`
 
-Paybond Kit for Python provides a tenant-bound Harbor client, gateway-authenticated service-account sessions, canonical signing for intent creation and evidence submission, x402 / USDC-on-Base intent funding helpers, tenant-scoped ledger provenance reads, tenant-scoped Signal analytics and reputation reads, plus first-party hooks for the OpenAI Agents SDK and LangGraph.
+Paybond Kit for Python is the PyPI package for tenant-bound Paybond integrations. It opens gateway-authenticated Harbor sessions, verifies capability tokens, signs intent and evidence payloads, funds x402 / USDC-on-Base intents, reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data, and includes optional agent-runtime integrations.
 
-Install the public package with:
+## Install
+
+Core SDK:
 
 ```bash
+pip install paybond-kit
+```
+
+Optional integrations:
+
+```bash
+pip install "paybond-kit[agents]"
+pip install "paybond-kit[langgraph]"
+pip install "paybond-kit[mcp]"
 pip install "paybond-kit[agents,langgraph]"
 ```
+
+Install only the extras your runtime needs. The `agents` extra enables the generic tool-guardrail helper for agent runtimes, `langgraph` enables the LangGraph tool wrapper, and `mcp` enables the `paybond-mcp-server` CLI.
 
 ## Open source
 
@@ -17,8 +30,25 @@ pip install "paybond-kit[agents,langgraph]"
 - Python 3.11+
 - A `paybond_sk_...` service-account API key
 - Reachable Gateway and Harbor base URLs
+- For capability verification: a funded intent id and a capability token minted for that intent
+- For intent creation or evidence submission: 32-byte Ed25519 signing seeds owned by your application
 
 Published wheels bundle the `paybond_kit._native` extension. `maturin develop` is only required when building from a local checkout.
+
+Minimal environment for the quick start:
+
+```bash
+export PAYBOND_GATEWAY_URL="https://gateway.example.com"
+export PAYBOND_HARBOR_URL="https://harbor.example.com"
+export PAYBOND_API_KEY="paybond_sk_..."
+```
+
+Optional, if you want the quick start to verify a capability:
+
+```bash
+export PAYBOND_INTENT_ID="00000000-0000-0000-0000-000000000000"
+export PAYBOND_CAPABILITY="base64-biscuit-token"
+```
 
 ## Tenant isolation
 
@@ -38,21 +68,36 @@ from uuid import UUID
 from paybond_kit import Paybond
 
 
+def required_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"missing {name}")
+    return value
+
+
 async def main() -> None:
     paybond = await Paybond.open(
-        gateway_base_url="https://gateway.example.com",
-        api_key=os.environ["PAYBOND_API_KEY"],
-        harbor_base_url="https://harbor.example.com",
+        gateway_base_url=required_env("PAYBOND_GATEWAY_URL"),
+        api_key=required_env("PAYBOND_API_KEY"),
+        harbor_base_url=required_env("PAYBOND_HARBOR_URL"),
     )
     try:
-        verified = await paybond.harbor.verify_capability(
-            intent_id=UUID(os.environ["PAYBOND_INTENT_ID"]),
-            token=os.environ["PAYBOND_CAPABILITY"],
-            operation="payments.capture",
-            requested_spend_cents=18_700,
-        )
-        if not verified.allow:
-            raise RuntimeError(f"verify denied: {verified.code or 'deny'} {verified.message or ''}")
+        print("tenant realm:", paybond.harbor.tenant_id)
+
+        intent_id = os.environ.get("PAYBOND_INTENT_ID")
+        capability = os.environ.get("PAYBOND_CAPABILITY")
+        if intent_id and capability:
+            verified = await paybond.harbor.verify_capability(
+                intent_id=UUID(intent_id),
+                token=capability,
+                operation="payments.capture",
+                requested_spend_cents=18_700,
+            )
+            if not verified.allow:
+                raise RuntimeError(
+                    f"verify denied: {verified.code or 'deny'} {verified.message or ''}".strip()
+                )
+            print("capability verified:", verified.audit_id)
     finally:
         await paybond.aclose()
 
@@ -62,14 +107,25 @@ asyncio.run(main())
 
 ## What the package includes
 
+Core SDK:
+
 - `Paybond.open(...)` for gateway-authenticated, tenant-derived Harbor sessions
 - `HarborClient` for capability verification, intent creation, x402 funding, evidence submission, and ledger reads
-- Protocol-v2 helpers for mandate verification, replay-safe recognition proof verification, receipt reads, and A2A discovery
-- `GatewaySignalClient` and `ServiceAccountSignalSession` for tenant-scoped Signal reads and signed portfolio artifacts
-- `paybond.signal` on `Paybond` sessions opened from one service-account API key
+- `paybond.signal` and `paybond.fraud` on `Paybond` sessions opened from one service-account API key
 - `PaybondIntents` helpers for principal-side signing, x402 funding, and payee-side signing flows
+
+Gateway and trust helpers:
+
+- `GatewaySignalClient` and `ServiceAccountSignalSession` for tenant-scoped Signal reads and signed portfolio artifacts
+- `GatewayFraudClient` and `ServiceAccountFraudSession` for tenant-scoped fraud assessments, review queues, review events, metrics, and release-gate config
+- Protocol-v2 helpers for mandate verification, replay-safe recognition proof verification, receipt reads, and A2A discovery
+
+Optional integrations:
+
 - Optional extras for `agents` and `langgraph`
 - Optional extra for `mcp` with the tenant-bound `paybond-mcp-server` CLI
+
+Agent-facing surfaces are model-provider agnostic. Paybond verifies tool operations and tenant scope, not whether a tool call came from OpenAI, Anthropic, Gemini, a local model, or another runtime.
 
 `allowed_tools` values are your own tool or operation names, not a Paybond-owned catalog. Harbor enforces string matching against whatever names you chose when creating the intent.
 
@@ -82,6 +138,7 @@ Gateway-backed protocol helpers raise `ProtocolHttpError` with parsed `error_cod
 ## What it does not include
 
 - No operator-tier settlement or console workflows
+- No model-provider-specific MCP wrapper; the MCP server is host-agnostic and works with any MCP-compatible runtime
 
 ## Source build
 
@@ -98,16 +155,17 @@ Use this path when you are editing the package itself or rebuilding the bundled 
 
 ## Docs
 
-- Long-form docs: `docs/kit/`
-- Python quickstart: `docs/kit/quickstart-python.md`
-- Python SDK reference: `docs/kit/sdk-reference-python.md`
-- MCP server guide: `docs/kit/mcp-server.md`
-- OpenAI Agents example: `examples/paybond-kit-openai-agents-python/`
-- LangGraph example: `examples/paybond-kit-langgraph-python/`
+- Long-form docs: https://paybond.ai/docs/kit
+- Python quickstart: https://paybond.ai/docs/kit/quickstart-python
+- Python SDK reference: https://paybond.ai/docs/kit/sdk-reference-python
+- Agent integrations: https://paybond.ai/docs/kit/agent-integrations
+- MCP server guide: https://paybond.ai/docs/kit/mcp-server
+- Agent runtime tutorial: https://paybond.ai/docs/kit/agent-runtime-tutorial-python
+- LangGraph patterns: https://paybond.ai/docs/kit/quickstart-python#agent-framework-integrations
 
 ## Release verification
 
-From `kit/python`:
+For maintainers working from a source checkout, release verification lives in this package directory:
 
 ```bash
 python3 scripts/verify_release.py
@@ -117,7 +175,7 @@ This builds wheel and sdist artifacts, inspects them for stray local files, vali
 
 ## Publish to PyPI
 
-From `kit/python`:
+For maintainers only:
 
 ```bash
 export MATURIN_PYPI_TOKEN="pypi-..."

@@ -14,6 +14,7 @@ from uuid import UUID
 import httpx
 
 from paybond_kit.credentials import ServiceAccountHarborSession
+from paybond_kit.fraud import GatewayFraudClient
 from paybond_kit.harbor import TenantBindingError
 from paybond_kit.signal import GatewaySignalClient
 
@@ -252,6 +253,8 @@ class PaybondMCPRuntime:
         self._principal_lock = asyncio.Lock()
         self._signal: GatewaySignalClient | None = None
         self._signal_lock = asyncio.Lock()
+        self._fraud: GatewayFraudClient | None = None
+        self._fraud_lock = asyncio.Lock()
         self._harbor: ServiceAccountHarborSession | None = None
         self._harbor_lock = asyncio.Lock()
 
@@ -260,6 +263,8 @@ class PaybondMCPRuntime:
             await self._harbor.aclose()
         if self._signal is not None:
             await self._signal.aclose()
+        if self._fraud is not None:
+            await self._fraud.aclose()
         await self._gateway.aclose()
 
     async def principal(self) -> dict[str, Any]:
@@ -285,6 +290,17 @@ class PaybondMCPRuntime:
                     max_retries=self._settings.max_retries,
                 )
             return self._signal
+
+    async def fraud(self) -> GatewayFraudClient:
+        async with self._fraud_lock:
+            if self._fraud is None:
+                self._fraud = GatewayFraudClient(
+                    self._settings.gateway_base_url,
+                    await self.tenant_id(),
+                    static_gateway_bearer_token=self._settings.api_key,
+                    max_retries=self._settings.max_retries,
+                )
+            return self._fraud
 
     async def harbor(self) -> ServiceAccountHarborSession:
         if self._settings.harbor_base_url is None:
@@ -682,6 +698,33 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
     ) -> dict[str, Any]:
         signal = await runtime.signal()
         return await signal.get_signed_portfolio_artifact(score_version=score_version)
+
+    @server.tool(
+        name="paybond_get_fraud_assessment",
+        description="Fetch the read-only fraud assessment for one tenant-scoped operator DID.",
+        structured_output=True,
+    )
+    async def paybond_get_fraud_assessment(
+        operator_did: str,
+        score_version: str | None = None,
+    ) -> dict[str, Any] | None:
+        fraud = await runtime.fraud()
+        return await fraud.get_fraud_assessment(
+            operator_did,
+            score_version=score_version,
+        )
+
+    @server.tool(
+        name="paybond_get_fraud_metrics",
+        description="Fetch tenant-scoped read-only fraud backtesting and monitoring metrics for a supported active window.",
+        structured_output=True,
+    )
+    async def paybond_get_fraud_metrics(
+        window: str | None = None,
+        score_version: str | None = None,
+    ) -> dict[str, Any]:
+        fraud = await runtime.fraud()
+        return await fraud.get_fraud_metrics(window=window, score_version=score_version)
 
     @server.tool(
         name="paybond_get_a2a_agent_card",
