@@ -33,6 +33,7 @@ from paybond_kit.harbor import (
 )
 from paybond_kit.paybond import Paybond, PaybondIntents
 from paybond_kit.protocol import (
+    AgentRecognitionProofV1,
     AgentMandateV1,
     GatewayProtocolClient,
     ImportAgentMandateV1Result,
@@ -88,6 +89,7 @@ __all__ = [
     "SignalSignedPortfolioArtifact",
     "SignalSignedReceipt",
     "ProtocolHttpError",
+    "AgentRecognitionProofV1",
     "AgentMandateV1",
     "SignedAgentMandateV1",
     "ProtocolTransportBindingV1",
