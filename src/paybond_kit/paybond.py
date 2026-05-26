@@ -40,9 +40,9 @@ class PaybondIntents:
         evidence_schema: Mapping[str, Any],
         deadline_rfc3339: str,
         allowed_tools: list[str],
+        settlement_rail: SettlementRail,
         intent_id: UUID | None = None,
         predicate_ref: str = "",
-        settlement_rail: SettlementRail | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         """
@@ -50,14 +50,13 @@ class PaybondIntents:
 
         ``principal_signing_seed`` must be 32 bytes. ``tenant_id`` comes from the gateway exchange
         and must match ``x-tenant-id`` on the Harbor request (enforced by :class:`HarborClient`).
-        ``settlement_rail`` only requests one allowed rail; Harbor resolves the destination from
-        canonical tenant settlement config.
+        ``settlement_rail`` is part of the principal signature and requests one allowed rail;
+        Harbor resolves the destination from canonical tenant settlement config.
         """
-        if settlement_rail is not None:
-            settlement_rail = validate_settlement_rail(
-                settlement_rail,
-                field="settlement_rail",
-            )
+        settlement_rail = validate_settlement_rail(
+            settlement_rail,
+            field="settlement_rail",
+        )
         try:
             from paybond_kit import _native
         except ImportError as exc:
@@ -84,10 +83,9 @@ class PaybondIntents:
             json.dumps(dict(predicate)),
             predicate_ref,
             json.dumps(allowed_tools),
+            settlement_rail,
         )
         body = json.loads(wire)
-        if settlement_rail is not None:
-            body["settlement_rail"] = settlement_rail
         return await self._harbor.create_intent(body, idempotency_key=idempotency_key)
 
     async def fund(

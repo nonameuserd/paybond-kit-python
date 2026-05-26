@@ -87,6 +87,7 @@ fn sign_payee_evidence_binding_json(
     predicate_json,
     predicate_ref,
     allowed_tools_json,
+    settlement_rail,
 ))]
 fn build_signed_create_intent_json(
     tenant_id: String,
@@ -102,25 +103,37 @@ fn build_signed_create_intent_json(
     predicate_json: String,
     predicate_ref: String,
     allowed_tools_json: String,
+    settlement_rail: String,
 ) -> PyResult<String> {
     if principal_seed.len() != 32 {
         return Err(PyValueError::new_err(
             "principal_seed must be exactly 32 bytes (Ed25519 signing key seed)",
         ));
     }
-    let intent_uuid = Uuid::parse_str(intent_id.trim()).map_err(|e| PyValueError::new_err(format!("intent_id: {e}")))?;
+    let intent_uuid = Uuid::parse_str(intent_id.trim())
+        .map_err(|e| PyValueError::new_err(format!("intent_id: {e}")))?;
     let budget: Value = serde_json::from_str(&budget_json)
         .map_err(|e| PyValueError::new_err(format!("budget_json: {e}")))?;
     let evidence_schema: Value = serde_json::from_str(&evidence_schema_json)
         .map_err(|e| PyValueError::new_err(format!("evidence_schema_json: {e}")))?;
-    let predicate: Value =
-        serde_json::from_str(&predicate_json).map_err(|e| PyValueError::new_err(format!("predicate_json: {e}")))?;
+    let predicate: Value = serde_json::from_str(&predicate_json)
+        .map_err(|e| PyValueError::new_err(format!("predicate_json: {e}")))?;
     let allowed_tools: Vec<String> = serde_json::from_str(&allowed_tools_json).map_err(|e| {
-        PyValueError::new_err(format!("allowed_tools_json must be a JSON array of strings: {e}"))
+        PyValueError::new_err(format!(
+            "allowed_tools_json must be a JSON array of strings: {e}"
+        ))
     })?;
     if allowed_tools.is_empty() {
         return Err(PyValueError::new_err("allowed_tools must be non-empty"));
     }
+    let settlement_rail = match settlement_rail.trim() {
+        "stripe_connect" | "x402_usdc_base" => settlement_rail.trim().to_string(),
+        _ => {
+            return Err(PyValueError::new_err(
+                "settlement_rail must be one of stripe_connect, x402_usdc_base",
+            ))
+        }
+    };
     let deadline_ot = OffsetDateTime::parse(
         &deadline_rfc3339,
         &time::format_description::well_known::Rfc3339,
@@ -140,6 +153,7 @@ fn build_signed_create_intent_json(
         &predicate,
         &predicate_ref,
         &allowed_tools,
+        &settlement_rail,
     )
     .map_err(PyValueError::new_err)?;
 
@@ -160,7 +174,8 @@ fn build_signed_create_intent_json(
         "evidence_schema": evidence_schema,
         "deadline": deadline_rfc3339,
         "predicate_dsl": predicate,
-        "signing_version": 2,
+        "settlement_rail": settlement_rail,
+        "signing_version": 4,
         "policy_binding": serde_json::Value::Null,
         "allowed_tools": allowed_tools,
     });

@@ -9,11 +9,11 @@ use uuid::Uuid;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum IntentSigningCommitment {
-    V2,
+    V4 { settlement_rail: String },
 }
 
 #[derive(Debug, Serialize)]
-struct IntentCreationSignV2 {
+struct IntentCreationSignV4 {
     version: u8,
     tenant_id: String,
     intent_id: Uuid,
@@ -28,10 +28,11 @@ struct IntentCreationSignV2 {
     predicate_dsl_digest: [u8; 32],
     predicate_ref: String,
     allowed_tools_digest: [u8; 32],
+    settlement_rail: String,
 }
 
-fn encode_intent_creation_sign_v2(payload: &IntentCreationSignV2) -> Result<Vec<u8>, String> {
-    bincode::serialize(payload).map_err(|e| format!("bincode intent sign payload: {e}"))
+fn encode_intent_creation_sign_v4(payload: &IntentCreationSignV4) -> Result<Vec<u8>, String> {
+    bincode::serialize(payload).map_err(|e| format!("bincode intent sign v4 payload: {e}"))
 }
 
 fn dsl_digest(dsl: Option<&Value>) -> [u8; 32] {
@@ -69,9 +70,9 @@ fn intent_creation_canonical_bytes(
 ) -> Result<Vec<u8>, String> {
     let dsl_d = dsl_digest(Some(effective_predicate_dsl));
     match commitment {
-        IntentSigningCommitment::V2 => {
-            let sign_payload = IntentCreationSignV2 {
-                version: 2,
+        IntentSigningCommitment::V4 { settlement_rail } => {
+            let sign_payload = IntentCreationSignV4 {
+                version: 4,
                 tenant_id: tenant_id.to_string(),
                 intent_id,
                 principal_did: principal_did.to_string(),
@@ -84,8 +85,9 @@ fn intent_creation_canonical_bytes(
                 predicate_dsl_digest: dsl_d,
                 predicate_ref: predicate_ref.to_string(),
                 allowed_tools_digest: allowed_tools_digest_val,
+                settlement_rail: settlement_rail.clone(),
             };
-            encode_intent_creation_sign_v2(&sign_payload)
+            encode_intent_creation_sign_v4(&sign_payload)
         }
     }
 }
@@ -104,6 +106,7 @@ pub(crate) fn intent_creation_sign_bytes_raw(
     predicate_dsl: &Value,
     predicate_ref: &str,
     allowed_tools: &[String],
+    settlement_rail: &str,
 ) -> Result<Vec<u8>, String> {
     let budget_digest = json_value_digest(budget);
     let evidence_schema_digest = json_value_digest(evidence_schema);
@@ -121,7 +124,9 @@ pub(crate) fn intent_creation_sign_bytes_raw(
         predicate_dsl,
         predicate_ref,
         allowed_digest,
-        &IntentSigningCommitment::V2,
+        &IntentSigningCommitment::V4 {
+            settlement_rail: settlement_rail.to_string(),
+        },
     )
 }
 
@@ -157,12 +162,13 @@ mod tests {
             &predicate_dsl,
             "",
             &allowed,
+            "stripe_connect",
         )
         .unwrap();
         let golden = hex::encode(bytes);
         assert_eq!(
             golden,
-            "020d0000000000000074656e616e742d676f6c64656e10000000000000007f2a9b1e2f664f4f9c6e8f4b8e85c4010f000000000000006469643a7072696e636970616c3a310b000000000000006469643a70617965653a31640000000000000003000000000000007573641400000000000000323033302d30312d30325431353a30343a30355afe9931de397b3817d06aeeb9877163cea9964adc4609fd0f1d715542a7f9c65769b254eacefe89c7b9b29305b06ec5983871a03cc20db0b4747905ecdddd7f29c366a1c38aad99370b12e7197e0fe5590e2d20763c9b4550a738313f484757e500000000000000006ba1f5bfb6266e05ed626dd8a1a318e8f9a38272186eb855bf717cede2c5b104"
+            "040d0000000000000074656e616e742d676f6c64656e10000000000000007f2a9b1e2f664f4f9c6e8f4b8e85c4010f000000000000006469643a7072696e636970616c3a310b000000000000006469643a70617965653a31640000000000000003000000000000007573641400000000000000323033302d30312d30325431353a30343a30355afe9931de397b3817d06aeeb9877163cea9964adc4609fd0f1d715542a7f9c65769b254eacefe89c7b9b29305b06ec5983871a03cc20db0b4747905ecdddd7f29c366a1c38aad99370b12e7197e0fe5590e2d20763c9b4550a738313f484757e500000000000000006ba1f5bfb6266e05ed626dd8a1a318e8f9a38272186eb855bf717cede2c5b1040e000000000000007374726970655f636f6e6e656374"
         );
     }
 }
