@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "paybond-kit"
-version = "0.7.0"
+version = "0.7.1"
 description = "Paybond Kit for Python: hosted Gateway sessions, evidence signing, agent-runtime hooks, and Stripe Connect or x402 / USDC-on-Base settlement."
 readme = "README.md"
 requires-python = ">=3.11"
