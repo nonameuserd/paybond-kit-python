@@ -55,6 +55,19 @@ from paybond_kit.signal import (
     SignalSignedReceipt,
 )
 from paybond_kit.signing import sign_payee_evidence_binding
+from paybond_kit.spend_guard import (
+    PaybondSpendDeniedError,
+    PaybondSpendGuard,
+    authorize_spend,
+    guard_tool,
+    paybond_anthropic_tool_spend_guard,
+    paybond_claude_tool_spend_guard,
+    paybond_gemini_tool_spend_guard,
+    paybond_google_ai_tool_spend_guard,
+    paybond_langgraph_tool_spend_guard,
+    paybond_mcp_tool_spend_guard,
+    paybond_openai_tool_spend_guard,
+)
 
 __all__ = [
     "A2AHttpError",
@@ -73,6 +86,8 @@ __all__ = [
     "Paybond",
     "PaybondCapabilityBinding",
     "PaybondIntents",
+    "PaybondSpendDeniedError",
+    "PaybondSpendGuard",
     "GatewaySignalClient",
     "FraudHttpError",
     "ServiceAccountFraudSession",
@@ -101,5 +116,14 @@ __all__ = [
     "VerifyProtocolReceiptV1Result",
     "TenantBindingError",
     "VerifyCapabilityResult",
+    "authorize_spend",
+    "guard_tool",
+    "paybond_anthropic_tool_spend_guard",
+    "paybond_claude_tool_spend_guard",
+    "paybond_gemini_tool_spend_guard",
+    "paybond_google_ai_tool_spend_guard",
+    "paybond_langgraph_tool_spend_guard",
+    "paybond_mcp_tool_spend_guard",
+    "paybond_openai_tool_spend_guard",
     "sign_payee_evidence_binding",
 ]

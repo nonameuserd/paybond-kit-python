@@ -94,6 +94,9 @@ class PaybondIntents:
             idempotency_key=idempotency_key,
         )
 
+    async def create_spend_intent(self, **kwargs: Any) -> dict[str, Any]:
+        return await self.create(**kwargs)
+
     async def fund(
         self,
         intent_id: UUID,
@@ -228,3 +231,30 @@ class Paybond:
         await self.a2a.aclose()
         await self.fraud.aclose()
         await self.signal.aclose()
+
+    def spend_guard(self, intent_id: UUID, capability_token: str):
+        from paybond_kit.capability_binding import PaybondCapabilityBinding
+        from paybond_kit.spend_guard import PaybondSpendGuard
+
+        return PaybondSpendGuard(
+            PaybondCapabilityBinding(
+                harbor=self.harbor,
+                intent_id=intent_id,
+                capability_token=capability_token,
+            )
+        )
+
+    async def authorize_spend(
+        self,
+        *,
+        intent_id: UUID,
+        token: str,
+        operation: str,
+        requested_spend_cents: int = 0,
+    ):
+        return await self.harbor.authorize_spend(
+            intent_id=intent_id,
+            token=token,
+            operation=operation,
+            requested_spend_cents=requested_spend_cents,
+        )

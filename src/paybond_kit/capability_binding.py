@@ -20,3 +20,27 @@ class PaybondCapabilityBinding:
     harbor: HarborClient | GatewayHarborClient
     intent_id: UUID
     capability_token: str
+
+    async def verify_spend_capability(
+        self,
+        *,
+        operation: str,
+        requested_spend_cents: int = 0,
+    ):
+        return await self.harbor.verify_capability(
+            intent_id=self.intent_id,
+            token=self.capability_token,
+            operation=operation,
+            requested_spend_cents=requested_spend_cents,
+        )
+
+    async def authorize_spend(
+        self,
+        *,
+        operation: str,
+        requested_spend_cents: int = 0,
+    ):
+        return await self.verify_spend_capability(
+            operation=operation,
+            requested_spend_cents=requested_spend_cents,
+        )

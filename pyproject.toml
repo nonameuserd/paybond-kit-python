@@ -4,8 +4,8 @@ build-backend = "maturin"
 
 [project]
 name = "paybond-kit"
-version = "0.7.1"
-description = "Paybond Kit for Python: hosted Gateway sessions, evidence signing, agent-runtime hooks, and Stripe Connect or x402 / USDC-on-Base settlement."
+version = "0.8.0"
+description = "Paybond Kit for Python: agent spend controls, hosted Gateway sessions, evidence signing, agent-runtime hooks, and Stripe Connect or x402 / USDC-on-Base settlement."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
@@ -15,6 +15,15 @@ keywords = [
   "kit",
   "agents",
   "agent-runtime",
+  "agent-spend-controls",
+  "ai-agent-budget",
+  "delegated-spend",
+  "spend-guardrails",
+  "tool-call-spend-limits",
+  "openai-agents",
+  "gemini",
+  "claude",
+  "anthropic",
   "agent-payments",
   "escrow",
   "intent-escrow",
@@ -51,6 +60,7 @@ Repository = "https://github.com/nonameuserd/paybond-kit-python.git"
 Issues = "https://github.com/nonameuserd/paybond-kit-python/issues"
 
 [project.scripts]
+paybond-kit-init = "paybond_kit.init:main"
 paybond-mcp-server = "paybond_kit.mcp_server:main"
 
 [project.optional-dependencies]

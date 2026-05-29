@@ -590,6 +590,27 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         )
 
     @server.tool(
+        name="paybond_authorize_agent_spend",
+        description=(
+            "Authorize delegated agent spend before a side-effecting tool, paid API, "
+            "vendor action, or settlement workflow executes."
+        ),
+        structured_output=True,
+    )
+    async def paybond_authorize_agent_spend(
+        intent_id: str,
+        token: str,
+        operation: str,
+        requested_spend_cents: int = 0,
+    ) -> dict[str, Any]:
+        return await runtime.verify_capability(
+            intent_id=UUID(intent_id),
+            token=token,
+            operation=operation,
+            requested_spend_cents=requested_spend_cents,
+        )
+
+    @server.tool(
         name="paybond_list_intents",
         description=(
             "List tenant-scoped Harbor intents through the gateway operator view. "
@@ -799,6 +820,26 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         )
 
     @server.tool(
+        name="paybond_create_spend_intent",
+        description=(
+            "Create a signed Paybond spend intent through the gateway /harbor route. "
+            "Use this when an agent workflow needs bounded budget, allowed operations, "
+            "evidence, and settlement review."
+        ),
+        structured_output=True,
+    )
+    async def paybond_create_spend_intent(
+        body: dict[str, Any],
+        recognition_proof: dict[str, Any],
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        return await runtime.create_harbor_intent(
+            body=body,
+            recognition_proof=recognition_proof,
+            idempotency_key=idempotency_key,
+        )
+
+    @server.tool(
         name="paybond_fund_intent",
         description=(
             "Advance Harbor funding through the gateway /harbor path with a replay-safe "
@@ -827,6 +868,27 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         structured_output=True,
     )
     async def paybond_submit_evidence(
+        intent_id: str,
+        body: dict[str, Any],
+        recognition_proof: dict[str, Any],
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        return await runtime.submit_harbor_evidence(
+            UUID(intent_id),
+            body=body,
+            recognition_proof=recognition_proof,
+            idempotency_key=idempotency_key,
+        )
+
+    @server.tool(
+        name="paybond_submit_spend_evidence",
+        description=(
+            "Submit signed evidence for a Paybond spend intent so release, refund, "
+            "review, and receipt generation use the same audit-ready record."
+        ),
+        structured_output=True,
+    )
+    async def paybond_submit_spend_evidence(
         intent_id: str,
         body: dict[str, Any],
         recognition_proof: dict[str, Any],

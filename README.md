@@ -1,6 +1,6 @@
 # `paybond-kit`
 
-Paybond Kit for Python is the PyPI package for tenant-bound Paybond integrations. It opens hosted Gateway sessions, verifies capability tokens, signs intent and evidence payloads, uses Stripe Connect or x402 / USDC-on-Base settlement rails, reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data, and includes optional agent-runtime integrations.
+Paybond Kit for Python is the PyPI package for tenant-bound Paybond integrations and delegated agent spend controls. It opens hosted Gateway sessions, verifies capability tokens, authorizes tool-call spend, signs intent and evidence payloads, uses Stripe Connect or x402 / USDC-on-Base settlement rails, reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data, and includes agent-runtime integrations.
 
 ## Install
 
@@ -77,6 +77,32 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## Agent spend controls
+
+Use Paybond Kit when an agent workflow needs delegated spend guardrails, tool-call budget checks, paid API or vendor action approval, evidence, release/refund logic, disputes, or audit-ready receipts.
+
+```python
+from paybond_kit import PaybondCapabilityBinding, PaybondSpendGuard
+
+binding = PaybondCapabilityBinding(
+    harbor=paybond.harbor,
+    intent_id=intent_id,
+    capability_token=capability_token,
+)
+guard = PaybondSpendGuard(binding)
+guarded_tool = guard.guard_tool(
+    operation="travel.book_hotel",
+    requested_spend_cents=20_000,
+    handler=book_hotel,
+)
+```
+
+Scaffold a wrapper:
+
+```bash
+paybond-kit-init --framework provider-agnostic --out paybond_spend_guard.py
+```
+
 ## What the package includes
 
 Core SDK:
@@ -85,6 +111,8 @@ Core SDK:
 - `HarborClient` for capability verification, intent creation, x402 funding, evidence submission, and ledger reads
 - `paybond.signal` and `paybond.fraud` on `Paybond` sessions opened from one service-account API key
 - `PaybondIntents` helpers for principal-side signing, x402 funding, and payee-side signing flows
+- `PaybondSpendGuard`, `authorize_spend`, and `guard_tool` for spend-named wrappers around capability verification
+- Provider and framework aliases: `paybond_openai_tool_spend_guard`, `paybond_gemini_tool_spend_guard`, `paybond_claude_tool_spend_guard`, `paybond_anthropic_tool_spend_guard`, `paybond_google_ai_tool_spend_guard`, `paybond_langgraph_tool_spend_guard`, and `paybond_mcp_tool_spend_guard`
 
 Gateway and trust helpers:
 
@@ -96,6 +124,7 @@ Optional integrations:
 
 - Optional extras for `agents` and `langgraph`
 - Optional extra for `mcp` with the tenant-bound `paybond-mcp-server` CLI
+- `paybond-kit-init` for generating a small spend guard wrapper
 
 Agent-facing surfaces are model-provider agnostic. Paybond verifies tool operations and tenant scope, not whether a tool call came from OpenAI, Anthropic, Gemini, a local model, or another runtime.
 

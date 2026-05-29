@@ -289,6 +289,36 @@ class HarborClient:
             message=body.get("message"),
         )
 
+    async def verify_spend_capability(
+        self,
+        *,
+        intent_id: UUID,
+        token: str,
+        operation: str,
+        requested_spend_cents: int = 0,
+    ) -> VerifyCapabilityResult:
+        return await self.verify_capability(
+            intent_id=intent_id,
+            token=token,
+            operation=operation,
+            requested_spend_cents=requested_spend_cents,
+        )
+
+    async def authorize_spend(
+        self,
+        *,
+        intent_id: UUID,
+        token: str,
+        operation: str,
+        requested_spend_cents: int = 0,
+    ) -> VerifyCapabilityResult:
+        return await self.verify_capability(
+            intent_id=intent_id,
+            token=token,
+            operation=operation,
+            requested_spend_cents=requested_spend_cents,
+        )
+
     async def create_intent(
         self,
         body: dict[str, Any],
@@ -803,6 +833,36 @@ class GatewayHarborClient:
             intent_id=rid,
             code=body.get("code"),
             message=body.get("message"),
+        )
+
+    async def verify_spend_capability(
+        self,
+        *,
+        intent_id: UUID,
+        token: str,
+        operation: str,
+        requested_spend_cents: int = 0,
+    ) -> VerifyCapabilityResult:
+        return await self.verify_capability(
+            intent_id=intent_id,
+            token=token,
+            operation=operation,
+            requested_spend_cents=requested_spend_cents,
+        )
+
+    async def authorize_spend(
+        self,
+        *,
+        intent_id: UUID,
+        token: str,
+        operation: str,
+        requested_spend_cents: int = 0,
+    ) -> VerifyCapabilityResult:
+        return await self.verify_capability(
+            intent_id=intent_id,
+            token=token,
+            operation=operation,
+            requested_spend_cents=requested_spend_cents,
         )
 
     async def create_intent(

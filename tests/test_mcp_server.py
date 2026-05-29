@@ -45,8 +45,11 @@ async def test_gateway_only_server_exposes_gateway_first_mutation_tools() -> Non
         assert "paybond_import_agent_mandate_v1" in names
         assert "paybond_get_settlement_receipt_v1" in names
         assert "paybond_verify_protocol_receipt_v1" in names
+        assert "paybond_authorize_agent_spend" in names
         assert "paybond_create_intent" in names
+        assert "paybond_create_spend_intent" in names
         assert "paybond_submit_evidence" in names
+        assert "paybond_submit_spend_evidence" in names
         assert "paybond_create_intent_legacy" not in names
     finally:
         await _close_server(server)
