@@ -7,9 +7,11 @@ import pytest
 import respx
 
 from paybond_kit import (
-    PaybondCapabilityBinding,
     PaybondSpendDeniedError,
     PaybondSpendGuard,
+    guard_tool,
+    paybond_agent_tool_spend_guard,
+    paybond_runtime_neutral_tool_spend_guard,
 )
 from paybond_kit.harbor import HarborClient
 
@@ -41,11 +43,9 @@ async def test_spend_guard_calls_handler_after_allow() -> None:
 
     try:
         guard = PaybondSpendGuard(
-            PaybondCapabilityBinding(
-                harbor=harbor,
-                intent_id=intent_id,
-                capability_token="Cg==",
-            )
+            harbor=harbor,
+            intent_id=intent_id,
+            capability_token="Cg==",
         )
         guarded = guard.guard_tool(
             operation="travel.book_hotel",
@@ -86,11 +86,9 @@ async def test_spend_guard_rejects_before_handler_on_deny() -> None:
 
     try:
         guard = PaybondSpendGuard(
-            PaybondCapabilityBinding(
-                harbor=harbor,
-                intent_id=intent_id,
-                capability_token="Cg==",
-            )
+            harbor=harbor,
+            intent_id=intent_id,
+            capability_token="Cg==",
         )
         guarded = guard.guard_tool(operation="travel.book_hotel", handler=tool)
         with pytest.raises(PaybondSpendDeniedError):
@@ -98,3 +96,8 @@ async def test_spend_guard_rejects_before_handler_on_deny() -> None:
         assert called is False
     finally:
         await harbor.aclose()
+
+
+def test_runtime_neutral_guard_aliases() -> None:
+    assert paybond_agent_tool_spend_guard is guard_tool
+    assert paybond_runtime_neutral_tool_spend_guard is guard_tool

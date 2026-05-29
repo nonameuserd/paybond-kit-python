@@ -35,6 +35,7 @@ async def test_gateway_only_server_exposes_gateway_first_mutation_tools() -> Non
     )
     try:
         tools = await server.list_tools()
+        tool_by_name = {tool.name: tool for tool in tools}
         names = {tool.name for tool in tools}
         assert "paybond_get_a2a_agent_card" in names
         assert "paybond_get_principal" in names
@@ -51,6 +52,18 @@ async def test_gateway_only_server_exposes_gateway_first_mutation_tools() -> Non
         assert "paybond_submit_evidence" in names
         assert "paybond_submit_spend_evidence" in names
         assert "paybond_create_intent_legacy" not in names
+        assert (
+            "Provider-agnostic spend gate"
+            in tool_by_name["paybond_authorize_agent_spend"].description
+        )
+        assert (
+            "intent_id and capability_token"
+            in tool_by_name["paybond_create_spend_intent"].description
+        )
+        assert (
+            "paybond_authorize_agent_spend"
+            in tool_by_name["paybond_fund_intent"].description
+        )
     finally:
         await _close_server(server)
 

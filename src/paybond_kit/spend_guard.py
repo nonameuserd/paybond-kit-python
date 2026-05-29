@@ -5,13 +5,30 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, ParamSpec, TypeVar
+from typing import Any, ParamSpec, Protocol, TypeVar
+from uuid import UUID
 
-from paybond_kit.capability_binding import PaybondCapabilityBinding
 from paybond_kit.harbor import VerifyCapabilityResult
 
 P = ParamSpec("P")
 R = TypeVar("R")
+
+
+class _CapabilityVerifier(Protocol):
+    async def verify_capability(
+        self,
+        *,
+        intent_id: UUID,
+        token: str,
+        operation: str,
+        requested_spend_cents: int = 0,
+    ) -> VerifyCapabilityResult: ...
+
+
+class _SpendGuardSource(Protocol):
+    harbor: _CapabilityVerifier
+    intent_id: UUID
+    capability_token: str
 
 
 class PaybondSpendDeniedError(RuntimeError):
@@ -23,11 +40,33 @@ class PaybondSpendDeniedError(RuntimeError):
         self.result = result
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class PaybondSpendGuard:
     """Authorize delegated agent spend before side-effecting tool work runs."""
 
-    binding: PaybondCapabilityBinding
+    harbor: _CapabilityVerifier
+    intent_id: UUID
+    capability_token: str
+
+    def __init__(
+        self,
+        source: _SpendGuardSource | None = None,
+        *,
+        harbor: _CapabilityVerifier | None = None,
+        intent_id: UUID | None = None,
+        capability_token: str | None = None,
+    ) -> None:
+        if source is not None:
+            if harbor is not None or intent_id is not None or capability_token is not None:
+                raise ValueError("pass either source or harbor/intent_id/capability_token")
+            harbor = source.harbor
+            intent_id = source.intent_id
+            capability_token = source.capability_token
+        if harbor is None or intent_id is None or capability_token is None:
+            raise ValueError("harbor, intent_id, and capability_token are required")
+        object.__setattr__(self, "harbor", harbor)
+        object.__setattr__(self, "intent_id", intent_id)
+        object.__setattr__(self, "capability_token", capability_token)
 
     async def verify_spend_capability(
         self,
@@ -35,7 +74,9 @@ class PaybondSpendGuard:
         operation: str,
         requested_spend_cents: int = 0,
     ) -> VerifyCapabilityResult:
-        return await self.binding.verify_spend_capability(
+        return await self.harbor.verify_capability(
+            intent_id=self.intent_id,
+            token=self.capability_token,
             operation=operation,
             requested_spend_cents=requested_spend_cents,
         )
@@ -46,7 +87,7 @@ class PaybondSpendGuard:
         operation: str,
         requested_spend_cents: int = 0,
     ) -> VerifyCapabilityResult:
-        return await self.binding.authorize_spend(
+        return await self.verify_spend_capability(
             operation=operation,
             requested_spend_cents=requested_spend_cents,
         )
@@ -86,36 +127,33 @@ class PaybondSpendGuard:
 
 
 async def authorize_spend(
-    binding: PaybondCapabilityBinding,
+    source: _SpendGuardSource,
     *,
     operation: str,
     requested_spend_cents: int = 0,
 ) -> VerifyCapabilityResult:
-    return await binding.authorize_spend(
+    return await PaybondSpendGuard(source).authorize_spend(
         operation=operation,
         requested_spend_cents=requested_spend_cents,
     )
 
 
 def guard_tool(
-    binding: PaybondCapabilityBinding,
+    source: _SpendGuardSource,
     *,
     operation: str,
     requested_spend_cents: int = 0,
     handler: Callable[P, R | Awaitable[R]],
 ) -> Callable[P, Awaitable[R]]:
-    return PaybondSpendGuard(binding).guard_tool(
+    return PaybondSpendGuard(source).guard_tool(
         operation=operation,
         requested_spend_cents=requested_spend_cents,
         handler=handler,
     )
 
 
-paybond_openai_tool_spend_guard = guard_tool
-paybond_anthropic_tool_spend_guard = guard_tool
-paybond_claude_tool_spend_guard = guard_tool
-paybond_gemini_tool_spend_guard = guard_tool
-paybond_google_ai_tool_spend_guard = guard_tool
+paybond_agent_tool_spend_guard = guard_tool
+paybond_runtime_neutral_tool_spend_guard = guard_tool
 paybond_langgraph_tool_spend_guard = guard_tool
 paybond_mcp_tool_spend_guard = guard_tool
 
@@ -125,11 +163,8 @@ __all__ = [
     "PaybondSpendGuard",
     "authorize_spend",
     "guard_tool",
-    "paybond_anthropic_tool_spend_guard",
-    "paybond_claude_tool_spend_guard",
-    "paybond_gemini_tool_spend_guard",
-    "paybond_google_ai_tool_spend_guard",
+    "paybond_agent_tool_spend_guard",
     "paybond_langgraph_tool_spend_guard",
     "paybond_mcp_tool_spend_guard",
-    "paybond_openai_tool_spend_guard",
+    "paybond_runtime_neutral_tool_spend_guard",
 ]

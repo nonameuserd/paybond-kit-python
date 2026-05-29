@@ -548,10 +548,14 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         name="Paybond MCP",
         instructions=(
             "This server is bound to one Paybond tenant derived from the configured "
-            "service-account API key. Do not invent tenant identifiers. Gateway-first "
-            "Harbor mutation tools expect already-signed request bodies plus replay-safe "
-            "recognition proofs; do not pass signing seeds or long-lived private keys "
-            "through MCP tool arguments."
+            "service-account API key. Use paybond_create_spend_intent or "
+            "paybond_fund_intent to obtain the intent_id and capability_token, then "
+            "call paybond_authorize_agent_spend before side-effecting tools. The server "
+            "works with any MCP-compatible host and does not assume a specific model "
+            "provider. Do not invent tenant identifiers. Gateway-first Harbor mutation "
+            "tools expect already-signed request bodies plus replay-safe recognition "
+            "proofs; do not pass signing seeds or long-lived private keys through MCP "
+            "tool arguments."
         ),
         website_url="https://paybond.ai",
         lifespan=lifespan,
@@ -571,8 +575,8 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
     @server.tool(
         name="paybond_verify_capability",
         description=(
-            "Verify a capability token for one tenant-bound Harbor intent through the "
-            "gateway compatibility route."
+            "Verify a capability token returned by a created or funded Paybond intent "
+            "for one tenant-bound Harbor intent."
         ),
         structured_output=True,
     )
@@ -592,8 +596,9 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
     @server.tool(
         name="paybond_authorize_agent_spend",
         description=(
-            "Authorize delegated agent spend before a side-effecting tool, paid API, "
-            "vendor action, or settlement workflow executes."
+            "Provider-agnostic spend gate: verify the funded intent's capability token "
+            "before a side-effecting tool, paid API, vendor action, or settlement "
+            "workflow executes."
         ),
         structured_output=True,
     )
@@ -824,7 +829,9 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         description=(
             "Create a signed Paybond spend intent through the gateway /harbor route. "
             "Use this when an agent workflow needs bounded budget, allowed operations, "
-            "evidence, and settlement review."
+            "evidence, and settlement review. If the selected rail funds immediately, "
+            "use the returned intent_id and capability_token with "
+            "paybond_authorize_agent_spend."
         ),
         structured_output=True,
     )
@@ -843,7 +850,8 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         name="paybond_fund_intent",
         description=(
             "Advance Harbor funding through the gateway /harbor path with a replay-safe "
-            "recognition proof."
+            "recognition proof. When funding succeeds, use the returned capability_token "
+            "with intent_id in paybond_authorize_agent_spend."
         ),
         structured_output=True,
     )

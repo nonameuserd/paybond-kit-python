@@ -233,15 +233,12 @@ class Paybond:
         await self.signal.aclose()
 
     def spend_guard(self, intent_id: UUID, capability_token: str):
-        from paybond_kit.capability_binding import PaybondCapabilityBinding
         from paybond_kit.spend_guard import PaybondSpendGuard
 
         return PaybondSpendGuard(
-            PaybondCapabilityBinding(
-                harbor=self.harbor,
-                intent_id=intent_id,
-                capability_token=capability_token,
-            )
+            harbor=self.harbor,
+            intent_id=intent_id,
+            capability_token=capability_token,
         )
 
     async def authorize_spend(

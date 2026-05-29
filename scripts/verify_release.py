@@ -75,10 +75,10 @@ def inspect_wheel(path: Path) -> None:
     if not any(".dist-info/licenses/LICENSE" in name or name.endswith(".dist-info/LICENSE") for name in names):
         raise RuntimeError("wheel must include LICENSE")
     extras = set(metadata.get_all("Provides-Extra", []))
-    if {"agents", "langgraph"} - extras:
-        raise RuntimeError(f"missing extras metadata: expected agents/langgraph, got {sorted(extras)}")
+    if {"langgraph", "mcp"} - extras:
+        raise RuntimeError(f"missing extras metadata: expected langgraph/mcp, got {sorted(extras)}")
     requires = metadata.get_all("Requires-Dist", [])
-    for expected in ("openai-agents", "langgraph", "langchain-core"):
+    for expected in ("langgraph", "langchain-core", "mcp"):
         if not any(req.startswith(expected) for req in requires):
             raise RuntimeError(f"missing wheel dependency metadata for {expected}")
 

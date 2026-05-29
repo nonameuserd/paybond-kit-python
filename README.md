@@ -13,13 +13,12 @@ pip install paybond-kit
 Optional integrations:
 
 ```bash
-pip install "paybond-kit[agents]"
 pip install "paybond-kit[langgraph]"
 pip install "paybond-kit[mcp]"
-pip install "paybond-kit[agents,langgraph]"
+pip install "paybond-kit[langgraph,mcp]"
 ```
 
-Install only the extras your runtime needs. The `agents` extra enables the generic tool-guardrail helper for agent runtimes, `langgraph` enables the LangGraph tool wrapper, and `mcp` enables the `paybond-mcp-server` CLI.
+Install only the extras your runtime needs. The `langgraph` extra enables the LangGraph tool wrapper, and `mcp` enables the `paybond-mcp-server` CLI. Runtime-neutral guard helpers are included in the core package.
 
 ## Open source
 
@@ -82,20 +81,37 @@ asyncio.run(main())
 Use Paybond Kit when an agent workflow needs delegated spend guardrails, tool-call budget checks, paid API or vendor action approval, evidence, release/refund logic, disputes, or audit-ready receipts.
 
 ```python
-from paybond_kit import PaybondCapabilityBinding, PaybondSpendGuard
+import os
+from uuid import UUID
 
-binding = PaybondCapabilityBinding(
-    harbor=paybond.harbor,
-    intent_id=intent_id,
-    capability_token=capability_token,
+from paybond_kit import Paybond
+
+
+paybond = await Paybond.open(
+    api_key=os.environ["PAYBOND_API_KEY"],
+    expected_environment="sandbox",
 )
-guard = PaybondSpendGuard(binding)
+
+created = await paybond.intents.create(
+    # principal, payee, budget, predicate, evidence schema, deadline...
+    allowed_tools=["travel.book_hotel"],
+    settlement_rail="stripe_connect",
+)
+
+intent_id = UUID(str(created["intent_id"]))
+capability_token = str(created.get("capability_token") or "")
+if not capability_token:
+    raise RuntimeError("fund the intent before guarding tools")
+
+guard = paybond.spend_guard(intent_id, capability_token)
 guarded_tool = guard.guard_tool(
     operation="travel.book_hotel",
     requested_spend_cents=20_000,
     handler=book_hotel,
 )
 ```
+
+The `paybond.harbor` client is created by `Paybond.open(...)` and bound to the tenant resolved from the service-account API key. Normal integrations read `capability_token` from `paybond.intents.create(...)`, or from `paybond.intents.fund(...)` after an `x402_usdc_base` payment challenge is satisfied.
 
 Scaffold a wrapper:
 
@@ -112,7 +128,8 @@ Core SDK:
 - `paybond.signal` and `paybond.fraud` on `Paybond` sessions opened from one service-account API key
 - `PaybondIntents` helpers for principal-side signing, x402 funding, and payee-side signing flows
 - `PaybondSpendGuard`, `authorize_spend`, and `guard_tool` for spend-named wrappers around capability verification
-- Provider and framework aliases: `paybond_openai_tool_spend_guard`, `paybond_gemini_tool_spend_guard`, `paybond_claude_tool_spend_guard`, `paybond_anthropic_tool_spend_guard`, `paybond_google_ai_tool_spend_guard`, `paybond_langgraph_tool_spend_guard`, and `paybond_mcp_tool_spend_guard`
+- Runtime-neutral and framework aliases: `paybond_agent_tool_spend_guard`, `paybond_runtime_neutral_tool_spend_guard`, `paybond_langgraph_tool_spend_guard`, and `paybond_mcp_tool_spend_guard`
+- `paybond_runtime_tool_call_adapter` for agent SDKs and custom runtimes that expose a tool-call object plus an application-owned executor
 
 Gateway and trust helpers:
 

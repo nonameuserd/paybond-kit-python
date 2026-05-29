@@ -8,7 +8,7 @@ from pathlib import Path
 FRAMEWORK_NOTES = {
     "generic": "Wrap the returned function around any side-effecting tool handler.",
     "provider-agnostic": "Use the guarded handler with OpenAI, Gemini, Claude/Anthropic, local models, or any custom runtime.",
-    "openai-agents": "Attach the guard near your OpenAI Agents tool or guardrail wiring.",
+    "openai": "Call the guarded handler before the OpenAI tool call performs paid or external work.",
     "claude": "Call the guarded handler before the Claude tool-use action performs paid or external work.",
     "anthropic": "Call the guarded handler before the Anthropic tool-use action performs paid or external work.",
     "gemini": "Call the guarded handler before the Gemini function call performs paid or external work.",
@@ -21,9 +21,34 @@ FRAMEWORK_NOTES = {
 def _template(framework: str) -> str:
     note = FRAMEWORK_NOTES[framework]
     return f'''import os
-import uuid
+from collections.abc import Mapping
+from typing import Any
+from uuid import UUID
 
-from paybond_kit import Paybond, PaybondCapabilityBinding, PaybondSpendGuard
+from paybond_kit import FundIntentResult, Paybond
+
+
+async def open_paybond() -> Paybond:
+    return await Paybond.open(
+        api_key=os.environ["PAYBOND_API_KEY"],
+        expected_environment="sandbox",
+    )
+
+
+def funded_intent_from_create(created: Mapping[str, Any]) -> tuple[UUID, str]:
+    intent_id = UUID(str(created["intent_id"]))
+    capability_token = str(created.get("capability_token") or "")
+    if not capability_token:
+        raise RuntimeError(
+            "intent is not funded yet; call paybond.intents.fund(...) before guarding tools"
+        )
+    return intent_id, capability_token
+
+
+def funded_intent_from_fund(funded: FundIntentResult) -> tuple[UUID, str]:
+    if not funded.capability_token:
+        raise RuntimeError("intent funding did not return a capability_token yet")
+    return funded.intent_id, funded.capability_token
 
 
 async def book_hotel(city: str, max_price_cents: int) -> dict[str, str]:
@@ -33,19 +58,13 @@ async def book_hotel(city: str, max_price_cents: int) -> dict[str, str]:
 
 async def build_guarded_hotel_tool(
     *,
-    intent_id: uuid.UUID,
+    paybond: Paybond,
+    intent_id: UUID,
     capability_token: str,
 ):
-    paybond = await Paybond.open(
-        api_key=os.environ["PAYBOND_API_KEY"],
-        expected_environment="sandbox",
-    )
-    binding = PaybondCapabilityBinding(
-        harbor=paybond.harbor,
-        intent_id=intent_id,
-        capability_token=capability_token,
-    )
-    guard = PaybondSpendGuard(binding)
+    if not capability_token.strip():
+        raise RuntimeError("fund the intent before guarding tools")
+    guard = paybond.spend_guard(intent_id, capability_token)
 
     # {note}
     return guard.guard_tool(

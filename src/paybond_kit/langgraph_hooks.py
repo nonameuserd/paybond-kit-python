@@ -24,8 +24,7 @@ def paybond_awrap_tool_call_capability(
     Build an ``awrap_tool_call`` interceptor for :class:`langgraph.prebuilt.ToolNode`.
 
     The LangGraph tool ``name`` is forwarded to Harbor as the delegated ``operation`` string; keep
-    intent ``allowed_tools`` entries aligned with those tool registration names (same contract as
-    OpenAI Agents ``qualified_tool_name`` when tools are registered without an extra namespace).
+    intent ``allowed_tools`` entries aligned with those tool registration names.
 
     On deny, returns a :class:`langchain_core.messages.ToolMessage` with ``status=\"error\"`` so the
     model can recover without executing the tool.
