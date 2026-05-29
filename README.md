@@ -29,7 +29,6 @@ Install only the extras your runtime needs. The `agents` extra enables the gener
 
 - Python 3.11+
 - A `paybond_sk_sandbox_...` or `paybond_sk_live_...` service-account API key
-- For capability verification: a funded intent id and a capability token minted for that intent
 - For intent creation or evidence submission: 32-byte Ed25519 signing seeds owned by your application
 
 Published wheels bundle the `paybond_kit._native` extension. `maturin develop` is only required when building from a local checkout.
@@ -38,13 +37,6 @@ Minimal environment for the quick start:
 
 ```bash
 export PAYBOND_API_KEY="paybond_sk_sandbox_..."
-```
-
-Optional, if you want the quick start to verify a capability:
-
-```bash
-export PAYBOND_INTENT_ID="00000000-0000-0000-0000-000000000000"
-export PAYBOND_CAPABILITY="base64-biscuit-token"
 ```
 
 ## Tenant isolation
@@ -60,7 +52,6 @@ Every session is bound to the tenant realm echoed by gateway-authenticated servi
 ```python
 import asyncio
 import os
-from uuid import UUID
 
 from paybond_kit import Paybond
 
@@ -79,21 +70,6 @@ async def main() -> None:
     )
     try:
         print("tenant realm:", paybond.harbor.tenant_id)
-
-        intent_id = os.environ.get("PAYBOND_INTENT_ID")
-        capability = os.environ.get("PAYBOND_CAPABILITY")
-        if intent_id and capability:
-            verified = await paybond.harbor.verify_capability(
-                intent_id=UUID(intent_id),
-                token=capability,
-                operation="payments.capture",
-                requested_spend_cents=18_700,
-            )
-            if not verified.allow:
-                raise RuntimeError(
-                    f"verify denied: {verified.code or 'deny'} {verified.message or ''}".strip()
-                )
-            print("capability verified:", verified.audit_id)
     finally:
         await paybond.aclose()
 
