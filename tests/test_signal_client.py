@@ -82,12 +82,14 @@ async def test_service_account_signal_session_binds_tenant_from_principal() -> N
             200,
             json={
                 "tenant_id": "realm-z",
+                "environment": "sandbox",
             },
         )
     )
     session = await ServiceAccountSignalSession.open(
         gateway_base_url="https://gateway.test",
         api_key="paybond_sk_" + "a" * 32 + "_" + "b" * 64,
+        expected_environment="sandbox",
     )
     try:
         assert session.signal.tenant_id == "realm-z"

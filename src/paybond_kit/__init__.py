@@ -1,12 +1,12 @@
-"""Paybond Kit — Harbor client, evidence signing, service-account sessions, and agent framework hooks."""
+"""Paybond Kit — hosted Gateway clients, evidence signing, service-account sessions, and agent framework hooks."""
 
 from __future__ import annotations
 
 from paybond_kit.capability_binding import PaybondCapabilityBinding
 from paybond_kit.credentials import (
+    DEFAULT_PAYBOND_GATEWAY_BASE_URL,
     GatewayAuthError,
-    GatewayHarborTokenProvider,
-    ServiceAccountHarborSession,
+    PaybondEnvironment,
 )
 from paybond_kit.a2a import A2AHttpError, GatewayA2AClient
 from paybond_kit.fraud import (
@@ -24,6 +24,7 @@ from paybond_kit.fraud import (
 )
 from paybond_kit.harbor import (
     FundIntentResult,
+    GatewayHarborClient,
     HarborClient,
     HarborHttpError,
     IntentFundingResult,
@@ -57,22 +58,23 @@ from paybond_kit.signing import sign_payee_evidence_binding
 
 __all__ = [
     "A2AHttpError",
+    "DEFAULT_PAYBOND_GATEWAY_BASE_URL",
     "GatewayAuthError",
     "GatewayA2AClient",
     "GatewayFraudClient",
-    "GatewayHarborTokenProvider",
+    "GatewayHarborClient",
     "GatewayProtocolClient",
     "FundIntentResult",
     "HarborClient",
     "HarborHttpError",
     "IntentFundingResult",
     "SettlementRail",
+    "PaybondEnvironment",
     "Paybond",
     "PaybondCapabilityBinding",
     "PaybondIntents",
     "GatewaySignalClient",
     "FraudHttpError",
-    "ServiceAccountHarborSession",
     "ServiceAccountFraudSession",
     "ServiceAccountSignalSession",
     "SignalFraudAssessment",

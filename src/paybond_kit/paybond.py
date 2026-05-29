@@ -1,4 +1,4 @@
-"""High-level :class:`Paybond` API over gateway-backed Harbor sessions."""
+"""High-level :class:`Paybond` API over hosted Gateway-backed sessions."""
 
 from __future__ import annotations
 
@@ -8,23 +8,24 @@ from typing import Any, Mapping
 from uuid import UUID, uuid4
 
 from paybond_kit.a2a import GatewayA2AClient
-from paybond_kit.credentials import ServiceAccountHarborSession
+from paybond_kit.credentials import DEFAULT_PAYBOND_GATEWAY_BASE_URL, PaybondEnvironment
 from paybond_kit.fraud import GatewayFraudClient
 from paybond_kit.harbor import (
     FundIntentResult,
+    GatewayHarborClient,
     HarborClient,
     SettlementRail,
     validate_settlement_rail,
 )
 from paybond_kit.protocol import GatewayProtocolClient
-from paybond_kit.signal import GatewaySignalClient
+from paybond_kit.signal import GatewaySignalClient, _resolve_gateway_tenant_id
 
 
 @dataclass
 class PaybondIntents:
     """Tenant-scoped intent helpers (principal-signed intent create, x402 funding, payee evidence)."""
 
-    _harbor: HarborClient
+    _harbor: HarborClient | GatewayHarborClient
     _tenant_id: str
 
     async def create(
@@ -41,6 +42,7 @@ class PaybondIntents:
         deadline_rfc3339: str,
         allowed_tools: list[str],
         settlement_rail: SettlementRail,
+        recognition_proof: Mapping[str, Any],
         intent_id: UUID | None = None,
         predicate_ref: str = "",
         idempotency_key: str | None = None,
@@ -86,12 +88,17 @@ class PaybondIntents:
             settlement_rail,
         )
         body = json.loads(wire)
-        return await self._harbor.create_intent(body, idempotency_key=idempotency_key)
+        return await self._harbor.create_intent(
+            body,
+            recognition_proof=recognition_proof,  # type: ignore[call-arg]
+            idempotency_key=idempotency_key,
+        )
 
     async def fund(
         self,
         intent_id: UUID,
         *,
+        recognition_proof: Mapping[str, Any],
         payment_signature: str | None = None,
         idempotency_key: str | None = None,
     ) -> FundIntentResult:
@@ -103,6 +110,7 @@ class PaybondIntents:
         """
         return await self._harbor.fund_intent(
             intent_id,
+            recognition_proof=recognition_proof,  # type: ignore[call-arg]
             payment_signature=payment_signature,
             idempotency_key=idempotency_key,
         )
@@ -114,6 +122,7 @@ class PaybondIntents:
         *,
         payee_did: str,
         payee_signing_seed: bytes,
+        recognition_proof: Mapping[str, Any],
         artifacts_blake3_hex: list[str] | None = None,
         submitted_at_rfc3339: str | None = None,
         idempotency_key: str | None = None,
@@ -142,49 +151,51 @@ class PaybondIntents:
             payee_signing_seed=payee_signing_seed,
         )
         return await self._harbor.submit_evidence(
-            intent_id, wire, idempotency_key=idempotency_key
+            intent_id,
+            wire,
+            recognition_proof=recognition_proof,  # type: ignore[call-arg]
+            idempotency_key=idempotency_key,
         )
 
 
 @dataclass
 class Paybond:
     """
-    Gateway + Harbor session with ergonomic :attr:`intents` helpers.
-
-    This is a thin wrapper over :class:`ServiceAccountHarborSession` (same JWT lifecycle and
-    tenant binding).
+    Hosted Gateway + Harbor proxy session with ergonomic :attr:`intents` helpers.
     """
 
-    harbor: HarborClient
+    harbor: GatewayHarborClient
     signal: GatewaySignalClient
     fraud: GatewayFraudClient
     a2a: GatewayA2AClient
     protocol: GatewayProtocolClient
     intents: PaybondIntents
-    _session: ServiceAccountHarborSession
 
     @classmethod
     async def open(
         cls,
         *,
-        gateway_base_url: str,
         api_key: str,
-        harbor_base_url: str,
-        harbor_access_path: str = "/v1/auth/harbor-access",
-        clock_skew_seconds: float = 90.0,
+        gateway_base_url: str = DEFAULT_PAYBOND_GATEWAY_BASE_URL,
+        principal_path: str = "/v1/auth/principal",
+        expected_environment: PaybondEnvironment | None = None,
         max_retries: int = 3,
     ) -> Paybond:
-        session = await ServiceAccountHarborSession.open(
+        tenant = await _resolve_gateway_tenant_id(
             gateway_base_url=gateway_base_url,
             api_key=api_key,
-            harbor_base_url=harbor_base_url,
-            harbor_access_path=harbor_access_path,
-            clock_skew_seconds=clock_skew_seconds,
+            principal_path=principal_path,
+            expected_environment=expected_environment,
             max_retries=max_retries,
         )
-        tenant = session.harbor.tenant_id
+        harbor = GatewayHarborClient(
+            gateway_base_url,
+            tenant,
+            static_gateway_bearer_token=api_key,
+            max_retries=max_retries,
+        )
         return cls(
-            harbor=session.harbor,
+            harbor=harbor,
             signal=GatewaySignalClient(
                 gateway_base_url,
                 tenant,
@@ -208,16 +219,12 @@ class Paybond:
                 static_gateway_bearer_token=api_key,
                 max_retries=max_retries,
             ),
-            intents=PaybondIntents(session.harbor, tenant),
-            _session=session,
+            intents=PaybondIntents(harbor, tenant),
         )
 
-    async def rotate_harbor_token(self) -> None:
-        await self._session.rotate_harbor_token()
-
     async def aclose(self) -> None:
+        await self.harbor.aclose()
         await self.protocol.aclose()
         await self.a2a.aclose()
         await self.fraud.aclose()
         await self.signal.aclose()
-        await self._session.aclose()

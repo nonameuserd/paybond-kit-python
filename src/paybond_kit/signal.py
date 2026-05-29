@@ -10,7 +10,13 @@ from urllib.parse import quote
 
 import httpx
 
-from paybond_kit.credentials import GatewayAuthError
+from paybond_kit.credentials import (
+    DEFAULT_PAYBOND_GATEWAY_BASE_URL,
+    GatewayAuthError,
+    PaybondEnvironment,
+    _assert_expected_environment,
+    _normalize_expected_environment,
+)
 
 _DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal"
 
@@ -349,15 +355,17 @@ class ServiceAccountSignalSession:
     async def open(
         cls,
         *,
-        gateway_base_url: str,
         api_key: str,
+        gateway_base_url: str = DEFAULT_PAYBOND_GATEWAY_BASE_URL,
         principal_path: str = _DEFAULT_PRINCIPAL_PATH,
+        expected_environment: PaybondEnvironment | None = None,
         max_retries: int = 3,
     ) -> ServiceAccountSignalSession:
         tenant_id = await _resolve_gateway_tenant_id(
             gateway_base_url=gateway_base_url,
             api_key=api_key,
             principal_path=principal_path,
+            expected_environment=expected_environment,
             max_retries=max_retries,
         )
         client = GatewaySignalClient(
@@ -377,9 +385,11 @@ async def _resolve_gateway_tenant_id(
     gateway_base_url: str,
     api_key: str,
     principal_path: str,
+    expected_environment: PaybondEnvironment | None,
     max_retries: int,
 ) -> str:
     retries = max(1, int(max_retries))
+    expected_environment = _normalize_expected_environment(expected_environment)
     client = httpx.AsyncClient(timeout=30.0)
     try:
         path = principal_path if principal_path.startswith("/") else f"/{principal_path}"
@@ -427,6 +437,12 @@ async def _resolve_gateway_tenant_id(
                     "gateway principal JSON missing tenant_id",
                     body_text=response.text,
                 )
+            _assert_expected_environment(
+                source="gateway principal",
+                body=body,
+                expected_environment=expected_environment,
+                body_text=response.text,
+            )
             return tenant
         raise RuntimeError(str(last_exc))
     finally:

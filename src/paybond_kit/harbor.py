@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import random
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
 from urllib.parse import urlencode
@@ -597,9 +599,10 @@ class HarborClient:
         limit: int = 64,
     ) -> dict[str, Any]:
         """
-        Call ``GET /ledger/v1/events`` with an exclusive ``after_seq`` cursor (Harbor default ``0``).
+        Call protected Harbor ``GET /ledger/v1/events`` with an exclusive ``after_seq`` cursor
+        (Harbor default ``0``).
 
-        ``limit`` is clamped to ``1…256`` to match Harbor enforcement.
+        ``limit`` is clamped to ``1..256`` to match Harbor enforcement.
         """
         if after_seq < 0:
             raise ValueError("after_seq must be >= 0")
@@ -653,6 +656,277 @@ class HarborClient:
         await self._client.aclose()
 
 
+class GatewayHarborClient:
+    """
+    Gateway-backed Harbor surface for hosted Paybond integrations.
+
+    The client sends the service-account API key to Gateway. Gateway derives tenant scope, mints
+    upstream Harbor credentials internally, and applies recognition/guardrail checks before
+    forwarding state-changing Harbor requests.
+    """
+
+    def __init__(
+        self,
+        gateway_base_url: str,
+        tenant_id: str,
+        *,
+        static_gateway_bearer_token: str,
+        max_retries: int = 3,
+        request_timeout_sec: float = 30.0,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._base = gateway_base_url.strip().rstrip("/") + "/"
+        self._tenant = tenant_id.strip()
+        self._bearer = static_gateway_bearer_token.strip()
+        self._max_retries = max(1, int(max_retries))
+        self._owns_client = http_client is None
+        self._client = http_client or httpx.AsyncClient(timeout=request_timeout_sec)
+
+    @property
+    def tenant_id(self) -> str:
+        return self._tenant
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self._client.aclose()
+
+    def _headers(self, *, content_type: str | None = None) -> dict[str, str]:
+        headers = {
+            "accept": "application/json",
+            "x-tenant-id": self._tenant,
+            "authorization": f"Bearer {self._bearer}",
+        }
+        if content_type is not None:
+            headers["content-type"] = content_type
+        return headers
+
+    async def _post_json_with_retries(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        extra_headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        url = f"{self._base}{path.lstrip('/')}"
+        headers = self._headers(content_type="application/json")
+        if extra_headers:
+            headers.update(extra_headers)
+        last_exc: BaseException | None = None
+        for attempt in range(self._max_retries):
+            try:
+                response = await self._client.post(url, headers=headers, json=payload)
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                last_exc = exc
+                if attempt + 1 >= self._max_retries:
+                    raise
+                await asyncio.sleep(_backoff_seconds(attempt))
+                continue
+            if response.status_code in (429, 500, 502, 503, 504):
+                if attempt + 1 >= self._max_retries:
+                    break
+                delay = _parse_retry_after(response.headers.get("retry-after"))
+                if delay is None:
+                    delay = _backoff_seconds(attempt)
+                await asyncio.sleep(delay)
+                continue
+            return response
+        if last_exc is not None:
+            raise last_exc
+        return response
+
+    def _mutation_headers(
+        self,
+        operation: str,
+        recognition_proof: Mapping[str, Any] | None,
+        *,
+        idempotency_key: str | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        if recognition_proof is None:
+            raise ValueError(f"{operation} requires recognition_proof")
+        headers = dict(extra_headers or {})
+        headers["x-paybond-agent-recognition-proof"] = _encode_recognition_proof_header(
+            dict(recognition_proof)
+        )
+        if idempotency_key is not None and idempotency_key.strip():
+            headers["idempotency-key"] = idempotency_key.strip()
+        return headers
+
+    async def verify_capability(
+        self,
+        *,
+        intent_id: UUID,
+        token: str,
+        operation: str,
+        requested_spend_cents: int = 0,
+    ) -> VerifyCapabilityResult:
+        path = "verify"
+        url = f"{self._base}{path}"
+        response = await self._post_json_with_retries(
+            path,
+            {
+                "intent_id": str(intent_id),
+                "token": token,
+                "operation": operation,
+                "requested_spend_cents": int(requested_spend_cents),
+            },
+        )
+        if response.status_code >= 400:
+            raise HarborHttpError(
+                f"Gateway verify HTTP {response.status_code}: {response.text}",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        body = response.json()
+        if not isinstance(body, dict):
+            raise HarborHttpError(
+                "Gateway verify response was not a JSON object",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        tenant = str(body.get("tenant", ""))
+        rid = UUID(str(body.get("intent_id", "")))
+        if tenant != self._tenant:
+            raise TenantBindingError(
+                f"verify tenant mismatch: client={self._tenant!r} gateway={tenant!r}"
+            )
+        if rid != intent_id:
+            raise TenantBindingError(
+                f"verify intent mismatch: requested={intent_id} gateway={rid}"
+            )
+        return VerifyCapabilityResult(
+            allow=bool(body["allow"]),
+            audit_id=UUID(str(body["audit_id"])),
+            tenant=tenant,
+            intent_id=rid,
+            code=body.get("code"),
+            message=body.get("message"),
+        )
+
+    async def create_intent(
+        self,
+        body: dict[str, Any],
+        *,
+        recognition_proof: Mapping[str, Any],
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        path = "harbor/intents"
+        url = f"{self._base}{path}"
+        response = await self._post_json_with_retries(
+            path,
+            body,
+            extra_headers=self._mutation_headers(
+                "create_intent",
+                recognition_proof,
+                idempotency_key=idempotency_key,
+            ),
+        )
+        if response.status_code >= 400:
+            raise HarborHttpError(
+                f"Gateway Harbor create intent HTTP {response.status_code}: {response.text}",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise HarborHttpError(
+                "Gateway Harbor create intent response was not a JSON object",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        return payload
+
+    async def fund_intent(
+        self,
+        intent_id: UUID,
+        *,
+        recognition_proof: Mapping[str, Any],
+        payment_signature: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> FundIntentResult:
+        path = f"harbor/intents/{intent_id}/fund"
+        url = f"{self._base}{path}"
+        extra_headers: dict[str, str] = {}
+        if payment_signature is not None and payment_signature.strip():
+            extra_headers["payment-signature"] = payment_signature.strip()
+        response = await self._post_json_with_retries(
+            path,
+            {},
+            extra_headers=self._mutation_headers(
+                "fund_intent",
+                recognition_proof,
+                idempotency_key=idempotency_key,
+                extra_headers=extra_headers,
+            ),
+        )
+        if response.status_code not in (200, 202, 402):
+            raise HarborHttpError(
+                f"Gateway Harbor fund intent HTTP {response.status_code}: {response.text}",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        body = response.json()
+        if not isinstance(body, dict):
+            raise HarborHttpError(
+                "Gateway Harbor fund intent response was not a JSON object",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        return _parse_fund_intent_response(
+            body,
+            status_code=response.status_code,
+            payment_required=response.headers.get("payment-required"),
+            payment_response=response.headers.get("payment-response"),
+            tenant_id=self._tenant,
+            intent_id=intent_id,
+            source="gateway",
+            url=url,
+            body_text=response.text,
+        )
+
+    async def submit_evidence(
+        self,
+        intent_id: UUID,
+        evidence_body: dict[str, Any],
+        *,
+        recognition_proof: Mapping[str, Any],
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        path = f"harbor/intents/{intent_id}/evidence"
+        url = f"{self._base}{path}"
+        response = await self._post_json_with_retries(
+            path,
+            evidence_body,
+            extra_headers=self._mutation_headers(
+                "submit_evidence",
+                recognition_proof,
+                idempotency_key=idempotency_key,
+            ),
+        )
+        if response.status_code >= 400:
+            raise HarborHttpError(
+                f"Gateway Harbor evidence HTTP {response.status_code}: {response.text}",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise HarborHttpError(
+                "Gateway Harbor evidence response was not a JSON object",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        return payload
+
+
 def _optional_nonempty_string(value: Any) -> str | None:
     if isinstance(value, str) and value.strip():
         return value
@@ -663,6 +937,105 @@ def _string_list(value: Any, *, field: str) -> list[str]:
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise ValueError(f"invalid {field}")
     return [str(item) for item in value]
+
+
+def _parse_fund_intent_response(
+    body: dict[str, Any],
+    *,
+    status_code: int,
+    payment_required: str | None,
+    payment_response: str | None,
+    tenant_id: str,
+    intent_id: UUID,
+    source: str,
+    url: str,
+    body_text: str,
+) -> FundIntentResult:
+    tenant = str(body.get("tenant", ""))
+    echoed_intent_id = UUID(str(body.get("intent_id", "")))
+    if tenant != tenant_id:
+        raise TenantBindingError(
+            f"fund tenant mismatch: client={tenant_id!r} {source}={tenant!r}"
+        )
+    if echoed_intent_id != intent_id:
+        raise TenantBindingError(
+            f"fund intent mismatch: requested={intent_id} {source}={echoed_intent_id}"
+        )
+
+    state = body.get("state")
+    settlement_rail = body.get("settlement_rail")
+    currency = body.get("currency")
+    amount_cents = body.get("amount_cents")
+    if not isinstance(state, str) or not state.strip():
+        raise HarborHttpError(
+            "fund response missing state",
+            status_code=status_code,
+            url=url,
+            body_text=body_text,
+        )
+    if not isinstance(settlement_rail, str) or not settlement_rail.strip():
+        raise HarborHttpError(
+            "fund response missing settlement_rail",
+            status_code=status_code,
+            url=url,
+            body_text=body_text,
+        )
+    try:
+        settlement_rail = validate_settlement_rail(
+            settlement_rail,
+            field="fund response settlement_rail",
+        )
+    except ValueError as exc:
+        raise HarborHttpError(
+            str(exc),
+            status_code=status_code,
+            url=url,
+            body_text=body_text,
+        ) from exc
+    if not isinstance(currency, str) or not currency.strip():
+        raise HarborHttpError(
+            "fund response missing currency",
+            status_code=status_code,
+            url=url,
+            body_text=body_text,
+        )
+    if not isinstance(amount_cents, int):
+        raise HarborHttpError(
+            "fund response missing amount_cents",
+            status_code=status_code,
+            url=url,
+            body_text=body_text,
+        )
+
+    funding_raw = body.get("funding")
+    try:
+        funding = (
+            _parse_intent_funding_result(funding_raw)
+            if isinstance(funding_raw, dict)
+            else None
+        )
+    except ValueError as exc:
+        raise HarborHttpError(
+            f"fund response invalid: {exc}",
+            status_code=status_code,
+            url=url,
+            body_text=body_text,
+        ) from exc
+    capability_token = body.get("capability_token")
+    return FundIntentResult(
+        status_code=status_code,
+        payment_required=payment_required,
+        payment_response=payment_response,
+        intent_id=echoed_intent_id,
+        tenant=tenant,
+        state=state,
+        settlement_rail=settlement_rail,
+        currency=currency,
+        amount_cents=amount_cents,
+        funded=bool(body.get("funded")),
+        capability_token=capability_token if isinstance(capability_token, str) else None,
+        funding=funding,
+    )
 
 
 def _parse_intent_funding_result(value: dict[str, Any]) -> IntentFundingResult:
@@ -741,3 +1114,8 @@ def _parse_retry_after(header_val: str | None) -> float | None:
         return min(float(s), 30.0)
     except ValueError:
         return None
+
+
+def _encode_recognition_proof_header(proof: dict[str, Any]) -> str:
+    encoded = base64.urlsafe_b64encode(json.dumps(proof).encode("utf-8")).rstrip(b"=")
+    return encoded.decode("ascii")

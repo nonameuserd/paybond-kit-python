@@ -13,7 +13,7 @@ from uuid import UUID
 
 import httpx
 
-from paybond_kit.credentials import ServiceAccountHarborSession
+from paybond_kit.credentials import DEFAULT_PAYBOND_GATEWAY_BASE_URL
 from paybond_kit.fraud import GatewayFraudClient
 from paybond_kit.harbor import TenantBindingError
 from paybond_kit.signal import GatewaySignalClient
@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
 
 
-DEFAULT_HARBOR_ACCESS_PATH = "/v1/auth/harbor-access"
 DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal"
 DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway"
 
@@ -82,29 +81,20 @@ def _gateway_http_error_message(
 class PaybondMCPSettings:
     """Environment-backed configuration for the MCP server."""
 
-    gateway_base_url: str
     api_key: str
-    harbor_base_url: str | None = None
-    harbor_access_path: str = DEFAULT_HARBOR_ACCESS_PATH
+    gateway_base_url: str = DEFAULT_PAYBOND_GATEWAY_BASE_URL
     principal_path: str = DEFAULT_PRINCIPAL_PATH
     max_retries: int = 3
-    clock_skew_seconds: float = 90.0
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> PaybondMCPSettings:
         import os
 
         values = env or os.environ
-        gateway_base_url = values.get("PAYBOND_GATEWAY_URL", "").strip()
         api_key = values.get("PAYBOND_API_KEY", "").strip()
-        harbor_base_url = values.get("PAYBOND_HARBOR_URL", "").strip() or None
-        harbor_access_path = values.get("PAYBOND_HARBOR_ACCESS_PATH", "").strip() or DEFAULT_HARBOR_ACCESS_PATH
         principal_path = values.get("PAYBOND_PRINCIPAL_PATH", "").strip() or DEFAULT_PRINCIPAL_PATH
         max_retries_raw = values.get("PAYBOND_MCP_MAX_RETRIES", "").strip()
-        clock_skew_raw = values.get("PAYBOND_MCP_CLOCK_SKEW_SECONDS", "").strip()
 
-        if not gateway_base_url:
-            raise SystemExit("PAYBOND_GATEWAY_URL is required")
         if not api_key:
             raise SystemExit("PAYBOND_API_KEY is required")
 
@@ -115,21 +105,11 @@ class PaybondMCPSettings:
             except ValueError as exc:
                 raise SystemExit("PAYBOND_MCP_MAX_RETRIES must be an integer") from exc
 
-        clock_skew_seconds = 90.0
-        if clock_skew_raw:
-            try:
-                clock_skew_seconds = max(0.0, float(clock_skew_raw))
-            except ValueError as exc:
-                raise SystemExit("PAYBOND_MCP_CLOCK_SKEW_SECONDS must be numeric") from exc
-
         return cls(
-            gateway_base_url=gateway_base_url,
+            gateway_base_url=DEFAULT_PAYBOND_GATEWAY_BASE_URL,
             api_key=api_key,
-            harbor_base_url=harbor_base_url,
-            harbor_access_path=harbor_access_path,
             principal_path=principal_path,
             max_retries=max_retries,
-            clock_skew_seconds=clock_skew_seconds,
         )
 
 
@@ -255,12 +235,8 @@ class PaybondMCPRuntime:
         self._signal_lock = asyncio.Lock()
         self._fraud: GatewayFraudClient | None = None
         self._fraud_lock = asyncio.Lock()
-        self._harbor: ServiceAccountHarborSession | None = None
-        self._harbor_lock = asyncio.Lock()
 
     async def aclose(self) -> None:
-        if self._harbor is not None:
-            await self._harbor.aclose()
         if self._signal is not None:
             await self._signal.aclose()
         if self._fraud is not None:
@@ -301,23 +277,6 @@ class PaybondMCPRuntime:
                     max_retries=self._settings.max_retries,
                 )
             return self._fraud
-
-    async def harbor(self) -> ServiceAccountHarborSession:
-        if self._settings.harbor_base_url is None:
-            raise RuntimeError(
-                "PAYBOND_HARBOR_URL is required for direct Harbor mutation tools"
-            )
-        async with self._harbor_lock:
-            if self._harbor is None:
-                self._harbor = await ServiceAccountHarborSession.open(
-                    gateway_base_url=self._settings.gateway_base_url,
-                    api_key=self._settings.api_key,
-                    harbor_base_url=self._settings.harbor_base_url,
-                    harbor_access_path=self._settings.harbor_access_path,
-                    clock_skew_seconds=self._settings.clock_skew_seconds,
-                    max_retries=self._settings.max_retries,
-                )
-            return self._harbor
 
     async def list_intents(
         self,
@@ -900,58 +859,6 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             recognition_proof=recognition_proof,
             idempotency_key=idempotency_key,
         )
-
-    if resolved.harbor_base_url is not None:
-
-        @server.tool(
-            name="paybond_create_intent_legacy",
-            description=(
-                "Legacy direct-Harbor fallback for POST /intents. Prefer paybond_create_intent "
-                "unless you explicitly need PAYBOND_HARBOR_URL direct mode."
-            ),
-            structured_output=True,
-        )
-        async def paybond_create_intent_legacy(
-            body: dict[str, Any],
-            idempotency_key: str | None = None,
-        ) -> dict[str, Any]:
-            harbor = await runtime.harbor()
-            return await harbor.harbor.create_intent(body, idempotency_key=idempotency_key)
-
-        @server.tool(
-            name="paybond_fund_intent_legacy",
-            description="Legacy direct-Harbor fallback for POST /intents/{intent_id}/fund.",
-            structured_output=True,
-        )
-        async def paybond_fund_intent_legacy(
-            intent_id: str,
-            payment_signature: str | None = None,
-            idempotency_key: str | None = None,
-        ) -> dict[str, Any]:
-            harbor = await runtime.harbor()
-            result = await harbor.harbor.fund_intent(
-                UUID(intent_id),
-                payment_signature=payment_signature,
-                idempotency_key=idempotency_key,
-            )
-            return _jsonable(result)
-
-        @server.tool(
-            name="paybond_submit_evidence_legacy",
-            description="Legacy direct-Harbor fallback for POST /intents/{intent_id}/evidence.",
-            structured_output=True,
-        )
-        async def paybond_submit_evidence_legacy(
-            intent_id: str,
-            body: dict[str, Any],
-            idempotency_key: str | None = None,
-        ) -> dict[str, Any]:
-            harbor = await runtime.harbor()
-            return await harbor.harbor.submit_evidence(
-                UUID(intent_id),
-                body,
-                idempotency_key=idempotency_key,
-            )
 
     setattr(server, "_paybond_runtime", runtime)
     return server
