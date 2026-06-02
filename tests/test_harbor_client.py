@@ -131,6 +131,63 @@ async def test_fund_intent_returns_x402_challenge() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_fund_intent_returns_stripe_ach_handoff() -> None:
+    intent_id = uuid.uuid4()
+    respx.post(f"https://harbor.test/intents/{intent_id}/fund").mock(
+        return_value=httpx.Response(
+            202,
+            json={
+                "intent_id": str(intent_id),
+                "tenant": "tenant-a",
+                "state": "open",
+                "settlement_rail": "stripe_ach_debit",
+                "currency": "usd",
+                "amount_cents": 4200,
+                "funded": False,
+                "funding": {
+                    "settlement_rail": "stripe_ach_debit",
+                    "harbor_fund_endpoint": f"/intents/{intent_id}/fund",
+                    "status": "requires_payment_method",
+                    "stripe_payment_intent_id": "pi_ach_123",
+                    "client_secret": "pi_ach_123_secret_abc",
+                    "stripe_connect_destination": "acct_123",
+                    "stripe_customer_id": "cus_123",
+                    "payment_method_id": "pm_123",
+                    "mandate_id": "mandate_123",
+                    "financial_connections_account_id": "fca_123",
+                    "bank_last4": "6789",
+                    "bank_fingerprint": "bankfp_123",
+                    "bank_name": "Test Bank",
+                    "expected_debit_date": "2026-06-05",
+                    "payment_reference": "PAYBOND-ACH-123",
+                },
+            },
+        )
+    )
+    client = HarborClient("https://harbor.test", "tenant-a")
+    try:
+        out = await client.fund_intent(intent_id)
+        assert out.status_code == 202
+        assert out.settlement_rail == "stripe_ach_debit"
+        assert out.funding is not None
+        assert out.funding.stripe_payment_intent_id == "pi_ach_123"
+        assert out.funding.client_secret == "pi_ach_123_secret_abc"
+        assert out.funding.stripe_connect_destination == "acct_123"
+        assert out.funding.stripe_customer_id == "cus_123"
+        assert out.funding.payment_method_id == "pm_123"
+        assert out.funding.mandate_id == "mandate_123"
+        assert out.funding.financial_connections_account_id == "fca_123"
+        assert out.funding.bank_last4 == "6789"
+        assert out.funding.bank_fingerprint == "bankfp_123"
+        assert out.funding.bank_name == "Test Bank"
+        assert out.funding.expected_debit_date == "2026-06-05"
+        assert out.funding.payment_reference == "PAYBOND-ACH-123"
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_fund_intent_rejects_unknown_settlement_rail() -> None:
     intent_id = uuid.uuid4()
     respx.post(f"https://harbor.test/intents/{intent_id}/fund").mock(

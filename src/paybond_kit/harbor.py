@@ -14,8 +14,8 @@ from uuid import UUID
 
 import httpx
 
-SettlementRail: TypeAlias = Literal["stripe_connect", "x402_usdc_base"]
-_SETTLEMENT_RAIL_VALUES = frozenset({"stripe_connect", "x402_usdc_base"})
+SettlementRail: TypeAlias = Literal["stripe_connect", "stripe_ach_debit", "x402_usdc_base"]
+_SETTLEMENT_RAIL_VALUES = frozenset({"stripe_connect", "stripe_ach_debit", "x402_usdc_base"})
 
 
 def validate_settlement_rail(value: str, *, field: str = "settlement_rail") -> SettlementRail:
@@ -48,12 +48,28 @@ class IntentFundingResult:
     status: str | None
     payment_session_id: str | None
     payment_url: str | None
+    stripe_payment_intent_id: str | None
+    client_secret: str | None
+    stripe_connect_destination: str | None
+    stripe_customer_id: str | None
+    latest_charge_id: str | None
+    payment_method_id: str | None
+    mandate_id: str | None
+    financial_connections_account_id: str | None
+    bank_last4: str | None
+    bank_fingerprint: str | None
+    bank_name: str | None
     asset: str | None
     network: str | None
     authorization_id: str | None
     capture_id: str | None
     void_id: str | None
+    transfer_id: str | None
     refund_id: str | None
+    expected_debit_date: str | None
+    payment_reference: str | None
+    refund_reference: str | None
+    refund_reference_status: str | None
     source_address: str | None
     target_address: str | None
     authorization_expires_at: str | None
@@ -1141,12 +1157,36 @@ def _parse_intent_funding_result(value: dict[str, Any]) -> IntentFundingResult:
         status=_optional_nonempty_string(value.get("status")),
         payment_session_id=_optional_nonempty_string(value.get("payment_session_id")),
         payment_url=_optional_nonempty_string(value.get("payment_url")),
+        stripe_payment_intent_id=_optional_nonempty_string(
+            value.get("stripe_payment_intent_id")
+        ),
+        client_secret=_optional_nonempty_string(value.get("client_secret")),
+        stripe_connect_destination=_optional_nonempty_string(
+            value.get("stripe_connect_destination")
+        ),
+        stripe_customer_id=_optional_nonempty_string(value.get("stripe_customer_id")),
+        latest_charge_id=_optional_nonempty_string(value.get("latest_charge_id")),
+        payment_method_id=_optional_nonempty_string(value.get("payment_method_id")),
+        mandate_id=_optional_nonempty_string(value.get("mandate_id")),
+        financial_connections_account_id=_optional_nonempty_string(
+            value.get("financial_connections_account_id")
+        ),
+        bank_last4=_optional_nonempty_string(value.get("bank_last4")),
+        bank_fingerprint=_optional_nonempty_string(value.get("bank_fingerprint")),
+        bank_name=_optional_nonempty_string(value.get("bank_name")),
         asset=_optional_nonempty_string(value.get("asset")),
         network=_optional_nonempty_string(value.get("network")),
         authorization_id=_optional_nonempty_string(value.get("authorization_id")),
         capture_id=_optional_nonempty_string(value.get("capture_id")),
         void_id=_optional_nonempty_string(value.get("void_id")),
+        transfer_id=_optional_nonempty_string(value.get("transfer_id")),
         refund_id=_optional_nonempty_string(value.get("refund_id")),
+        expected_debit_date=_optional_nonempty_string(value.get("expected_debit_date")),
+        payment_reference=_optional_nonempty_string(value.get("payment_reference")),
+        refund_reference=_optional_nonempty_string(value.get("refund_reference")),
+        refund_reference_status=_optional_nonempty_string(
+            value.get("refund_reference_status")
+        ),
         source_address=_optional_nonempty_string(value.get("source_address")),
         target_address=_optional_nonempty_string(value.get("target_address")),
         authorization_expires_at=_optional_nonempty_string(

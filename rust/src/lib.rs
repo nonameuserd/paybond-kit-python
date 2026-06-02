@@ -127,10 +127,12 @@ fn build_signed_create_intent_json(
         return Err(PyValueError::new_err("allowed_tools must be non-empty"));
     }
     let settlement_rail = match settlement_rail.trim() {
-        "stripe_connect" | "x402_usdc_base" => settlement_rail.trim().to_string(),
+        "stripe_connect" | "stripe_ach_debit" | "x402_usdc_base" => {
+            settlement_rail.trim().to_string()
+        }
         _ => {
             return Err(PyValueError::new_err(
-                "settlement_rail must be one of stripe_connect, x402_usdc_base",
+                "settlement_rail must be one of stripe_connect, stripe_ach_debit, x402_usdc_base",
             ))
         }
     };
