@@ -1,29 +1,4 @@
-"""Command-line scaffolder for Paybond guardrail integrations."""
-
-from __future__ import annotations
-
-import argparse
-from pathlib import Path
-
-FRAMEWORK_NOTES = {
-    "generic": "Wrap the returned function around any side-effecting tool handler.",
-    "provider-agnostic": "Use the guarded handler with OpenAI, Gemini, Claude/Anthropic, local models, or any custom runtime.",
-    "openai": "Call the guarded handler before the OpenAI tool call performs paid or external work.",
-    "claude": "Call the guarded handler before the Claude tool-use action performs paid or external work.",
-    "anthropic": "Call the guarded handler before the Anthropic tool-use action performs paid or external work.",
-    "gemini": "Call the guarded handler before the Gemini function call performs paid or external work.",
-    "google-ai": "Call the guarded handler before the Google AI function call performs paid or external work.",
-    "vercel-ai": "Call the guarded handler from your Vercel AI SDK tool execute function.",
-    "langgraph": "Call the guarded handler from the LangGraph node or tool wrapper that performs paid work.",
-    "mcp": "Use the same operation name in your MCP tool handler before executing paid work.",
-}
-
-PRESETS = ("paid-tool-guard",)
-
-
-def _template(framework: str) -> str:
-    note = FRAMEWORK_NOTES[framework]
-    return f'''import asyncio
+import asyncio
 import json
 import os
 from collections.abc import Awaitable, Callable, Mapping
@@ -71,14 +46,14 @@ async def bootstrap_sandbox_guardrail_intent(
         requested_spend_cents=requested_spend_cents,
         currency=currency,
         evidence_schema=evidence_schema
-        or {{
+        or {
             "type": "object",
             "required": ["confirmation_id", "charged_cents"],
-            "properties": {{
-                "confirmation_id": {{"type": "string"}},
-                "charged_cents": {{"type": "integer"}},
-            }},
-        }},
+            "properties": {
+                "confirmation_id": {"type": "string"},
+                "charged_cents": {"type": "integer"},
+            },
+        },
         metadata=metadata,
         idempotency_key=idempotency_key,
     )
@@ -94,7 +69,7 @@ def wrap_paid_tool(
 
     guard = paybond.spend_guard(guardrail.intent_id, guardrail.capability_token)
 
-    # {note}
+    # Use the guarded handler with OpenAI, Gemini, Claude/Anthropic, local models, or any custom runtime.
     return guard.guard_tool(
         operation=guardrail.operation,
         requested_spend_cents=guardrail.requested_spend_cents,
@@ -132,12 +107,12 @@ async def replaceable_smoke_test_paid_tool(input: Mapping[str, Any]) -> dict[str
     # Replace this sandbox smoke-test function with the real paid side-effecting tool.
     item_id = str(input.get("item_id", "replace-with-your-tool-input"))
     max_price_cents = int(input.get("max_price_cents", DEFAULT_REQUESTED_SPEND_CENTS))
-    return {{
+    return {
         "confirmation_id": "sandbox-confirmation-" + item_id,
         "item_id": item_id,
         "charged_cents": min(max_price_cents, DEFAULT_REQUESTED_SPEND_CENTS),
         "sandbox": True,
-    }}
+    }
 
 
 async def run_sandbox_smoke_path() -> dict[str, Any]:
@@ -145,22 +120,22 @@ async def run_sandbox_smoke_path() -> dict[str, Any]:
     guardrail = await bootstrap_sandbox_guardrail_intent(paybond)
     guarded_tool = wrap_paid_tool(paybond, guardrail, replaceable_smoke_test_paid_tool)
     tool_result = await guarded_tool(
-        {{
+        {
             "item_id": "replace-with-your-tool-input",
             "max_price_cents": DEFAULT_REQUESTED_SPEND_CENTS,
-        }}
+        }
     )
     evidence = await submit_sandbox_evidence(
         paybond,
         guardrail,
-        {{
+        {
             "confirmation_id": tool_result["confirmation_id"],
             "charged_cents": tool_result["charged_cents"],
             "item_id": tool_result["item_id"],
             "sandbox": tool_result["sandbox"],
-        }},
+        },
     )
-    return {{"guardrail": guardrail, "tool_result": tool_result, "evidence": evidence}}
+    return {"guardrail": guardrail, "tool_result": tool_result, "evidence": evidence}
 
 
 def _json_default(value: Any) -> Any:
@@ -171,34 +146,3 @@ def _json_default(value: Any) -> Any:
 
 if __name__ == "__main__":
     print(json.dumps(asyncio.run(run_sandbox_smoke_path()), default=_json_default, indent=2))
-'''
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Scaffold a Paybond guardrail integration with a sandbox smoke path."
-    )
-    parser.add_argument(
-        "--preset",
-        choices=PRESETS,
-        default="paid-tool-guard",
-    )
-    parser.add_argument(
-        "--framework",
-        choices=sorted(FRAMEWORK_NOTES),
-        default="provider-agnostic",
-    )
-    parser.add_argument("--out", default="paybond_guardrail_demo.py")
-    parser.add_argument("--force", action="store_true")
-    args = parser.parse_args(argv)
-
-    out = Path(args.out)
-    if out.exists() and not args.force:
-        parser.error(f"{out} already exists; pass --force to overwrite")
-    out.write_text(_template(args.framework), encoding="utf-8")
-    print(f"Created Paybond guardrail integration: {out}")
-    return 0
-
-
-if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())

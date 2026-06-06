@@ -31,18 +31,26 @@ Install only the extras your runtime needs. The `langgraph` extra enables the La
 - Python 3.11+
 - A `paybond_sk_sandbox_...` or `paybond_sk_live_...` service-account API key
 - For intent creation or evidence submission: 32-byte Ed25519 signing seeds owned by your application
-- For Gateway-backed Harbor mutations: a runtime signer that can issue a fresh `AgentRecognitionProofV1` for each request
-- For `x402_usdc_base` funding: an x402 wallet or facilitator that can sign Harbor's payment challenge
 
 Published wheels bundle the `paybond_kit._native` extension. `maturin develop` is only required when building from a local checkout.
 
-Minimal environment for the quick start:
+Create a sandbox key for local development:
 
 ```bash
-export PAYBOND_API_KEY="paybond_sk_sandbox_..."
+paybond-kit-login
 ```
 
-`PAYBOND_API_KEY` is the only long-lived environment variable in the basic quick start. Local sandbox/live quick-start scripts may load `PAYBOND_*_RECOGNITION_PROOF_JSON` or `PAYBOND_X402_PAYMENT_SIGNATURE`, but production integrations should generate those values per request.
+`paybond-kit-login` writes `PAYBOND_API_KEY` to `.env.local` with file mode `0600`, refuses to overwrite an existing key unless `--force` is passed, and refuses env files that are not ignored by git. Live production keys are created by tenant admins in Console and stored in deployment secret managers.
+
+## First guardrail scaffold
+
+Use this first when you have a paid tool and want Paybond guardrails in the sandbox:
+
+```bash
+paybond-kit-init --preset paid-tool-guard --framework provider-agnostic --out paybond_guardrail_demo.py
+```
+
+The generated demo opens Paybond, bootstraps a sandbox guardrail intent, wraps one replaceable paid-tool handler, submits sandbox evidence, and prints the lifecycle result. Free Developer is sandbox-only; live settlement rails start on paid production plans.
 
 ## Tenant isolation
 
@@ -56,9 +64,7 @@ Every session is bound to the tenant realm echoed by gateway-authenticated servi
 
 ```python
 import asyncio
-import json
 import os
-from uuid import UUID, uuid4
 
 from paybond_kit import Paybond
 
@@ -90,7 +96,6 @@ Use Paybond Kit when an agent workflow needs delegated spend guardrails, tool-ca
 
 ```python
 import os
-from uuid import UUID
 
 from paybond_kit import Paybond
 
@@ -100,86 +105,32 @@ paybond = await Paybond.open(
     expected_environment="sandbox",
 )
 
-intent_id = uuid4()
-create_recognition_proof = json.loads(os.environ["PAYBOND_CREATE_RECOGNITION_PROOF_JSON"])
-created = await paybond.intents.create(
-    # principal, payee, budget, predicate, evidence schema, deadline...
-    recognition_proof=create_recognition_proof,
-    allowed_tools=["travel.book_hotel"],
-    settlement_rail="stripe_connect",
-    intent_id=intent_id,
-    idempotency_key=f"intent:{intent_id}",
-)
-
-created_intent_id = UUID(str(created["intent_id"]))
-if created_intent_id != intent_id:
-    raise RuntimeError(f"intent mismatch: requested={intent_id} gateway={created_intent_id}")
-
-capability_token = str(created.get("capability_token") or "")
-if not capability_token:
-    raise RuntimeError("fund the intent before guarding tools")
-
-guard = paybond.spend_guard(intent_id, capability_token)
-verified = await guard.authorize_spend(
+guardrail = await paybond.guardrails.bootstrap_sandbox(
     operation="travel.book_hotel",
     requested_spend_cents=20_000,
+    currency="usd",
 )
-if not verified.allow:
-    raise RuntimeError(f"verify denied: {verified.code or 'deny'} {verified.message or ''}".strip())
 
-# Only run the real action after Paybond authorizes the agent to do it.
-booking = await book_hotel(...)
+guard = paybond.spend_guard(guardrail.intent_id, guardrail.capability_token)
+guarded_tool = guard.guard_tool(
+    operation=guardrail.operation,
+    requested_spend_cents=guardrail.requested_spend_cents,
+    handler=book_hotel,
+)
+
+result = await guarded_tool({"hotel_id": "hotel_demo", "max_price_cents": 20_000})
+await paybond.guardrails.submit_sandbox_evidence(
+    guardrail.intent_id,
+    {"result": result, "sandbox": True},
+)
 ```
 
-The `paybond.harbor` client is created by `Paybond.open(...)` and bound to the tenant resolved from the service-account API key. Normal integrations read `capability_token` from `paybond.intents.create(...)`, or from `paybond.intents.fund(...)` after a delayed rail such as `x402_usdc_base` or `stripe_ach_debit` completes its funding handoff.
+The `paybond.harbor` and `paybond.guardrails` clients are created by `Paybond.open(...)` and bound to the tenant resolved from the service-account API key. Production integrations read `capability_token` from `paybond.intents.create(...)`, or from `paybond.intents.fund(...)` after an `x402_usdc_base` payment challenge is satisfied.
 
-## Recognition proofs and x402 signatures
-
-Gateway-backed Harbor mutations such as `paybond.intents.create(...)`, `paybond.intents.fund(...)`, and `paybond.intents.submit_evidence(...)` require `recognition_proof`. Think of it as a short-lived signature that says: "this tenant-registered agent key is authorizing this exact Gateway request right now."
-
-Paybond does not create or hand this proof to your app, and Kit does not generate it automatically. A tenant admin registers the agent runtime's Ed25519 public key in Paybond's trusted agent key registry with a stable `key_id`. Your trusted backend, KMS-backed signer, wallet service, or agent runner keeps the matching private key and signs a fresh `AgentRecognitionProofV1` immediately before each protected mutation.
-
-Kit only transports the finished object: it encodes `recognition_proof` and sends it as `x-paybond-agent-recognition-proof`. Gateway verifies the signature against the registered public key, checks tenant/purpose/request binding, and rejects replayed nonces.
-
-Generate the proof after the request body is fixed. It should bind the request purpose, method, path, SHA-256 body digest, `verifier_context.tenant_id=paybond.harbor.tenant_id`, `verifier_context.verifier_id="paybond-gateway"`, the tenant-registered `key_id`, a unique nonce, a short expiry window, and the Ed25519 digest/signature fields. If your signer cannot reproduce the exact body built by a high-level helper, prebuild the body and call the lower-level `paybond.harbor` method directly.
-
-`PAYBOND_FUND_RETRY_RECOGNITION_PROOF_JSON` is a local quick-start placeholder for the second `/fund` call, not a static value an operator should provision. The first `/fund` call and the retry each need a different proof because proof nonces are single-use.
-
-`PAYBOND_X402_PAYMENT_SIGNATURE` is also only a local quick-start stand-in. In production, ask your x402 wallet or facilitator to sign the `payment_required` challenge returned by Harbor, then pass that result as `payment_signature`.
-
-```python
-fund_proof = await issue_agent_recognition_proof_v1(
-    purpose="harbor.intent.fund",
-    method="POST",
-    path=f"/harbor/intents/{intent_id}/fund",
-    body={},
-)
-first = await paybond.intents.fund(intent_id, recognition_proof=fund_proof)
-
-if first.status_code == 402:
-    if not first.payment_required:
-        raise RuntimeError("missing PAYMENT-REQUIRED challenge")
-
-    payment_signature = await x402_wallet.sign_payment(first.payment_required)
-    retry_proof = await issue_agent_recognition_proof_v1(
-        purpose="harbor.intent.fund",
-        method="POST",
-        path=f"/harbor/intents/{intent_id}/fund",
-        body={},
-    )
-    await paybond.intents.fund(
-        intent_id,
-        recognition_proof=retry_proof,
-        payment_signature=payment_signature,
-    )
-```
-
-`issue_agent_recognition_proof_v1(...)` and `x402_wallet.sign_payment(...)` are application-owned helpers, not Kit exports.
-
-Scaffold a wrapper:
+Scaffold a guardrail integration:
 
 ```bash
-paybond-kit-init --framework provider-agnostic --out paybond_spend_guard.py
+paybond-kit-init --preset paid-tool-guard --framework provider-agnostic --out paybond_guardrail_demo.py
 ```
 
 ## What the package includes
@@ -187,9 +138,9 @@ paybond-kit-init --framework provider-agnostic --out paybond_spend_guard.py
 Core SDK:
 
 - `Paybond.open(...)` for API-key-only, tenant-derived hosted sessions
-- `HarborClient` for capability verification, intent creation, rail-aware funding, evidence submission, and ledger reads
+- `HarborClient` for capability verification, intent creation, x402 funding, evidence submission, and ledger reads
 - `paybond.signal` and `paybond.fraud` on `Paybond` sessions opened from one service-account API key
-- `PaybondIntents` helpers for principal-side signing, rail-aware funding, and payee-side signing flows
+- `PaybondIntents` helpers for principal-side signing, x402 funding, and payee-side signing flows
 - `PaybondSpendGuard`, `authorize_spend`, and `guard_tool` for spend-named wrappers around capability verification
 - Runtime-neutral and framework aliases: `paybond_agent_tool_spend_guard`, `paybond_runtime_neutral_tool_spend_guard`, `paybond_langgraph_tool_spend_guard`, and `paybond_mcp_tool_spend_guard`
 - `paybond_runtime_tool_call_adapter` for agent SDKs and custom runtimes that expose a tool-call object plus an application-owned executor
@@ -204,13 +155,14 @@ Optional integrations:
 
 - Optional extras for `agents` and `langgraph`
 - Optional extra for `mcp` with the tenant-bound `paybond-mcp-server` CLI
-- `paybond-kit-init` for generating a small spend guard wrapper
+- `paybond-kit-login` for sandbox device approval and local `.env.local` API-key setup
+- `paybond-kit-init` for generating a Paybond guardrail integration with a sandbox smoke path
 
 Agent-facing surfaces are model-provider agnostic. Paybond verifies tool operations and tenant scope, not whether a tool call came from OpenAI, Anthropic, Gemini, a local model, or another runtime.
 
 `allowed_tools` values are your own tool or operation names, not a Paybond-owned catalog. Harbor enforces string matching against whatever names you chose when creating the intent.
 
-`settlement_rail` on intent creation is a principal-signed rail request. Stripe destinations, ACH account details, and x402 receive addresses stay tenant-owned server-side config and are never supplied by the SDK caller.
+`settlement_rail` on intent creation is a principal-signed rail request. Stripe destinations and x402 receive addresses stay tenant-owned server-side config and are never supplied by the SDK caller.
 
 The protocol-v2 surface is trust-first: signed mandates, recognition proofs, and receipts work across supported settlement adapters instead of treating any single rail as the product boundary.
 
@@ -237,6 +189,7 @@ Use this path when you are editing the package itself or rebuilding the bundled 
 ## Docs
 
 - Long-form docs: https://paybond.ai/docs/kit
+- One-command guardrails: https://paybond.ai/docs/kit/one-command-guardrails
 - Python quickstart: https://paybond.ai/docs/kit/quickstart-python
 - Python SDK reference: https://paybond.ai/docs/kit/sdk-reference-python
 - Agent integrations: https://paybond.ai/docs/kit/agent-integrations

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "paybond-kit"
-version = "0.9.3"
+version = "0.9.4"
 description = "Paybond Kit for Python: agent spend governance for paid tool calls with spend authorization, evidence receipts, refunds, disputes, hosted Gateway sessions, and settlement."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -65,6 +65,7 @@ Repository = "https://github.com/nonameuserd/paybond-kit-python.git"
 Issues = "https://github.com/nonameuserd/paybond-kit-python/issues"
 
 [project.scripts]
+paybond-kit-login = "paybond_kit.login:main"
 paybond-kit-init = "paybond_kit.init:main"
 paybond-mcp-server = "paybond_kit.mcp_server:main"
 

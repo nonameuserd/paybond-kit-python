@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import uuid
 
 import httpx
 import pytest
 import respx
 
+from paybond_kit.harbor import TenantBindingError
 from paybond_kit.paybond import Paybond, PaybondIntents
 
 
@@ -74,5 +76,136 @@ async def test_paybond_open_defaults_to_hosted_gateway_with_api_key_only() -> No
         assert principal_route.calls[0].request.headers["authorization"] == f"Bearer {api_key}"
         assert verify_route.calls[0].request.headers["authorization"] == f"Bearer {api_key}"
         assert verify_route.calls[0].request.headers["x-tenant-id"] == "realm-z"
+    finally:
+        await paybond.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_paybond_guardrails_bootstrap_and_evidence_derive_tenant_from_bearer() -> None:
+    intent_id = uuid.uuid4()
+    api_key = "paybond_sk_" + "a" * 32 + "_" + "b" * 64
+    captured: list[httpx.Request] = []
+
+    respx.get("https://api.paybond.ai/v1/auth/principal").mock(
+        return_value=httpx.Response(
+            200,
+            json={"tenant_id": "realm-z", "environment": "sandbox"},
+        )
+    )
+
+    def handle_bootstrap(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        assert request.headers.get("authorization") == f"Bearer {api_key}"
+        assert request.headers.get("x-tenant-id") is None
+        assert json.loads(request.content) == {
+            "operation": "vendor.lookup",
+            "requested_spend_cents": 250,
+        }
+        return httpx.Response(
+            201,
+            json={
+                "tenant_id": "realm-z",
+                "intent_id": str(intent_id),
+                "capability_token": "sandbox-cap-token",
+                "operation": "vendor.lookup",
+                "requested_spend_cents": 250,
+                "currency": "usd",
+                "settlement_rail": "stripe_connect",
+                "settlement_mode": "simulated",
+                "sandbox_lifecycle_status": "funded",
+            },
+        )
+
+    def handle_evidence(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        assert request.headers.get("authorization") == f"Bearer {api_key}"
+        assert request.headers.get("x-tenant-id") is None
+        assert json.loads(request.content) == {
+            "payload": {"status": "completed"},
+            "operation": "vendor.lookup",
+            "requested_spend_cents": 250,
+        }
+        return httpx.Response(
+            202,
+            json={
+                "tenant_id": "realm-z",
+                "intent_id": str(intent_id),
+                "operation": "vendor.lookup",
+                "requested_spend_cents": 250,
+                "settlement_rail": "stripe_connect",
+                "settlement_mode": "simulated",
+                "sandbox_lifecycle_status": "released",
+                "predicate_passed": True,
+            },
+        )
+
+    respx.post("https://api.paybond.ai/v1/sandbox/guardrails/bootstrap").mock(
+        side_effect=handle_bootstrap
+    )
+    respx.post(f"https://api.paybond.ai/v1/sandbox/guardrails/{intent_id}/evidence").mock(
+        side_effect=handle_evidence
+    )
+
+    paybond = await Paybond.open(api_key=api_key, expected_environment="sandbox")
+    try:
+        boot = await paybond.guardrails.bootstrap_sandbox(
+            operation="vendor.lookup",
+            requested_spend_cents=250,
+        )
+        assert boot.tenant_id == "realm-z"
+        assert boot.intent_id == intent_id
+        assert boot.capability_token == "sandbox-cap-token"
+        assert boot.operation == "vendor.lookup"
+        assert boot.requested_spend_cents == 250
+        assert boot.sandbox_lifecycle_status == "funded"
+
+        evidence = await paybond.guardrails.submit_sandbox_evidence(
+            intent_id,
+            {"status": "completed"},
+            operation="vendor.lookup",
+            requested_spend_cents=250,
+        )
+        assert evidence.tenant_id == "realm-z"
+        assert evidence.intent_id == intent_id
+        assert evidence.operation == "vendor.lookup"
+        assert evidence.requested_spend_cents == 250
+        assert evidence.sandbox_lifecycle_status == "released"
+        assert len(captured) == 2
+    finally:
+        await paybond.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_paybond_guardrails_rejects_tenant_drift() -> None:
+    api_key = "paybond_sk_" + "a" * 32 + "_" + "b" * 64
+    respx.get("https://api.paybond.ai/v1/auth/principal").mock(
+        return_value=httpx.Response(
+            200,
+            json={"tenant_id": "realm-z", "environment": "sandbox"},
+        )
+    )
+    respx.post("https://api.paybond.ai/v1/sandbox/guardrails/bootstrap").mock(
+        return_value=httpx.Response(
+            201,
+            json={
+                "tenant_id": "other",
+                "intent_id": str(uuid.uuid4()),
+                "capability_token": "sandbox-cap-token",
+                "operation": "vendor.lookup",
+                "requested_spend_cents": 250,
+                "sandbox_lifecycle_status": "funded",
+            },
+        )
+    )
+
+    paybond = await Paybond.open(api_key=api_key, expected_environment="sandbox")
+    try:
+        with pytest.raises(TenantBindingError, match="sandbox guardrail tenant mismatch"):
+            await paybond.guardrails.bootstrap_sandbox(
+                operation="vendor.lookup",
+                requested_spend_cents=250,
+            )
     finally:
         await paybond.aclose()

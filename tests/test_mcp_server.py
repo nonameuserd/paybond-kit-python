@@ -47,6 +47,8 @@ async def test_gateway_only_server_exposes_gateway_first_mutation_tools() -> Non
         assert "paybond_get_settlement_receipt_v1" in names
         assert "paybond_verify_protocol_receipt_v1" in names
         assert "paybond_authorize_agent_spend" in names
+        assert "paybond_bootstrap_sandbox_guardrail" in names
+        assert "paybond_submit_sandbox_guardrail_evidence" in names
         assert "paybond_create_intent" in names
         assert "paybond_create_spend_intent" in names
         assert "paybond_submit_evidence" in names
@@ -64,6 +66,7 @@ async def test_gateway_only_server_exposes_gateway_first_mutation_tools() -> Non
             "paybond_authorize_agent_spend"
             in tool_by_name["paybond_fund_intent"].description
         )
+        assert "sandbox-only" in tool_by_name["paybond_bootstrap_sandbox_guardrail"].description
     finally:
         await _close_server(server)
 
@@ -313,6 +316,131 @@ async def test_verify_capability_tool_rejects_tenant_mismatch() -> None:
                     "requested_spend_cents": 100,
                 },
             )
+    finally:
+        await _close_server(server)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_sandbox_guardrail_tools_call_sandbox_routes_without_tenant_headers() -> None:
+    intent_id = uuid4()
+    captured: dict[str, object] = {}
+
+    respx.get("https://gateway.test/v1/auth/principal").mock(
+        return_value=httpx.Response(200, json={"tenant_id": "tenant-a"})
+    )
+
+    def handle_bootstrap(request: httpx.Request) -> httpx.Response:
+        captured["bootstrap_authorization"] = request.headers.get("authorization")
+        captured["bootstrap_tenant"] = request.headers.get("x-tenant-id")
+        captured["bootstrap_recognition"] = request.headers.get(
+            "x-paybond-agent-recognition-proof"
+        )
+        captured["bootstrap_idempotency"] = request.headers.get("idempotency-key")
+        captured["bootstrap_body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "tenant_id": "tenant-a",
+                "intent_id": str(intent_id),
+                "capability_token": "cap-sandbox",
+                "operation": "vendor.lookup",
+                "requested_spend_cents": 125,
+                "sandbox_lifecycle_status": "funded",
+                "settlement_rail": "simulator",
+                "settlement_mode": "sandbox",
+            },
+        )
+
+    def handle_evidence(request: httpx.Request) -> httpx.Response:
+        captured["evidence_authorization"] = request.headers.get("authorization")
+        captured["evidence_tenant"] = request.headers.get("x-tenant-id")
+        captured["evidence_recognition"] = request.headers.get(
+            "x-paybond-agent-recognition-proof"
+        )
+        captured["evidence_idempotency"] = request.headers.get("idempotency-key")
+        captured["evidence_body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "tenant_id": "tenant-a",
+                "intent_id": str(intent_id),
+                "capability_token": "cap-sandbox",
+                "operation": "vendor.lookup",
+                "requested_spend_cents": 125,
+                "sandbox_lifecycle_status": "evidence_submitted",
+                "settlement_rail": "simulator",
+                "settlement_mode": "sandbox",
+                "predicate_passed": True,
+                "payload_digest": "ab" * 32,
+            },
+        )
+
+    respx.post("https://gateway.test/v1/sandbox/guardrails/bootstrap").mock(
+        side_effect=handle_bootstrap
+    )
+    respx.post(f"https://gateway.test/v1/sandbox/guardrails/{intent_id}/evidence").mock(
+        side_effect=handle_evidence
+    )
+
+    server = build_mcp_server(
+        PaybondMCPSettings(
+            gateway_base_url="https://gateway.test",
+            api_key=_api_key(),
+        )
+    )
+    try:
+        _, bootstrap = await server.call_tool(
+            "paybond_bootstrap_sandbox_guardrail",
+            {
+                "operation": "vendor.lookup",
+                "requested_spend_cents": 125,
+                "currency": "USD",
+                "evidence_schema": {"type": "object"},
+                "metadata": {"demo": True},
+                "idempotency_key": "sandbox-bootstrap-1",
+            },
+        )
+        _, evidence = await server.call_tool(
+            "paybond_submit_sandbox_guardrail_evidence",
+            {
+                "intent_id": str(intent_id),
+                "payload": {"ok": True},
+                "artifacts": ["artifact-1"],
+                "operation": "vendor.lookup",
+                "requested_spend_cents": 125,
+                "metadata": {"demo": True},
+                "idempotency_key": "sandbox-evidence-1",
+            },
+        )
+
+        assert bootstrap["tenant_id"] == "tenant-a"
+        assert bootstrap["intent_id"] == str(intent_id)
+        assert bootstrap["capability_token"] == "cap-sandbox"
+        assert evidence["sandbox_lifecycle_status"] == "evidence_submitted"
+        assert evidence["predicate_passed"] is True
+        assert captured["bootstrap_authorization"] == f"Bearer {_api_key()}"
+        assert captured["bootstrap_tenant"] is None
+        assert captured["bootstrap_recognition"] is None
+        assert captured["bootstrap_idempotency"] == "sandbox-bootstrap-1"
+        assert captured["bootstrap_body"] == {
+            "operation": "vendor.lookup",
+            "requested_spend_cents": 125,
+            "currency": "USD",
+            "evidence_schema": {"type": "object"},
+            "metadata": {"demo": True},
+        }
+        assert captured["evidence_authorization"] == f"Bearer {_api_key()}"
+        assert captured["evidence_tenant"] is None
+        assert captured["evidence_recognition"] is None
+        assert captured["evidence_idempotency"] == "sandbox-evidence-1"
+        assert captured["evidence_body"] == {
+            "payload": {"ok": True},
+            "artifacts": ["artifact-1"],
+            "operation": "vendor.lookup",
+            "requested_spend_cents": 125,
+            "metadata": {"demo": True},
+        }
     finally:
         await _close_server(server)
 

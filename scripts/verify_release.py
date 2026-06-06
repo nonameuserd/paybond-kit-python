@@ -7,7 +7,6 @@ import sys
 import tarfile
 import tempfile
 import tomllib
-import venv
 import zipfile
 from email.parser import Parser
 from pathlib import Path
@@ -50,6 +49,11 @@ def find_tool(name: str) -> str | None:
     return str(local) if local.exists() else None
 
 
+def release_python() -> Path:
+    python = ROOT / ".venv" / "bin" / "python"
+    return python if python.exists() else Path(sys.executable)
+
+
 def inspect_sdist(path: Path) -> None:
     with tarfile.open(path, "r:gz") as archive:
         names = archive.getnames()
@@ -68,6 +72,8 @@ def inspect_wheel(path: Path) -> None:
         names = archive.namelist()
         metadata_name = next(name for name in names if name.endswith(".dist-info/METADATA"))
         metadata = Parser().parsestr(archive.read(metadata_name).decode("utf-8"))
+        entry_points_name = next((name for name in names if name.endswith(".dist-info/entry_points.txt")), None)
+        entry_points = archive.read(entry_points_name).decode("utf-8") if entry_points_name else ""
     for name in names:
         normalized = f"/{name}"
         if any(fragment in normalized for fragment in BANNED_FRAGMENTS):
@@ -81,15 +87,94 @@ def inspect_wheel(path: Path) -> None:
     for expected in ("langgraph", "langchain-core", "mcp"):
         if not any(req.startswith(expected) for req in requires):
             raise RuntimeError(f"missing wheel dependency metadata for {expected}")
+    normalized_entry_points = {line.replace(" ", "") for line in entry_points.splitlines()}
+    if "paybond-kit-login=paybond_kit.login:main" not in normalized_entry_points:
+        raise RuntimeError("wheel must expose paybond-kit-login console script")
+    if "paybond-kit-init=paybond_kit.init:main" not in normalized_entry_points:
+        raise RuntimeError("wheel must expose paybond-kit-init console script")
+
+
+def assert_contains_all(text: str, fragments: tuple[str, ...], label: str) -> None:
+    for fragment in fragments:
+        if fragment not in text:
+            raise RuntimeError(f"{label} missing expected fragment: {fragment}")
+
+
+def smoke_scaffold(command: list[str], scratch: Path) -> None:
+    out = scratch / "paybond_guardrail_demo.py"
+    run(
+        *command,
+        "--preset",
+        "paid-tool-guard",
+        "--framework",
+        "provider-agnostic",
+        "--out",
+        str(out),
+    )
+    assert_contains_all(
+        out.read_text(encoding="utf-8"),
+        (
+            "async def open_paybond_from_env() -> Paybond",
+            "async def bootstrap_sandbox_guardrail_intent",
+            "def wrap_paid_tool",
+            "async def submit_sandbox_evidence",
+            "async def replaceable_smoke_test_paid_tool",
+            "async def run_sandbox_smoke_path",
+            "paybond.guardrails.bootstrap_sandbox",
+            "paybond.spend_guard(guardrail.intent_id, guardrail.capability_token)",
+            "paybond.guardrails.submit_sandbox_evidence",
+            "Use the guarded handler with OpenAI, Gemini, Claude/Anthropic, local models, or any custom runtime.",
+            "Replace this sandbox smoke-test function with the real paid side-effecting tool.",
+        ),
+        "paybond-kit-init scaffold",
+    )
+
+    blocked = subprocess.run(
+        [
+            *command,
+            "--preset",
+            "paid-tool-guard",
+            "--out",
+            str(out),
+        ],
+        cwd=str(scratch),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if blocked.returncode == 0 or "already exists" not in blocked.stderr:
+        raise RuntimeError("paybond-kit-init must refuse to overwrite scaffolds without --force")
+
+    run(
+        *command,
+        "--preset",
+        "paid-tool-guard",
+        "--framework",
+        "mcp",
+        "--out",
+        str(out),
+        "--force",
+    )
+    assert_contains_all(
+        out.read_text(encoding="utf-8"),
+        ("Use the same operation name in your MCP tool handler before executing paid work.",),
+        "paybond-kit-init --force scaffold",
+    )
 
 
 def smoke_install(wheel: Path) -> None:
-    scratch = Path(tempfile.mkdtemp(prefix="paybond-kit-py-"))
+    scratch_parent = Path("/private/tmp") if Path("/private/tmp").is_dir() and os.access("/private/tmp", os.W_OK) else None
+    scratch = Path(tempfile.mkdtemp(prefix="paybond-kit-py-", dir=scratch_parent))
     try:
-        venv_dir = scratch / "venv"
-        venv.EnvBuilder(with_pip=True).create(venv_dir)
-        python = venv_dir / "bin" / "python"
-        run(str(python), "-m", "pip", "install", "--no-deps", str(wheel))
+        python = release_python()
+        site_dir = scratch / "site"
+        uv = find_tool("uv")
+        if uv:
+            run(uv, "pip", "install", "--python", str(python), "--target", str(site_dir), "--no-deps", "--no-index", "--no-cache", str(wheel))
+        else:
+            run(str(python), "-m", "pip", "install", "--no-deps", "--target", str(site_dir), str(wheel))
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(site_dir)
         code = (
             "from importlib import metadata\n"
             "from pathlib import Path\n"
@@ -100,7 +185,22 @@ def smoke_install(wheel: Path) -> None:
             "assert any(package_dir.glob('_native*.so')) or any(package_dir.glob('_native*.pyd'))\n"
             "print(dist.version)\n"
         )
-        run(str(python), "-c", code)
+        run(str(python), "-c", code, env=env)
+        package_dir = Path(
+            run(
+                str(python),
+                "-c",
+                (
+                    "from importlib import metadata\n"
+                    "from pathlib import Path\n"
+                    "site = Path(next(p for p in metadata.files('paybond-kit') if str(p).endswith('__init__.py')).locate())\n"
+                    "print(site.parent)\n"
+                ),
+                capture=True,
+                env=env,
+            ).strip()
+        )
+        smoke_scaffold([str(python), str(package_dir / "init.py")], scratch)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -114,9 +214,7 @@ def maybe_twine_check(paths: list[Path]) -> None:
 
 
 def run_pytest() -> None:
-    python = ROOT / ".venv" / "bin" / "python"
-    if not python.exists():
-        python = Path(sys.executable)
+    python = release_python()
     env = dict(os.environ)
     env["PYTHONPATH"] = str(ROOT / "src")
     run(str(python), "-m", "pytest", cwd=ROOT, env=env)
@@ -132,7 +230,7 @@ def main() -> None:
     DIST.mkdir(parents=True)
 
     run_pytest()
-    run(maturin, "build", "--sdist", "--release", "--out", str(DIST), cwd=ROOT)
+    run(maturin, "build", "--sdist", "--release", "--interpreter", str(release_python()), "--out", str(DIST), cwd=ROOT)
 
     artifacts = sorted(DIST.iterdir())
     wheel = next(path for path in artifacts if path.suffix == ".whl")

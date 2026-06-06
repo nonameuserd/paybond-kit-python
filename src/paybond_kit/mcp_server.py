@@ -344,6 +344,75 @@ class PaybondMCPRuntime:
             )
         return body
 
+    async def bootstrap_sandbox_guardrail(
+        self,
+        *,
+        operation: str,
+        requested_spend_cents: int,
+        currency: str | None = None,
+        evidence_schema: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        expected_tenant = await self.tenant_id()
+        payload: dict[str, Any] = {
+            "operation": operation,
+            "requested_spend_cents": int(requested_spend_cents),
+        }
+        if currency is not None and currency.strip():
+            payload["currency"] = currency.strip()
+        if evidence_schema is not None:
+            payload["evidence_schema"] = dict(evidence_schema)
+        if metadata is not None:
+            payload["metadata"] = dict(metadata)
+        body = await self._gateway.post_json(
+            "/v1/sandbox/guardrails/bootstrap",
+            payload,
+            extra_headers=_idempotency_headers(idempotency_key),
+        )
+        _validate_sandbox_guardrail_response(
+            body,
+            expected_tenant=expected_tenant,
+            require_capability_token=True,
+        )
+        return body
+
+    async def submit_sandbox_guardrail_evidence(
+        self,
+        intent_id: UUID,
+        *,
+        payload: dict[str, Any] | None = None,
+        artifacts: list[str] | None = None,
+        operation: str | None = None,
+        requested_spend_cents: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        expected_tenant = await self.tenant_id()
+        request_body: dict[str, Any] = {}
+        if payload is not None:
+            request_body["payload"] = dict(payload)
+        if artifacts is not None:
+            request_body["artifacts"] = list(artifacts)
+        if operation is not None and operation.strip():
+            request_body["operation"] = operation.strip()
+        if requested_spend_cents is not None:
+            request_body["requested_spend_cents"] = int(requested_spend_cents)
+        if metadata is not None:
+            request_body["metadata"] = dict(metadata)
+        body = await self._gateway.post_json(
+            f"/v1/sandbox/guardrails/{intent_id}/evidence",
+            request_body,
+            extra_headers=_idempotency_headers(idempotency_key),
+        )
+        _validate_sandbox_guardrail_response(body, expected_tenant=expected_tenant)
+        echoed_intent = str(body.get("intent_id", "")).strip()
+        if echoed_intent != str(intent_id):
+            raise TenantBindingError(
+                f"sandbox guardrail intent mismatch: requested={intent_id} gateway={echoed_intent!r}"
+            )
+        return body
+
     async def verify_agent_mandate_v1(self, signed_mandate: dict[str, Any]) -> dict[str, Any]:
         return await self._gateway.post_json(
             "/protocol/v2/mandates/verify",
@@ -613,6 +682,60 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             token=token,
             operation=operation,
             requested_spend_cents=requested_spend_cents,
+        )
+
+    @server.tool(
+        name="paybond_bootstrap_sandbox_guardrail",
+        description=(
+            "Bootstrap a sandbox-only Paybond guardrail intent for a first paid-tool "
+            "integration. Tenant scope is derived from the configured service-account "
+            "API key and the route never touches live settlement rails."
+        ),
+        structured_output=True,
+    )
+    async def paybond_bootstrap_sandbox_guardrail(
+        operation: str,
+        requested_spend_cents: int,
+        currency: str | None = None,
+        evidence_schema: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        return await runtime.bootstrap_sandbox_guardrail(
+            operation=operation,
+            requested_spend_cents=requested_spend_cents,
+            currency=currency,
+            evidence_schema=evidence_schema,
+            metadata=metadata,
+            idempotency_key=idempotency_key,
+        )
+
+    @server.tool(
+        name="paybond_submit_sandbox_guardrail_evidence",
+        description=(
+            "Submit evidence for a sandbox-only Paybond guardrail intent. Tenant scope "
+            "is derived from the configured service-account API key and simulator "
+            "settlement remains sandbox-only."
+        ),
+        structured_output=True,
+    )
+    async def paybond_submit_sandbox_guardrail_evidence(
+        intent_id: str,
+        payload: dict[str, Any] | None = None,
+        artifacts: list[str] | None = None,
+        operation: str | None = None,
+        requested_spend_cents: int | None = None,
+        metadata: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        return await runtime.submit_sandbox_guardrail_evidence(
+            UUID(intent_id),
+            payload=payload,
+            artifacts=artifacts,
+            operation=operation,
+            requested_spend_cents=requested_spend_cents,
+            metadata=metadata,
+            idempotency_key=idempotency_key,
         )
 
     @server.tool(
@@ -979,6 +1102,45 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, tuple):
         return [_jsonable(item) for item in value]
     return value
+
+
+def _idempotency_headers(idempotency_key: str | None) -> dict[str, str]:
+    if idempotency_key is not None and idempotency_key.strip():
+        return {"idempotency-key": idempotency_key.strip()}
+    return {}
+
+
+def _validate_sandbox_guardrail_response(
+    body: dict[str, Any],
+    *,
+    expected_tenant: str,
+    require_capability_token: bool = False,
+) -> None:
+    echoed_tenant = _required_mcp_string(body, "tenant_id")
+    if echoed_tenant != expected_tenant:
+        raise TenantBindingError(
+            f"sandbox guardrail tenant mismatch: expected={expected_tenant!r} gateway={echoed_tenant!r}"
+        )
+    _required_mcp_string(body, "intent_id")
+    if require_capability_token:
+        _required_mcp_string(body, "capability_token")
+    _required_mcp_string(body, "operation")
+    _required_mcp_int(body, "requested_spend_cents")
+    _required_mcp_string(body, "sandbox_lifecycle_status")
+
+
+def _required_mcp_string(body: dict[str, Any], field: str) -> str:
+    value = body.get(field)
+    if isinstance(value, str) and value.strip():
+        return value
+    raise RuntimeError(f"gateway sandbox guardrail response missing {field}")
+
+
+def _required_mcp_int(body: dict[str, Any], field: str) -> int:
+    value = body.get(field)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    raise RuntimeError(f"gateway sandbox guardrail response missing {field}")
 
 
 def _encode_recognition_proof_header(proof: dict[str, Any]) -> str:
