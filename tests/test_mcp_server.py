@@ -19,6 +19,16 @@ def _api_key() -> str:
     return "paybond_sk_" + "a" * 32 + "_" + "b" * 64
 
 
+def test_mcp_settings_loads_local_env_file(tmp_path) -> None:
+    env_file = tmp_path / ".env.local"
+    env_file.write_text(f"PAYBOND_API_KEY={_api_key()}\n", encoding="utf-8")
+
+    settings = PaybondMCPSettings.from_env({"PAYBOND_ENV_FILE": str(env_file)})
+
+    assert settings.api_key == _api_key()
+    assert settings.gateway_base_url == "https://api.paybond.ai"
+
+
 async def _close_server(server: object) -> None:
     runtime = getattr(server, "_paybond_runtime", None)
     if runtime is not None:

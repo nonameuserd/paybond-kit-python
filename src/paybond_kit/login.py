@@ -41,7 +41,7 @@ class OAuthPollError(PaybondLoginError):
         self.interval = interval
 
 
-DEVICE_ENVIRONMENTS = ("sandbox", "live")
+DEVICE_ENVIRONMENTS = ("sandbox",)
 
 
 @dataclass(frozen=True)
@@ -78,15 +78,16 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="paybond-kit-login",
         description=(
-            "Start a device login and write PAYBOND_API_KEY to an ignored env file. "
-            "Defaults to sandbox; pass --env live to mint a production operator key "
-            "(a tenant admin must approve it from an active live console session)."
+            "Start a device login and write PAYBOND_API_KEY to a local env file. "
+            "The default .env.local target is added to .gitignore when needed. "
+            "Defaults to sandbox. Production keys are created in Console and stored "
+            "in secret managers."
         ),
     )
     parser.add_argument("--env-file", default=DEFAULT_ENV_FILE)
     parser.add_argument("--gateway", default=DEFAULT_PAYBOND_GATEWAY_BASE_URL)
     parser.add_argument("--env", dest="environment", default="sandbox")
-    parser.add_argument("--live", dest="live", action="store_true")
+    parser.add_argument("--live", dest="live", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-open", action="store_true")
     parser.add_argument("--force", action="store_true")
     return parser
@@ -96,13 +97,21 @@ def parse_args(argv: list[str] | None = None) -> LoginOptions:
     args = _parser().parse_args(argv)
     env_file = str(args.env_file).strip()
     gateway = str(args.gateway).strip()
-    environment = "live" if bool(args.live) else str(args.environment).strip().lower()
+    if bool(args.live):
+        raise PaybondLoginError(
+            "live device login is not supported; create production keys in Console and store them in a secret manager"
+        )
+    environment = str(args.environment).strip().lower()
     if not env_file:
         raise PaybondLoginError("invalid --env-file")
     if not gateway:
         raise PaybondLoginError("invalid --gateway")
     if environment not in DEVICE_ENVIRONMENTS:
-        raise PaybondLoginError("invalid --env (expected sandbox or live)")
+        if environment == "live":
+            raise PaybondLoginError(
+                "live device login is not supported; create production keys in Console and store them in a secret manager"
+            )
+        raise PaybondLoginError("invalid --env (expected sandbox)")
     return LoginOptions(
         env_file=env_file,
         gateway=gateway,
@@ -173,6 +182,10 @@ def _git(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
 
 
 def assert_git_ignored(env_path: Path, *, cwd: Path) -> None:
+    _ensure_git_ignored(env_path, cwd=cwd, auto_add_default_env_file=False)
+
+
+def _ensure_git_ignored(env_path: Path, *, cwd: Path, auto_add_default_env_file: bool) -> None:
     try:
         root_result = _git(["rev-parse", "--show-toplevel"], cwd=cwd)
     except FileNotFoundError:
@@ -194,6 +207,20 @@ def assert_git_ignored(env_path: Path, *, cwd: Path) -> None:
     if ignore_result.returncode == 0:
         return
     if ignore_result.returncode == 1:
+        if auto_add_default_env_file and relative_target.as_posix() == DEFAULT_ENV_FILE:
+            gitignore_path = repo_root / ".gitignore"
+            try:
+                existing = gitignore_path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                existing = ""
+            suffix = "\n" if existing and not existing.endswith("\n") else ""
+            gitignore_path.write_text(f"{existing}{suffix}{DEFAULT_ENV_FILE}\n", encoding="utf-8")
+            recheck = _git(
+                ["-C", str(repo_root), "check-ignore", "--quiet", "--", relative_target.as_posix()],
+                cwd=cwd,
+            )
+            if recheck.returncode == 0:
+                return
         raise PaybondLoginError(
             f"Refusing to write {target} because it is not ignored by git. "
             f"Add {relative_target.as_posix()} to .gitignore or pass --env-file pointing outside the repo."
@@ -360,18 +387,11 @@ async def _run_login_with_client(
 ) -> int:
     env_path = (cwd / options.env_file).resolve() if not Path(options.env_file).is_absolute() else Path(options.env_file).resolve()
     assert_can_write_env_file(env_path, force=options.force)
-    assert_git_ignored(env_path, cwd=cwd)
+    _ensure_git_ignored(env_path, cwd=cwd, auto_add_default_env_file=options.env_file == DEFAULT_ENV_FILE)
 
     start = await _start_device_flow(client, options.gateway, options.environment)
     verification_url = start.verification_uri_complete or start.verification_uri
     stdout.write(f"Paybond {options.environment} login\n")
-    if options.environment == "live":
-        stdout.write(
-            "WARNING: this mints a PRODUCTION operator API key with access to live tenant data and money movement.\n"
-        )
-        stdout.write(
-            "A tenant admin must approve it from an active live console session and confirm the live environment.\n"
-        )
     stdout.write(f"Verification URL: {verification_url}\n")
     stdout.write(f"Code: {start.user_code}\n")
     if not options.no_open and not open_browser(verification_url):

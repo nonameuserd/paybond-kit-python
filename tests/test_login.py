@@ -13,6 +13,7 @@ import pytest
 from paybond_kit.login import (
     LoginOptions,
     assert_git_ignored,
+    parse_args,
     run_login,
     write_env_file,
 )
@@ -100,13 +101,16 @@ async def test_login_runs_device_flow_writes_0600_env_file_and_masks_output(tmp_
     assert "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" not in stdout.getvalue()
 
 
+def test_login_rejects_live_flags_before_network() -> None:
+    with pytest.raises(RuntimeError, match="live device login is not supported"):
+        parse_args(["--env", "live"])
+    with pytest.raises(RuntimeError, match="live device login is not supported"):
+        parse_args(["--live"])
+
+
 @pytest.mark.asyncio
-async def test_login_live_requests_live_and_accepts_live_key(tmp_path: Path) -> None:
-    stdout = io.StringIO()
-    live_key = (
-        "paybond_sk_live_0123456789abcdef0123456789abcdef_"
-        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-    )
+async def test_login_rejects_mismatched_environment(tmp_path: Path) -> None:
+    live_key = "paybond_sk_live_fixture_not_a_real_secret"
     client = FakeClient(
         [
             json_response(
@@ -126,60 +130,14 @@ async def test_login_live_requests_live_and_accepts_live_key(tmp_path: Path) -> 
                     "tenant_uuid": "550e8400-e29b-41d4-a716-446655440000",
                     "environment": "live",
                     "service_account_role": "operator",
-                    "expires_at": "2026-06-06T10:00:00Z",
                 }
             ),
         ]
     )
 
-    result = await run_login(
-        LoginOptions(env_file=".env.local", gateway="https://gateway.test", environment="live", no_open=True),
-        client=client,  # type: ignore[arg-type]
-        cwd=tmp_path,
-        stdout=stdout,
-        sleep=lambda _seconds: _noop(),
-        now=lambda: 0.0,
-    )
-
-    assert result == 0
-    assert client.requests[0][1]["requested_environment"] == "live"
-    assert (tmp_path / ".env.local").read_text(encoding="utf-8") == f"PAYBOND_API_KEY={live_key}\n"
-    assert "Paybond live login" in stdout.getvalue()
-    assert "PRODUCTION operator API key" in stdout.getvalue()
-    assert "Target live tenant: tenant-live" in stdout.getvalue()
-    assert "auto-expires at 2026-06-06T10:00:00Z" in stdout.getvalue()
-    assert live_key not in stdout.getvalue()
-
-
-@pytest.mark.asyncio
-async def test_login_rejects_mismatched_environment(tmp_path: Path) -> None:
-    client = FakeClient(
-        [
-            json_response(
-                {
-                    "device_code": "device-code",
-                    "user_code": "ABCD-EFGH",
-                    "verification_uri": "https://paybond.ai/device",
-                    "expires_in": 600,
-                    "interval": 5,
-                }
-            ),
-            json_response(
-                {
-                    "access_token": RAW_KEY,
-                    "token_type": "bearer",
-                    "tenant_id": "tenant-sandbox",
-                    "tenant_uuid": "550e8400-e29b-41d4-a716-446655440000",
-                    "environment": "sandbox",
-                    "service_account_role": "operator",
-                }
-            ),
-        ]
-    )
-
-    with pytest.raises(RuntimeError, match="sandbox key but live was requested"):
+    with pytest.raises(RuntimeError, match="live key but sandbox was requested"):
         await run_login(
-            LoginOptions(env_file=".env.local", gateway="https://gateway.test", environment="live", no_open=True),
+            LoginOptions(env_file=".env.local", gateway="https://gateway.test", environment="sandbox", no_open=True),
             client=client,  # type: ignore[arg-type]
             cwd=tmp_path,
             sleep=lambda _seconds: _noop(),
@@ -234,3 +192,45 @@ def test_git_guard_allows_ignored_env_file(tmp_path: Path) -> None:
     (tmp_path / ".gitignore").write_text("paybond-login-secrets\n", encoding="utf-8")
 
     assert_git_ignored(tmp_path / "paybond-login-secrets", cwd=tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_login_adds_default_env_file_to_gitignore(tmp_path: Path) -> None:
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    client = FakeClient(
+        [
+            json_response(
+                {
+                    "device_code": "device-code",
+                    "user_code": "ABCD-EFGH",
+                    "verification_uri": "https://paybond.ai/device",
+                    "expires_in": 600,
+                    "interval": 5,
+                }
+            ),
+            json_response(
+                {
+                    "access_token": RAW_KEY,
+                    "token_type": "bearer",
+                    "tenant_id": "tenant-sandbox",
+                    "tenant_uuid": "550e8400-e29b-41d4-a716-446655440000",
+                    "environment": "sandbox",
+                    "service_account_role": "operator",
+                }
+            ),
+        ]
+    )
+
+    result = await run_login(
+        LoginOptions(env_file=".env.local", gateway="https://gateway.test", no_open=True),
+        client=client,  # type: ignore[arg-type]
+        cwd=tmp_path,
+        sleep=lambda _seconds: _noop(),
+        now=lambda: 0.0,
+    )
+
+    assert result == 0
+    assert ".env.local" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    assert_git_ignored(tmp_path / ".env.local", cwd=tmp_path)

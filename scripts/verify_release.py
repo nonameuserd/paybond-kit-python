@@ -101,7 +101,7 @@ def assert_contains_all(text: str, fragments: tuple[str, ...], label: str) -> No
 
 
 def smoke_scaffold(command: list[str], scratch: Path) -> None:
-    out = scratch / "paybond_guardrail_demo.py"
+    out = scratch / "paybond_paid_tool_guard.py"
     run(
         *command,
         "--preset",
@@ -114,20 +114,22 @@ def smoke_scaffold(command: list[str], scratch: Path) -> None:
     assert_contains_all(
         out.read_text(encoding="utf-8"),
         (
-            "async def open_paybond_from_env() -> Paybond",
+            'async def open_paybond_from_env(env_file: str | None = ".env.local") -> Paybond',
+            "Production integration helpers only.",
             "async def bootstrap_sandbox_guardrail_intent",
             "def wrap_paid_tool",
             "async def submit_sandbox_evidence",
-            "async def replaceable_smoke_test_paid_tool",
-            "async def run_sandbox_smoke_path",
             "paybond.guardrails.bootstrap_sandbox",
             "paybond.spend_guard(guardrail.intent_id, guardrail.capability_token)",
             "paybond.guardrails.submit_sandbox_evidence",
             "Use the guarded handler with OpenAI, Gemini, Claude/Anthropic, local models, or any custom runtime.",
-            "Replace this sandbox smoke-test function with the real paid side-effecting tool.",
         ),
         "paybond-kit-init scaffold",
     )
+    scaffold_body = out.read_text(encoding="utf-8")
+    for banned in ("replaceable_smoke_test_paid_tool", "run_sandbox_smoke_path", "sandbox-confirmation"):
+        if banned in scaffold_body:
+            raise RuntimeError(f"paybond-kit-init scaffold should not include generated paid-tool implementation fragment: {banned}")
 
     blocked = subprocess.run(
         [

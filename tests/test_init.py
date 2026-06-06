@@ -21,19 +21,27 @@ def test_init_scaffolds_provider_agnostic_guardrail_integration(tmp_path, capsys
     assert_contains_all(
         out.read_text(encoding="utf-8"),
         (
-            "async def open_paybond_from_env() -> Paybond",
+            "Production integration helpers only.",
+            "def load_paybond_env_file",
+            "async def open_paybond_from_env(env_file: str | None = \".env.local\") -> Paybond",
             "async def bootstrap_sandbox_guardrail_intent",
             "def wrap_paid_tool",
             "async def submit_sandbox_evidence",
-            "async def replaceable_smoke_test_paid_tool",
-            "async def run_sandbox_smoke_path",
             "paybond.guardrails.bootstrap_sandbox",
             "paybond.spend_guard(guardrail.intent_id, guardrail.capability_token)",
             "paybond.guardrails.submit_sandbox_evidence",
             "Use the guarded handler with OpenAI, Gemini, Claude/Anthropic, local models, or any custom runtime.",
-            "Replace this sandbox smoke-test function with the real paid side-effecting tool.",
         ),
     )
+    body = out.read_text(encoding="utf-8")
+    for fragment in (
+        "replaceable_smoke_test_paid_tool",
+        "run_sandbox_smoke_path",
+        "sandbox-confirmation",
+        "if __name__",
+        "asyncio.run",
+    ):
+        assert fragment not in body
 
 
 def test_init_refuses_overwrite_without_force(tmp_path, capsys) -> None:
@@ -50,12 +58,12 @@ def test_init_refuses_overwrite_without_force(tmp_path, capsys) -> None:
 
 def test_init_defaults_match_one_command_guardrails_doc(tmp_path, capsys, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
-    out = tmp_path / "paybond_guardrail_demo.py"
+    out = tmp_path / "paybond_paid_tool_guard.py"
 
     assert main([]) == 0
 
     captured = capsys.readouterr()
-    assert "paybond_guardrail_demo.py" in captured.out
+    assert "paybond_paid_tool_guard.py" in captured.out
     assert out.exists()
     assert "Use the guarded handler with OpenAI, Gemini, Claude/Anthropic, local models, or any custom runtime." in out.read_text(
         encoding="utf-8"
@@ -63,7 +71,7 @@ def test_init_defaults_match_one_command_guardrails_doc(tmp_path, capsys, monkey
 
 
 def test_init_supports_vercel_ai_framework_note(tmp_path) -> None:
-    out = tmp_path / "paybond_guardrail_demo.py"
+    out = tmp_path / "paybond_paid_tool_guard.py"
 
     assert main(["--framework", "vercel-ai", "--out", str(out)]) == 0
 

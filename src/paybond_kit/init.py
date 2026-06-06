@@ -23,11 +23,9 @@ PRESETS = ("paid-tool-guard",)
 
 def _template(framework: str) -> str:
     note = FRAMEWORK_NOTES[framework]
-    return f'''import asyncio
-import json
-import os
+    return f'''import os
+from pathlib import Path
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import asdict, is_dataclass
 from typing import Any, TypeVar
 
 from paybond_kit import (
@@ -36,7 +34,9 @@ from paybond_kit import (
     SandboxGuardrailEvidenceResult,
 )
 
-DEFAULT_OPERATION = "paid_tool.smoke_test"
+# Production integration helpers only. Add your paid-tool handler in
+# application code and pass it to wrap_paid_tool(...).
+DEFAULT_OPERATION = "paid_tool.operation"
 DEFAULT_REQUESTED_SPEND_CENTS = 500
 
 TInput = TypeVar("TInput")
@@ -44,10 +44,42 @@ TResult = TypeVar("TResult")
 PaidToolHandler = Callable[[TInput], TResult | Awaitable[TResult]]
 
 
-async def open_paybond_from_env() -> Paybond:
+def _read_env_value(body: str, key: str) -> str | None:
+    prefix = f"{{key}}="
+    export_prefix = f"export {{key}}="
+    for raw_line in body.splitlines():
+        line = raw_line.strip()
+        if line.startswith(export_prefix):
+            value = line[len(export_prefix):].strip()
+        elif line.startswith(prefix):
+            value = line[len(prefix):].strip()
+        else:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\\"":
+            value = value[1:-1]
+        return value.strip() or None
+    return None
+
+
+def load_paybond_env_file(env_file: str = ".env.local") -> None:
+    if os.environ.get("PAYBOND_API_KEY", "").strip():
+        return
+    path = Path(env_file)
+    try:
+        body = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return
+    api_key = _read_env_value(body, "PAYBOND_API_KEY")
+    if api_key:
+        os.environ["PAYBOND_API_KEY"] = api_key
+
+
+async def open_paybond_from_env(env_file: str | None = ".env.local") -> Paybond:
+    if env_file is not None:
+        load_paybond_env_file(env_file)
     api_key = os.environ.get("PAYBOND_API_KEY", "").strip()
     if not api_key:
-        raise RuntimeError("PAYBOND_API_KEY is required")
+        raise RuntimeError("PAYBOND_API_KEY is required; run paybond-kit-login or configure your agent host to pass it")
 
     return await Paybond.open(
         api_key=api_key,
@@ -126,57 +158,12 @@ async def submit_sandbox_evidence(
         metadata=metadata,
         idempotency_key=idempotency_key,
     )
-
-
-async def replaceable_smoke_test_paid_tool(input: Mapping[str, Any]) -> dict[str, Any]:
-    # Replace this sandbox smoke-test function with the real paid side-effecting tool.
-    item_id = str(input.get("item_id", "replace-with-your-tool-input"))
-    max_price_cents = int(input.get("max_price_cents", DEFAULT_REQUESTED_SPEND_CENTS))
-    return {{
-        "confirmation_id": "sandbox-confirmation-" + item_id,
-        "item_id": item_id,
-        "charged_cents": min(max_price_cents, DEFAULT_REQUESTED_SPEND_CENTS),
-        "sandbox": True,
-    }}
-
-
-async def run_sandbox_smoke_path() -> dict[str, Any]:
-    paybond = await open_paybond_from_env()
-    guardrail = await bootstrap_sandbox_guardrail_intent(paybond)
-    guarded_tool = wrap_paid_tool(paybond, guardrail, replaceable_smoke_test_paid_tool)
-    tool_result = await guarded_tool(
-        {{
-            "item_id": "replace-with-your-tool-input",
-            "max_price_cents": DEFAULT_REQUESTED_SPEND_CENTS,
-        }}
-    )
-    evidence = await submit_sandbox_evidence(
-        paybond,
-        guardrail,
-        {{
-            "confirmation_id": tool_result["confirmation_id"],
-            "charged_cents": tool_result["charged_cents"],
-            "item_id": tool_result["item_id"],
-            "sandbox": tool_result["sandbox"],
-        }},
-    )
-    return {{"guardrail": guardrail, "tool_result": tool_result, "evidence": evidence}}
-
-
-def _json_default(value: Any) -> Any:
-    if is_dataclass(value):
-        return asdict(value)
-    return str(value)
-
-
-if __name__ == "__main__":
-    print(json.dumps(asyncio.run(run_sandbox_smoke_path()), default=_json_default, indent=2))
 '''
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Scaffold a Paybond guardrail integration with a sandbox smoke path."
+        description="Scaffold a production-shaped Paybond guardrail integration helper."
     )
     parser.add_argument(
         "--preset",
@@ -188,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
         choices=sorted(FRAMEWORK_NOTES),
         default="provider-agnostic",
     )
-    parser.add_argument("--out", default="paybond_guardrail_demo.py")
+    parser.add_argument("--out", default="paybond_paid_tool_guard.py")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
 

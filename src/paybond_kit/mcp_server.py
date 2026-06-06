@@ -7,6 +7,7 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, is_dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlencode, urljoin
 from uuid import UUID
@@ -24,6 +25,28 @@ if TYPE_CHECKING:
 
 DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal"
 DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway"
+DEFAULT_ENV_FILE = ".env.local"
+
+
+def _read_env_file_value(env_file: str, key: str) -> str:
+    try:
+        body = Path(env_file).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+    prefix = f"{key}="
+    export_prefix = f"export {key}="
+    for raw_line in body.splitlines():
+        line = raw_line.strip()
+        if line.startswith(export_prefix):
+            value = line[len(export_prefix):].strip()
+        elif line.startswith(prefix):
+            value = line[len(prefix):].strip()
+        else:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        return value.strip()
+    return ""
 
 
 class GatewayHTTPError(RuntimeError):
@@ -91,12 +114,14 @@ class PaybondMCPSettings:
         import os
 
         values = env or os.environ
-        api_key = values.get("PAYBOND_API_KEY", "").strip()
+        env_file = values.get("PAYBOND_ENV_FILE", "").strip() or DEFAULT_ENV_FILE
+        api_key = values.get("PAYBOND_API_KEY", "").strip() or _read_env_file_value(env_file, "PAYBOND_API_KEY")
+        gateway_base_url = values.get("PAYBOND_GATEWAY_BASE_URL", "").strip() or DEFAULT_PAYBOND_GATEWAY_BASE_URL
         principal_path = values.get("PAYBOND_PRINCIPAL_PATH", "").strip() or DEFAULT_PRINCIPAL_PATH
         max_retries_raw = values.get("PAYBOND_MCP_MAX_RETRIES", "").strip()
 
         if not api_key:
-            raise SystemExit("PAYBOND_API_KEY is required")
+            raise SystemExit("PAYBOND_API_KEY is required; run paybond-kit-login or configure your MCP host environment")
 
         max_retries = 3
         if max_retries_raw:
@@ -106,7 +131,7 @@ class PaybondMCPSettings:
                 raise SystemExit("PAYBOND_MCP_MAX_RETRIES must be an integer") from exc
 
         return cls(
-            gateway_base_url=DEFAULT_PAYBOND_GATEWAY_BASE_URL,
+            gateway_base_url=gateway_base_url,
             api_key=api_key,
             principal_path=principal_path,
             max_retries=max_retries,

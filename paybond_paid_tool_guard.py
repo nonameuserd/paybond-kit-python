@@ -1,8 +1,5 @@
-import asyncio
-import json
 import os
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import asdict, is_dataclass
 from typing import Any, TypeVar
 
 from paybond_kit import (
@@ -11,7 +8,9 @@ from paybond_kit import (
     SandboxGuardrailEvidenceResult,
 )
 
-DEFAULT_OPERATION = "paid_tool.smoke_test"
+# Production integration helpers only. Add your paid-tool handler in
+# application code and pass it to wrap_paid_tool(...).
+DEFAULT_OPERATION = "paid_tool.operation"
 DEFAULT_REQUESTED_SPEND_CENTS = 500
 
 TInput = TypeVar("TInput")
@@ -101,48 +100,3 @@ async def submit_sandbox_evidence(
         metadata=metadata,
         idempotency_key=idempotency_key,
     )
-
-
-async def replaceable_smoke_test_paid_tool(input: Mapping[str, Any]) -> dict[str, Any]:
-    # Replace this sandbox smoke-test function with the real paid side-effecting tool.
-    item_id = str(input.get("item_id", "replace-with-your-tool-input"))
-    max_price_cents = int(input.get("max_price_cents", DEFAULT_REQUESTED_SPEND_CENTS))
-    return {
-        "confirmation_id": "sandbox-confirmation-" + item_id,
-        "item_id": item_id,
-        "charged_cents": min(max_price_cents, DEFAULT_REQUESTED_SPEND_CENTS),
-        "sandbox": True,
-    }
-
-
-async def run_sandbox_smoke_path() -> dict[str, Any]:
-    paybond = await open_paybond_from_env()
-    guardrail = await bootstrap_sandbox_guardrail_intent(paybond)
-    guarded_tool = wrap_paid_tool(paybond, guardrail, replaceable_smoke_test_paid_tool)
-    tool_result = await guarded_tool(
-        {
-            "item_id": "replace-with-your-tool-input",
-            "max_price_cents": DEFAULT_REQUESTED_SPEND_CENTS,
-        }
-    )
-    evidence = await submit_sandbox_evidence(
-        paybond,
-        guardrail,
-        {
-            "confirmation_id": tool_result["confirmation_id"],
-            "charged_cents": tool_result["charged_cents"],
-            "item_id": tool_result["item_id"],
-            "sandbox": tool_result["sandbox"],
-        },
-    )
-    return {"guardrail": guardrail, "tool_result": tool_result, "evidence": evidence}
-
-
-def _json_default(value: Any) -> Any:
-    if is_dataclass(value):
-        return asdict(value)
-    return str(value)
-
-
-if __name__ == "__main__":
-    print(json.dumps(asyncio.run(run_sandbox_smoke_path()), default=_json_default, indent=2))
