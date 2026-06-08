@@ -29,6 +29,18 @@ def test_mcp_settings_loads_local_env_file(tmp_path) -> None:
     assert settings.gateway_base_url == "https://api.paybond.ai"
 
 
+def test_mcp_settings_accepts_registry_gateway_url_alias() -> None:
+    settings = PaybondMCPSettings.from_env(
+        {
+            "PAYBOND_API_KEY": _api_key(),
+            "PAYBOND_GATEWAY_URL": "https://gateway.registry.test",
+            "PAYBOND_GATEWAY_BASE_URL": "https://gateway.legacy.test",
+        }
+    )
+
+    assert settings.gateway_base_url == "https://gateway.registry.test"
+
+
 async def _close_server(server: object) -> None:
     runtime = getattr(server, "_paybond_runtime", None)
     if runtime is not None:
@@ -64,18 +76,45 @@ async def test_gateway_only_server_exposes_gateway_first_mutation_tools() -> Non
         assert "paybond_submit_evidence" in names
         assert "paybond_submit_spend_evidence" in names
         assert "paybond_create_intent_legacy" not in names
-        assert (
-            "Provider-agnostic spend gate"
-            in tool_by_name["paybond_authorize_agent_spend"].description
+        authorize = tool_by_name["paybond_authorize_agent_spend"].model_dump(
+            by_alias=True, exclude_none=True
         )
-        assert (
-            "intent_id and capability_token"
-            in tool_by_name["paybond_create_spend_intent"].description
+        assert authorize["title"] == "Authorize Agent Spend"
+        assert "Use this when" in authorize["description"]
+        assert "Do not use this for" in authorize["description"]
+        assert authorize["annotations"] == {
+            "title": "Authorize Agent Spend",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        }
+        assert authorize["outputSchema"]["properties"]["allow"]["type"] == "boolean"
+        assert authorize["outputSchema"]["properties"]["tenant"]["type"] == "string"
+        assert authorize["outputSchema"]["properties"]["intent_id"]["type"] == "string"
+
+        create_spend = tool_by_name["paybond_create_spend_intent"].model_dump(
+            by_alias=True, exclude_none=True
         )
-        assert (
-            "paybond_authorize_agent_spend"
-            in tool_by_name["paybond_fund_intent"].description
+        assert create_spend["title"] == "Create Spend Intent"
+        assert create_spend["annotations"]["readOnlyHint"] is False
+        assert create_spend["annotations"]["destructiveHint"] is False
+        assert create_spend["outputSchema"]["properties"]["intent_id"]["type"] == "string"
+        assert create_spend["outputSchema"]["properties"]["capability_token"]["type"] == "string"
+
+        fund = tool_by_name["paybond_fund_intent"].model_dump(
+            by_alias=True, exclude_none=True
         )
+        assert fund["title"] == "Fund Intent"
+        assert fund["annotations"]["readOnlyHint"] is False
+        assert fund["annotations"]["destructiveHint"] is True
+        assert "paybond_authorize_agent_spend" in fund["description"]
+
+        principal = tool_by_name["paybond_get_principal"].model_dump(
+            by_alias=True, exclude_none=True
+        )
+        assert principal["annotations"]["readOnlyHint"] is True
+        assert principal["annotations"]["openWorldHint"] is False
         assert "sandbox-only" in tool_by_name["paybond_bootstrap_sandbox_guardrail"].description
     finally:
         await _close_server(server)

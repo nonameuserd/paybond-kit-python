@@ -25,7 +25,11 @@ async def open_paybond_from_env() -> Paybond:
 
     return await Paybond.open(
         api_key=api_key,
-        gateway_base_url=os.environ.get("PAYBOND_GATEWAY_BASE_URL") or "https://api.paybond.ai",
+        gateway_base_url=(
+            os.environ.get("PAYBOND_GATEWAY_URL")
+            or os.environ.get("PAYBOND_GATEWAY_BASE_URL")
+            or "https://api.paybond.ai"
+        ),
         expected_environment="sandbox",
     )
 

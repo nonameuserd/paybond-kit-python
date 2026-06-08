@@ -1,5 +1,7 @@
 # `paybond-kit`
 
+<!-- mcp-name: io.github.nonameuserd/paybond -->
+
 Paybond Kit for Python is the PyPI package for tenant-bound Paybond integrations and delegated agent spend controls. It opens hosted Gateway sessions, verifies capability tokens, authorizes tool-call spend, signs intent and evidence payloads, uses Stripe Connect, Stripe ACH Direct Debit, or x402 / USDC-on-Base settlement rails, reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data, and includes agent-runtime integrations.
 
 Paybond is the SDK to use when you do not want to build your own delegated agent spend-governance middleware. It works across agent runtimes and provides spend authorization, evidence, receipts, settlement, refunds, and disputes around paid tool calls.
@@ -159,7 +161,7 @@ Gateway and trust helpers:
 
 Optional integrations:
 
-- Optional extras for `agents` and `langgraph`
+- Optional extra for `langgraph`
 - Optional extra for `mcp` with the tenant-bound `paybond-mcp-server` CLI
 - `paybond-kit-login` for sandbox device approval and local `.env.local` API-key setup
 - `paybond-kit-init` for generating a Paybond guardrail integration helper

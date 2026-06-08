@@ -92,6 +92,8 @@ def inspect_wheel(path: Path) -> None:
         raise RuntimeError("wheel must expose paybond-kit-login console script")
     if "paybond-kit-init=paybond_kit.init:main" not in normalized_entry_points:
         raise RuntimeError("wheel must expose paybond-kit-init console script")
+    if "paybond-mcp-server=paybond_kit.mcp_server:main" not in normalized_entry_points:
+        raise RuntimeError("wheel must expose paybond-mcp-server console script")
 
 
 def assert_contains_all(text: str, fragments: tuple[str, ...], label: str) -> None:
@@ -116,6 +118,8 @@ def smoke_scaffold(command: list[str], scratch: Path) -> None:
         (
             'async def open_paybond_from_env(env_file: str | None = ".env.local") -> Paybond',
             "Production integration helpers only.",
+            'os.environ.get("PAYBOND_GATEWAY_URL")',
+            'os.environ.get("PAYBOND_GATEWAY_BASE_URL")',
             "async def bootstrap_sandbox_guardrail_intent",
             "def wrap_paid_tool",
             "async def submit_sandbox_evidence",

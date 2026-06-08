@@ -24,6 +24,8 @@ def test_init_scaffolds_provider_agnostic_guardrail_integration(tmp_path, capsys
             "Production integration helpers only.",
             "def load_paybond_env_file",
             "async def open_paybond_from_env(env_file: str | None = \".env.local\") -> Paybond",
+            "os.environ.get(\"PAYBOND_GATEWAY_URL\")",
+            "os.environ.get(\"PAYBOND_GATEWAY_BASE_URL\")",
             "async def bootstrap_sandbox_guardrail_intent",
             "def wrap_paid_tool",
             "async def submit_sandbox_evidence",

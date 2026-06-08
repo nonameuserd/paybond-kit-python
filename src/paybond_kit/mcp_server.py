@@ -116,7 +116,11 @@ class PaybondMCPSettings:
         values = env or os.environ
         env_file = values.get("PAYBOND_ENV_FILE", "").strip() or DEFAULT_ENV_FILE
         api_key = values.get("PAYBOND_API_KEY", "").strip() or _read_env_file_value(env_file, "PAYBOND_API_KEY")
-        gateway_base_url = values.get("PAYBOND_GATEWAY_BASE_URL", "").strip() or DEFAULT_PAYBOND_GATEWAY_BASE_URL
+        gateway_base_url = (
+            values.get("PAYBOND_GATEWAY_URL", "").strip()
+            or values.get("PAYBOND_GATEWAY_BASE_URL", "").strip()
+            or DEFAULT_PAYBOND_GATEWAY_BASE_URL
+        )
         principal_path = values.get("PAYBOND_PRINCIPAL_PATH", "").strip() or DEFAULT_PRINCIPAL_PATH
         max_retries_raw = values.get("PAYBOND_MCP_MAX_RETRIES", "").strip()
 
@@ -617,11 +621,332 @@ class PaybondMCPRuntime:
             )
 
 
+def _mcp_output_object_schema(
+    properties: dict[str, Any],
+    required: list[str] | None = None,
+) -> dict[str, Any]:
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": True,
+    }
+    if required:
+        schema["required"] = required
+    return schema
+
+
+def _mcp_tool_selection_metadata(tool_annotations_cls: Any) -> dict[str, dict[str, Any]]:
+    def read_only(title: str) -> Any:
+        return tool_annotations_cls(
+            title=title,
+            readOnlyHint=True,
+            openWorldHint=False,
+        )
+
+    def additive_mutation(title: str) -> Any:
+        return tool_annotations_cls(
+            title=title,
+            readOnlyHint=False,
+            destructiveHint=False,
+            idempotentHint=False,
+            openWorldHint=True,
+        )
+
+    def live_mutation(title: str) -> Any:
+        return tool_annotations_cls(
+            title=title,
+            readOnlyHint=False,
+            destructiveHint=True,
+            idempotentHint=False,
+            openWorldHint=True,
+        )
+
+    return {
+        "paybond_get_principal": {
+            "title": "Get Paybond Principal",
+            "annotations": read_only("Get Paybond Principal"),
+        },
+        "paybond_verify_capability": {
+            "title": "Verify Paybond Capability",
+            "description": (
+                "Use this when you need raw capability-token verification for one tenant-bound Harbor intent. "
+                "Do not use this to create, fund, or modify intents; use paybond_authorize_agent_spend as "
+                "the clearer gate before side-effecting agent tools."
+            ),
+            "annotations": additive_mutation("Verify Paybond Capability"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "allow": {"type": "boolean"},
+                    "tenant": {"type": "string"},
+                    "intent_id": {"type": "string"},
+                    "audit_id": {"type": "string"},
+                },
+                ["tenant", "intent_id"],
+            ),
+        },
+        "paybond_authorize_agent_spend": {
+            "title": "Authorize Agent Spend",
+            "description": (
+                "Use this when an agent has an intent_id and capability_token and needs a tenant-bound spend "
+                "gate before calling a side-effecting tool, paid API, vendor action, or settlement workflow. "
+                "Do not use this for creating, funding, or changing intents; call paybond_create_spend_intent "
+                "or paybond_fund_intent first when no funded capability token exists."
+            ),
+            "annotations": additive_mutation("Authorize Agent Spend"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "allow": {"type": "boolean"},
+                    "tenant": {"type": "string"},
+                    "intent_id": {"type": "string"},
+                    "audit_id": {"type": "string"},
+                },
+                ["tenant", "intent_id"],
+            ),
+        },
+        "paybond_bootstrap_sandbox_guardrail": {
+            "title": "Bootstrap Sandbox Guardrail",
+            "description": (
+                "Use this when building or testing a first paid-tool integration and you need a sandbox-only "
+                "guardrail intent with no live settlement rails. Do not use this for production live money "
+                "movement or already-created Harbor intents."
+            ),
+            "annotations": additive_mutation("Bootstrap Sandbox Guardrail"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "tenant_id": {"type": "string"},
+                    "intent_id": {"type": "string"},
+                    "capability_token": {"type": "string"},
+                    "operation": {"type": "string"},
+                    "requested_spend_cents": {"type": "integer"},
+                    "sandbox_lifecycle_status": {"type": "string"},
+                    "settlement_rail": {"type": "string"},
+                    "settlement_mode": {"type": "string"},
+                },
+                [
+                    "tenant_id",
+                    "intent_id",
+                    "capability_token",
+                    "operation",
+                    "requested_spend_cents",
+                    "sandbox_lifecycle_status",
+                ],
+            ),
+        },
+        "paybond_submit_sandbox_guardrail_evidence": {
+            "title": "Submit Sandbox Guardrail Evidence",
+            "description": (
+                "Use this when a sandbox guardrail intent needs evidence to complete simulator settlement or "
+                "predicate checks. Do not use this for live Harbor spend evidence; use "
+                "paybond_submit_spend_evidence for production spend intents."
+            ),
+            "annotations": additive_mutation("Submit Sandbox Guardrail Evidence"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "tenant_id": {"type": "string"},
+                    "intent_id": {"type": "string"},
+                    "operation": {"type": "string"},
+                    "requested_spend_cents": {"type": "integer"},
+                    "sandbox_lifecycle_status": {"type": "string"},
+                    "predicate_passed": {"type": "boolean"},
+                    "payload_digest": {"type": "string"},
+                },
+                [
+                    "tenant_id",
+                    "intent_id",
+                    "operation",
+                    "requested_spend_cents",
+                    "sandbox_lifecycle_status",
+                ],
+            ),
+        },
+        "paybond_list_intents": {
+            "title": "List Harbor Intents",
+            "annotations": read_only("List Harbor Intents"),
+        },
+        "paybond_get_intent": {
+            "title": "Get Harbor Intent",
+            "annotations": read_only("Get Harbor Intent"),
+        },
+        "paybond_get_reputation_receipt": {
+            "title": "Get Reputation Receipt",
+            "annotations": read_only("Get Reputation Receipt"),
+        },
+        "paybond_get_portfolio_summary": {
+            "title": "Get Portfolio Summary",
+            "annotations": read_only("Get Portfolio Summary"),
+        },
+        "paybond_get_signed_portfolio_artifact": {
+            "title": "Get Signed Portfolio Artifact",
+            "annotations": read_only("Get Signed Portfolio Artifact"),
+        },
+        "paybond_get_fraud_assessment": {
+            "title": "Get Fraud Assessment",
+            "annotations": read_only("Get Fraud Assessment"),
+        },
+        "paybond_get_fraud_metrics": {
+            "title": "Get Fraud Metrics",
+            "annotations": read_only("Get Fraud Metrics"),
+        },
+        "paybond_get_a2a_agent_card": {
+            "title": "Get A2A Agent Card",
+            "annotations": read_only("Get A2A Agent Card"),
+        },
+        "paybond_list_a2a_task_contracts": {
+            "title": "List A2A Task Contracts",
+            "annotations": read_only("List A2A Task Contracts"),
+        },
+        "paybond_get_a2a_task_contract": {
+            "title": "Get A2A Task Contract",
+            "annotations": read_only("Get A2A Task Contract"),
+        },
+        "paybond_verify_agent_mandate_v1": {
+            "title": "Verify Agent Mandate",
+            "annotations": read_only("Verify Agent Mandate"),
+        },
+        "paybond_verify_agent_recognition_proof_v1": {
+            "title": "Verify Agent Recognition Proof",
+            "annotations": read_only("Verify Agent Recognition Proof"),
+        },
+        "paybond_import_agent_mandate_v1": {
+            "title": "Import Agent Mandate",
+            "annotations": additive_mutation("Import Agent Mandate"),
+        },
+        "paybond_get_settlement_receipt_v1": {
+            "title": "Get Settlement Receipt",
+            "annotations": read_only("Get Settlement Receipt"),
+        },
+        "paybond_verify_protocol_receipt_v1": {
+            "title": "Verify Protocol Receipt",
+            "annotations": read_only("Verify Protocol Receipt"),
+        },
+        "paybond_create_intent": {
+            "title": "Create Harbor Intent",
+            "description": (
+                "Use this when you already have a fully signed Harbor intent request body and replay-safe "
+                "recognition proof for the gateway /harbor/intents route. Do not use this for the normal "
+                "agent spend-control path unless you specifically need the low-level Harbor API; prefer "
+                "paybond_create_spend_intent."
+            ),
+            "annotations": additive_mutation("Create Harbor Intent"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "intent_id": {"type": "string"},
+                    "state": {"type": "string"},
+                    "capability_token": {"type": "string"},
+                },
+            ),
+        },
+        "paybond_create_spend_intent": {
+            "title": "Create Spend Intent",
+            "description": (
+                "Use this when an agent workflow needs a new Paybond spend intent with bounded budget, "
+                "allowed operations, evidence requirements, and settlement review. Do not use this for "
+                "checking an already funded capability token; use paybond_authorize_agent_spend before "
+                "the paid action."
+            ),
+            "annotations": additive_mutation("Create Spend Intent"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "intent_id": {"type": "string"},
+                    "state": {"type": "string"},
+                    "capability_token": {"type": "string"},
+                },
+            ),
+        },
+        "paybond_fund_intent": {
+            "title": "Fund Intent",
+            "description": (
+                "Use this when an existing Harbor intent needs to advance through funding via the gateway "
+                "and you have a replay-safe recognition proof. Do not use this to create a new intent or "
+                "to authorize a downstream tool call; use the returned intent_id and capability_token with "
+                "paybond_authorize_agent_spend."
+            ),
+            "annotations": live_mutation("Fund Intent"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "intent_id": {"type": "string"},
+                    "state": {"type": "string"},
+                    "capability_token": {"type": "string"},
+                },
+            ),
+        },
+        "paybond_submit_evidence": {
+            "title": "Submit Harbor Evidence",
+            "description": (
+                "Use this when you already have a Harbor evidence request body and recognition proof for "
+                "the gateway /harbor/intents/{id}/evidence route. Do not use this for the high-level "
+                "spend-control path unless you need the low-level Harbor API; prefer "
+                "paybond_submit_spend_evidence."
+            ),
+            "annotations": additive_mutation("Submit Harbor Evidence"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "intent_id": {"type": "string"},
+                    "state": {"type": "string"},
+                    "evidence_id": {"type": "string"},
+                },
+            ),
+        },
+        "paybond_submit_spend_evidence": {
+            "title": "Submit Spend Evidence",
+            "description": (
+                "Use this when a Paybond spend intent needs signed evidence so release, refund, review, "
+                "and receipt generation use the same audit-ready record. Do not use this to create or "
+                "fund intents, and do not use it for sandbox guardrail evidence."
+            ),
+            "annotations": additive_mutation("Submit Spend Evidence"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "intent_id": {"type": "string"},
+                    "state": {"type": "string"},
+                    "evidence_id": {"type": "string"},
+                },
+            ),
+        },
+        "paybond_confirm_settlement": {
+            "title": "Confirm Settlement",
+            "description": (
+                "Use this when a Harbor intent is ready for final settlement confirmation and you have "
+                "the signed body plus recognition proof. Do not use this for evidence submission or "
+                "capability authorization."
+            ),
+            "annotations": live_mutation("Confirm Settlement"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "intent_id": {"type": "string"},
+                    "state": {"type": "string"},
+                    "receipt_id": {"type": "string"},
+                },
+            ),
+        },
+    }
+
+
+def _apply_fastmcp_output_schemas(
+    server: Any,
+    tool_metadata: dict[str, dict[str, Any]],
+) -> None:
+    manager = getattr(server, "_tool_manager", None)
+    tools = getattr(manager, "_tools", None)
+    if not isinstance(tools, dict):
+        return
+    for name, metadata in tool_metadata.items():
+        output_schema = metadata.get("output_schema")
+        if output_schema is None:
+            continue
+        tool = tools.get(name)
+        fn_metadata = getattr(tool, "fn_metadata", None)
+        if fn_metadata is not None:
+            # FastMCP has no decorator output_schema argument in the pinned SDK.
+            fn_metadata.output_schema = output_schema
+
+
 def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
     """Build the stdio MCP server instance."""
 
     try:
         from mcp.server.fastmcp import FastMCP
+        from mcp.types import ToolAnnotations
     except ImportError as exc:  # pragma: no cover - exercised only without the optional dep
         raise RuntimeError(
             "The Paybond MCP server requires the optional 'mcp' dependency. "
@@ -654,25 +979,34 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         website_url="https://paybond.ai",
         lifespan=lifespan,
     )
+    tool_metadata = _mcp_tool_selection_metadata(ToolAnnotations)
 
-    @server.tool(
+    def paybond_tool(*, name: str, description: str) -> Any:
+        metadata = tool_metadata[name]
+        return server.tool(
+            name=name,
+            title=metadata["title"],
+            description=metadata.get("description", description),
+            annotations=metadata["annotations"],
+            structured_output=True,
+        )
+
+    @paybond_tool(
         name="paybond_get_principal",
         description=(
             "Resolve the tenant-bound Paybond principal behind the configured "
             "service-account API key."
         ),
-        structured_output=True,
     )
     async def paybond_get_principal() -> dict[str, Any]:
         return await runtime.principal()
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_verify_capability",
         description=(
             "Verify a capability token returned by a created or funded Paybond intent "
             "for one tenant-bound Harbor intent."
         ),
-        structured_output=True,
     )
     async def paybond_verify_capability(
         intent_id: str,
@@ -687,14 +1021,13 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             requested_spend_cents=requested_spend_cents,
         )
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_authorize_agent_spend",
         description=(
             "Provider-agnostic spend gate: verify the funded intent's capability token "
             "before a side-effecting tool, paid API, vendor action, or settlement "
             "workflow executes."
         ),
-        structured_output=True,
     )
     async def paybond_authorize_agent_spend(
         intent_id: str,
@@ -709,14 +1042,13 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             requested_spend_cents=requested_spend_cents,
         )
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_bootstrap_sandbox_guardrail",
         description=(
             "Bootstrap a sandbox-only Paybond guardrail intent for a first paid-tool "
             "integration. Tenant scope is derived from the configured service-account "
             "API key and the route never touches live settlement rails."
         ),
-        structured_output=True,
     )
     async def paybond_bootstrap_sandbox_guardrail(
         operation: str,
@@ -735,14 +1067,13 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             idempotency_key=idempotency_key,
         )
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_submit_sandbox_guardrail_evidence",
         description=(
             "Submit evidence for a sandbox-only Paybond guardrail intent. Tenant scope "
             "is derived from the configured service-account API key and simulator "
             "settlement remains sandbox-only."
         ),
-        structured_output=True,
     )
     async def paybond_submit_sandbox_guardrail_evidence(
         intent_id: str,
@@ -763,13 +1094,12 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             idempotency_key=idempotency_key,
         )
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_list_intents",
         description=(
             "List tenant-scoped Harbor intents through the gateway operator view. "
             "Supports optional status, operator DID, limit, and cursor filters."
         ),
-        structured_output=True,
     )
     async def paybond_list_intents(
         status: str | None = None,
@@ -784,18 +1114,16 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             cursor=cursor,
         )
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_get_intent",
         description="Fetch one tenant-scoped Harbor intent detail through the gateway operator view.",
-        structured_output=True,
     )
     async def paybond_get_intent(intent_id: str) -> dict[str, Any]:
         return await runtime.get_intent(UUID(intent_id))
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_get_reputation_receipt",
         description="Fetch the signed Signal receipt for one operator DID.",
-        structured_output=True,
     )
     async def paybond_get_reputation_receipt(
         operator_did: str,
@@ -807,10 +1135,9 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             score_version=score_version,
         )
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_get_portfolio_summary",
         description="Fetch the tenant-scoped Signal portfolio summary.",
-        structured_output=True,
     )
     async def paybond_get_portfolio_summary(
         score_version: str | None = None,
@@ -818,13 +1145,12 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         signal = await runtime.signal()
         return await signal.get_portfolio_summary(score_version=score_version)
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_get_signed_portfolio_artifact",
         description=(
             "Fetch the tenant-scoped signed Signal portfolio artifact for portable verifier "
             "and partner sharing."
         ),
-        structured_output=True,
     )
     async def paybond_get_signed_portfolio_artifact(
         score_version: str | None = None,
@@ -832,10 +1158,9 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         signal = await runtime.signal()
         return await signal.get_signed_portfolio_artifact(score_version=score_version)
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_get_fraud_assessment",
         description="Fetch the read-only fraud assessment for one tenant-scoped operator DID.",
-        structured_output=True,
     )
     async def paybond_get_fraud_assessment(
         operator_did: str,
@@ -847,10 +1172,9 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             score_version=score_version,
         )
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_get_fraud_metrics",
         description="Fetch tenant-scoped read-only fraud backtesting and monitoring metrics for a supported active window.",
-        structured_output=True,
     )
     async def paybond_get_fraud_metrics(
         window: str | None = None,
@@ -859,49 +1183,44 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         fraud = await runtime.fraud()
         return await fraud.get_fraud_metrics(window=window, score_version=score_version)
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_get_a2a_agent_card",
         description="Fetch the published Paybond A2A discovery card for protocol-trust delegation.",
-        structured_output=True,
     )
     async def paybond_get_a2a_agent_card() -> dict[str, Any]:
         return await runtime.get_a2a_agent_card()
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_list_a2a_task_contracts",
         description="Fetch the published catalog of Paybond A2A task contracts for delegated Harbor workflows.",
-        structured_output=True,
     )
     async def paybond_list_a2a_task_contracts() -> dict[str, Any]:
         return await runtime.get_a2a_task_contracts()
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_get_a2a_task_contract",
         description="Fetch one published Paybond A2A task contract by identifier.",
-        structured_output=True,
     )
     async def paybond_get_a2a_task_contract(contract_id: str) -> dict[str, Any]:
         return await runtime.get_a2a_task_contract(contract_id)
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_verify_agent_mandate_v1",
         description=(
             "Verify a signed AgentMandateV1 envelope through the gateway v2 protocol surface."
         ),
-        structured_output=True,
     )
     async def paybond_verify_agent_mandate_v1(
         signed_mandate: dict[str, Any],
     ) -> dict[str, Any]:
         return await runtime.verify_agent_mandate_v1(signed_mandate)
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_verify_agent_recognition_proof_v1",
         description=(
             "Verify a replay-safe AgentRecognitionProofV1 against an expected purpose, "
             "verifier context, and request envelope."
         ),
-        structured_output=True,
     )
     async def paybond_verify_agent_recognition_proof_v1(
         proof: dict[str, Any],
@@ -916,13 +1235,12 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             expected_verifier=expected_verifier,
         )
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_import_agent_mandate_v1",
         description=(
             "Import a signed AgentMandateV1 through the gateway v2 protocol surface and bind it "
             "to one Harbor intent using a replay-safe recognition proof."
         ),
-        structured_output=True,
     )
     async def paybond_import_agent_mandate_v1(
         signed_mandate: dict[str, Any],
@@ -937,29 +1255,26 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             transport_binding=transport_binding,
         )
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_get_settlement_receipt_v1",
         description="Fetch the signed protocol-v2 settlement receipt for one Harbor intent.",
-        structured_output=True,
     )
     async def paybond_get_settlement_receipt_v1(receipt_id: str) -> dict[str, Any]:
         return await runtime.get_settlement_receipt_v1(receipt_id)
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_verify_protocol_receipt_v1",
         description="Verify a protocol-v2 authorization or settlement receipt through the gateway.",
-        structured_output=True,
     )
     async def paybond_verify_protocol_receipt_v1(receipt: dict[str, Any]) -> dict[str, Any]:
         return await runtime.verify_protocol_receipt_v1(receipt)
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_create_intent",
         description=(
             "Create a Harbor intent through the gateway /harbor path. The request body must "
             "already be signed upstream and every call requires a recognition proof."
         ),
-        structured_output=True,
     )
     async def paybond_create_intent(
         body: dict[str, Any],
@@ -972,7 +1287,7 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             idempotency_key=idempotency_key,
         )
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_create_spend_intent",
         description=(
             "Create a signed Paybond spend intent through the gateway /harbor route. "
@@ -981,7 +1296,6 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             "use the returned intent_id and capability_token with "
             "paybond_authorize_agent_spend."
         ),
-        structured_output=True,
     )
     async def paybond_create_spend_intent(
         body: dict[str, Any],
@@ -994,14 +1308,13 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             idempotency_key=idempotency_key,
         )
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_fund_intent",
         description=(
             "Advance Harbor funding through the gateway /harbor path with a replay-safe "
             "recognition proof. When funding succeeds, use the returned capability_token "
             "with intent_id in paybond_authorize_agent_spend."
         ),
-        structured_output=True,
     )
     async def paybond_fund_intent(
         intent_id: str,
@@ -1016,12 +1329,11 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             idempotency_key=idempotency_key,
         )
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_submit_evidence",
         description=(
             "Submit evidence through the gateway /harbor path with a replay-safe recognition proof."
         ),
-        structured_output=True,
     )
     async def paybond_submit_evidence(
         intent_id: str,
@@ -1036,13 +1348,12 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             idempotency_key=idempotency_key,
         )
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_submit_spend_evidence",
         description=(
             "Submit signed evidence for a Paybond spend intent so release, refund, "
             "review, and receipt generation use the same audit-ready record."
         ),
-        structured_output=True,
     )
     async def paybond_submit_spend_evidence(
         intent_id: str,
@@ -1057,13 +1368,12 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             idempotency_key=idempotency_key,
         )
 
-    @server.tool(
+    @paybond_tool(
         name="paybond_confirm_settlement",
         description=(
             "Confirm Harbor settlement through the gateway /harbor path with a replay-safe "
             "recognition proof."
         ),
-        structured_output=True,
     )
     async def paybond_confirm_settlement(
         intent_id: str,
@@ -1078,6 +1388,7 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             idempotency_key=idempotency_key,
         )
 
+    _apply_fastmcp_output_schemas(server, tool_metadata)
     setattr(server, "_paybond_runtime", runtime)
     return server
 
