@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, ParamSpec, Protocol, TypeVar
+from typing import Any, Literal, ParamSpec, Protocol, TypeVar
 from uuid import UUID
 
 from paybond_kit.harbor import VerifyCapabilityResult
@@ -37,6 +37,15 @@ class PaybondSpendDeniedError(RuntimeError):
     def __init__(self, result: VerifyCapabilityResult) -> None:
         reason = result.message or result.code or "denied"
         super().__init__(f"Paybond spend authorization denied: {reason}")
+        self.result = result
+
+
+class PaybondSpendApprovalRequiredError(RuntimeError):
+    """Raised when Paybond requires operator approval before spend may proceed."""
+
+    def __init__(self, result: VerifyCapabilityResult) -> None:
+        reason = result.message or result.code or "approval_required"
+        super().__init__(f"Paybond spend authorization requires approval: {reason}")
         self.result = result
 
 
@@ -73,12 +82,30 @@ class PaybondSpendGuard:
         *,
         operation: str,
         requested_spend_cents: int = 0,
+        vendor_id: str | None = None,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        tool_call_id: str | None = None,
+        tool_name: str | None = None,
+        currency: str | None = None,
+        agent_subject: str | None = None,
+        approval_token: str | None = None,
+        idempotency_key: str | None = None,
     ) -> VerifyCapabilityResult:
         return await self.harbor.verify_capability(
             intent_id=self.intent_id,
             token=self.capability_token,
             operation=operation,
             requested_spend_cents=requested_spend_cents,
+            vendor_id=vendor_id,
+            task_id=task_id,
+            workflow_id=workflow_id,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            currency=currency,
+            agent_subject=agent_subject,
+            approval_token=approval_token,
+            idempotency_key=idempotency_key,
         )
 
     async def authorize_spend(
@@ -86,10 +113,28 @@ class PaybondSpendGuard:
         *,
         operation: str,
         requested_spend_cents: int = 0,
+        vendor_id: str | None = None,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        tool_call_id: str | None = None,
+        tool_name: str | None = None,
+        currency: str | None = None,
+        agent_subject: str | None = None,
+        approval_token: str | None = None,
+        idempotency_key: str | None = None,
     ) -> VerifyCapabilityResult:
         return await self.verify_spend_capability(
             operation=operation,
             requested_spend_cents=requested_spend_cents,
+            vendor_id=vendor_id,
+            task_id=task_id,
+            workflow_id=workflow_id,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            currency=currency,
+            agent_subject=agent_subject,
+            approval_token=approval_token,
+            idempotency_key=idempotency_key,
         )
 
     async def assert_spend_authorized(
@@ -97,31 +142,90 @@ class PaybondSpendGuard:
         *,
         operation: str,
         requested_spend_cents: int = 0,
+        vendor_id: str | None = None,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        tool_call_id: str | None = None,
+        tool_name: str | None = None,
+        currency: str | None = None,
+        agent_subject: str | None = None,
+        approval_token: str | None = None,
+        idempotency_key: str | None = None,
     ) -> VerifyCapabilityResult:
         result = await self.authorize_spend(
             operation=operation,
             requested_spend_cents=requested_spend_cents,
+            vendor_id=vendor_id,
+            task_id=task_id,
+            workflow_id=workflow_id,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            currency=currency,
+            agent_subject=agent_subject,
+            approval_token=approval_token,
+            idempotency_key=idempotency_key,
         )
         if not result.allow:
+            if result.approval_required:
+                raise PaybondSpendApprovalRequiredError(result)
             raise PaybondSpendDeniedError(result)
         return result
+
+    async def complete_spend_authorization(
+        self,
+        decision_id: str,
+        outcome: Literal["consumed", "released"],
+    ) -> None:
+        """Finalize scope reservations after tool execution completes or is aborted."""
+        complete = getattr(self.harbor, "complete_spend_decision", None)
+        if complete is None:
+            return
+        await complete(decision_id=decision_id, outcome=outcome)
 
     def guard_tool(
         self,
         *,
         operation: str,
         requested_spend_cents: int = 0,
+        vendor_id: str | None = None,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        tool_call_id: str | None = None,
+        tool_name: str | None = None,
+        currency: str | None = None,
+        agent_subject: str | None = None,
+        approval_token: str | None = None,
+        idempotency_key: str | None = None,
         handler: Callable[P, R | Awaitable[R]],
     ) -> Callable[P, Awaitable[R]]:
         async def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
-            await self.assert_spend_authorized(
+            auth = await self.assert_spend_authorized(
                 operation=operation,
                 requested_spend_cents=requested_spend_cents,
+                vendor_id=vendor_id,
+                task_id=task_id,
+                workflow_id=workflow_id,
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                currency=currency,
+                agent_subject=agent_subject,
+                approval_token=approval_token,
+                idempotency_key=idempotency_key,
             )
-            out = handler(*args, **kwargs)
-            if inspect.isawaitable(out):
-                return await out
-            return out
+            try:
+                out = handler(*args, **kwargs)
+                if inspect.isawaitable(out):
+                    out = await out
+                if auth.decision_id is not None:
+                    await self.complete_spend_authorization(str(auth.decision_id), "consumed")
+                return out
+            except Exception:
+                if auth.decision_id is not None:
+                    try:
+                        await self.complete_spend_authorization(str(auth.decision_id), "released")
+                    except Exception:
+                        pass
+                raise
 
         return wrapped
 
@@ -143,11 +247,29 @@ def guard_tool(
     *,
     operation: str,
     requested_spend_cents: int = 0,
+    vendor_id: str | None = None,
+    task_id: str | None = None,
+    workflow_id: str | None = None,
+    tool_call_id: str | None = None,
+    tool_name: str | None = None,
+    currency: str | None = None,
+    agent_subject: str | None = None,
+    approval_token: str | None = None,
+    idempotency_key: str | None = None,
     handler: Callable[P, R | Awaitable[R]],
 ) -> Callable[P, Awaitable[R]]:
     return PaybondSpendGuard(source).guard_tool(
         operation=operation,
         requested_spend_cents=requested_spend_cents,
+        vendor_id=vendor_id,
+        task_id=task_id,
+        workflow_id=workflow_id,
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        currency=currency,
+        agent_subject=agent_subject,
+        approval_token=approval_token,
+        idempotency_key=idempotency_key,
         handler=handler,
     )
 
@@ -159,6 +281,7 @@ paybond_mcp_tool_spend_guard = guard_tool
 
 
 __all__ = [
+    "PaybondSpendApprovalRequiredError",
     "PaybondSpendDeniedError",
     "PaybondSpendGuard",
     "authorize_spend",

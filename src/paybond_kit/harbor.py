@@ -37,6 +37,125 @@ class VerifyCapabilityResult:
     intent_id: UUID
     code: str | None
     message: str | None
+    decision_id: UUID | None = None
+    approval_request_id: UUID | None = None
+    policy_version: int | None = None
+    reason_codes: tuple[str, ...] = ()
+    spend_scope: dict[str, str] | None = None
+    remaining_cents: int | None = None
+    retry_after: int | None = None
+
+    @property
+    def approval_required(self) -> bool:
+        if self.code == "approval_required":
+            return True
+        return any(
+            code in self.reason_codes
+            for code in (
+                "approval_threshold_exceeded",
+                "approval_required_pending",
+                "approval_quorum_incomplete",
+                "anomaly_new_vendor",
+                "anomaly_amount_spike",
+                "anomaly_rapid_auth",
+                "anomaly_cap_proximity",
+            )
+        )
+
+
+def _parse_verify_capability_result(
+    body: dict[str, Any],
+    *,
+    expected_tenant: str,
+    expected_intent_id: UUID,
+) -> VerifyCapabilityResult:
+    tenant = str(body["tenant"])
+    rid = UUID(str(body["intent_id"]))
+    if tenant != expected_tenant:
+        raise TenantBindingError(
+            f"verify tenant mismatch: client={expected_tenant!r} remote={tenant!r}"
+        )
+    if rid != expected_intent_id:
+        raise TenantBindingError(
+            f"verify intent mismatch: requested={expected_intent_id} remote={rid}"
+        )
+    reason_codes = tuple(str(code) for code in body.get("reason_codes") or ())
+    spend_scope_raw = body.get("spend_scope")
+    spend_scope = (
+        {
+            "scope_type": str(spend_scope_raw.get("scope_type", "")),
+            "scope_key": str(spend_scope_raw.get("scope_key", "")),
+        }
+        if isinstance(spend_scope_raw, dict)
+        else None
+    )
+    decision_id = UUID(str(body["decision_id"])) if body.get("decision_id") else None
+    approval_request_id = (
+        UUID(str(body["approval_request_id"])) if body.get("approval_request_id") else None
+    )
+    policy_version = int(body["policy_version"]) if body.get("policy_version") is not None else None
+    remaining_cents = (
+        int(body["remaining_cents"]) if body.get("remaining_cents") is not None else None
+    )
+    retry_after = int(body["retry_after"]) if body.get("retry_after") is not None else None
+    return VerifyCapabilityResult(
+        allow=bool(body["allow"]),
+        audit_id=UUID(str(body["audit_id"])),
+        tenant=tenant,
+        intent_id=rid,
+        code=body.get("code"),
+        message=body.get("message"),
+        decision_id=decision_id,
+        approval_request_id=approval_request_id,
+        policy_version=policy_version,
+        reason_codes=reason_codes,
+        spend_scope=spend_scope,
+        remaining_cents=remaining_cents,
+        retry_after=retry_after,
+    )
+
+
+def _verify_capability_payload(
+    *,
+    intent_id: UUID,
+    token: str,
+    operation: str,
+    requested_spend_cents: int,
+    vendor_id: str | None = None,
+    task_id: str | None = None,
+    workflow_id: str | None = None,
+    tool_call_id: str | None = None,
+    tool_name: str | None = None,
+    currency: str | None = None,
+    agent_subject: str | None = None,
+    approval_token: str | None = None,
+    idempotency_key: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "intent_id": str(intent_id),
+        "token": token,
+        "operation": operation,
+        "requested_spend_cents": int(requested_spend_cents),
+    }
+    if vendor_id and vendor_id.strip():
+        payload["vendor_id"] = vendor_id.strip()
+    if task_id and task_id.strip():
+        payload["task_id"] = task_id.strip()
+    if workflow_id and workflow_id.strip():
+        payload["workflow_id"] = workflow_id.strip()
+    if tool_call_id and tool_call_id.strip():
+        payload["tool_call_id"] = tool_call_id.strip()
+    if tool_name and tool_name.strip():
+        payload["tool_name"] = tool_name.strip()
+    if currency and currency.strip():
+        payload["currency"] = currency.strip()
+    if agent_subject and agent_subject.strip():
+        payload["agent_subject"] = agent_subject.strip()
+    if approval_token and approval_token.strip():
+        payload["approval_token"] = approval_token.strip()
+    if idempotency_key and idempotency_key.strip():
+        payload["idempotency_key"] = idempotency_key.strip()
+    return payload
 
 
 @dataclass(frozen=True)
@@ -260,6 +379,15 @@ class HarborClient:
         token: str,
         operation: str,
         requested_spend_cents: int = 0,
+        vendor_id: str | None = None,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        tool_call_id: str | None = None,
+        tool_name: str | None = None,
+        currency: str | None = None,
+        agent_subject: str | None = None,
+        approval_token: str | None = None,
+        idempotency_key: str | None = None,
     ) -> VerifyCapabilityResult:
         """
         Call ``POST /verify`` with a Biscuit capability token (PAYBOND-006).
@@ -271,13 +399,25 @@ class HarborClient:
             requested_spend_cents: Spend the tool intends to consume against the token budget.
         """
         url = f"{self._base}verify"
-        payload: dict[str, Any] = {
-            "intent_id": str(intent_id),
-            "token": token,
-            "operation": operation,
-            "requested_spend_cents": requested_spend_cents,
-        }
-        response = await self._post_json_with_retries("verify", {}, payload)
+        payload = _verify_capability_payload(
+            intent_id=intent_id,
+            token=token,
+            operation=operation,
+            requested_spend_cents=requested_spend_cents,
+            vendor_id=vendor_id,
+            task_id=task_id,
+            workflow_id=workflow_id,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            currency=currency,
+            agent_subject=agent_subject,
+            approval_token=approval_token,
+            idempotency_key=idempotency_key,
+        )
+        extra_headers = {}
+        if idempotency_key and idempotency_key.strip():
+            extra_headers["idempotency-key"] = idempotency_key.strip()
+        response = await self._post_json_with_retries("verify", extra_headers, payload)
         if response.status_code >= 400:
             raise HarborHttpError(
                 f"Harbor verify HTTP {response.status_code}: {response.text}",
@@ -286,23 +426,10 @@ class HarborClient:
                 body_text=response.text,
             )
         body = response.json()
-        tenant = str(body["tenant"])
-        rid = UUID(str(body["intent_id"]))
-        if tenant != self._tenant:
-            raise TenantBindingError(
-                f"verify tenant mismatch: client={self._tenant!r} harbor={tenant!r}"
-            )
-        if rid != intent_id:
-            raise TenantBindingError(
-                f"verify intent mismatch: requested={intent_id} harbor={rid}"
-            )
-        return VerifyCapabilityResult(
-            allow=bool(body["allow"]),
-            audit_id=UUID(str(body["audit_id"])),
-            tenant=tenant,
-            intent_id=rid,
-            code=body.get("code"),
-            message=body.get("message"),
+        return _parse_verify_capability_result(
+            body,
+            expected_tenant=self._tenant,
+            expected_intent_id=intent_id,
         )
 
     async def verify_spend_capability(
@@ -805,18 +932,37 @@ class GatewayHarborClient:
         token: str,
         operation: str,
         requested_spend_cents: int = 0,
+        vendor_id: str | None = None,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        tool_call_id: str | None = None,
+        tool_name: str | None = None,
+        currency: str | None = None,
+        agent_subject: str | None = None,
+        approval_token: str | None = None,
+        idempotency_key: str | None = None,
     ) -> VerifyCapabilityResult:
         path = "verify"
         url = f"{self._base}{path}"
-        response = await self._post_json_with_retries(
-            path,
-            {
-                "intent_id": str(intent_id),
-                "token": token,
-                "operation": operation,
-                "requested_spend_cents": int(requested_spend_cents),
-            },
+        payload = _verify_capability_payload(
+            intent_id=intent_id,
+            token=token,
+            operation=operation,
+            requested_spend_cents=requested_spend_cents,
+            vendor_id=vendor_id,
+            task_id=task_id,
+            workflow_id=workflow_id,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            currency=currency,
+            agent_subject=agent_subject,
+            approval_token=approval_token,
+            idempotency_key=idempotency_key,
         )
+        extra_headers = {}
+        if idempotency_key and idempotency_key.strip():
+            extra_headers["idempotency-key"] = idempotency_key.strip()
+        response = await self._post_json_with_retries(path, payload, extra_headers=extra_headers)
         if response.status_code >= 400:
             raise HarborHttpError(
                 f"Gateway verify HTTP {response.status_code}: {response.text}",
@@ -832,23 +978,10 @@ class GatewayHarborClient:
                 url=url,
                 body_text=response.text,
             )
-        tenant = str(body.get("tenant", ""))
-        rid = UUID(str(body.get("intent_id", "")))
-        if tenant != self._tenant:
-            raise TenantBindingError(
-                f"verify tenant mismatch: client={self._tenant!r} gateway={tenant!r}"
-            )
-        if rid != intent_id:
-            raise TenantBindingError(
-                f"verify intent mismatch: requested={intent_id} gateway={rid}"
-            )
-        return VerifyCapabilityResult(
-            allow=bool(body["allow"]),
-            audit_id=UUID(str(body["audit_id"])),
-            tenant=tenant,
-            intent_id=rid,
-            code=body.get("code"),
-            message=body.get("message"),
+        return _parse_verify_capability_result(
+            body,
+            expected_tenant=self._tenant,
+            expected_intent_id=intent_id,
         )
 
     async def verify_spend_capability(
@@ -880,6 +1013,24 @@ class GatewayHarborClient:
             operation=operation,
             requested_spend_cents=requested_spend_cents,
         )
+
+    async def complete_spend_decision(
+        self,
+        *,
+        decision_id: str,
+        outcome: Literal["consumed", "released"],
+    ) -> None:
+        """Finalize active spend reservations after tool execution completes or is aborted."""
+        path = f"v1/spend/decisions/{decision_id}/complete"
+        url = f"{self._base}{path}"
+        response = await self._post_json_with_retries(path, {"outcome": outcome})
+        if response.status_code >= 400:
+            raise HarborHttpError(
+                f"Gateway spend complete HTTP {response.status_code}: {response.text}",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
 
     async def create_intent(
         self,

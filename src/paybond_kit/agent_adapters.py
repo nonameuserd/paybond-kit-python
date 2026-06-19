@@ -9,6 +9,7 @@ from uuid import UUID
 
 from paybond_kit.harbor import VerifyCapabilityResult
 from paybond_kit.spend_guard import (
+    PaybondSpendApprovalRequiredError,
     PaybondSpendDeniedError,
     PaybondSpendGuard,
 )
@@ -83,8 +84,9 @@ def paybond_runtime_tool_call_adapter(
         operation: Static operation name, or a callable that extracts it from the runtime tool call.
         execute: Application-owned function that performs the side-effecting work after allow.
         requested_spend_cents: Static spend hint, or a callable that extracts it from the call.
-        on_deny: Optional runtime-specific denial mapper. If omitted, denials raise
-            :class:`PaybondSpendDeniedError`.
+        on_deny: Optional runtime-specific denial mapper. If omitted, hard denials raise
+            :class:`PaybondSpendDeniedError` and approval holds raise
+            :class:`PaybondSpendApprovalRequiredError`.
     """
 
     guard = PaybondSpendGuard(source)
@@ -99,6 +101,8 @@ def paybond_runtime_tool_call_adapter(
         if not result.allow:
             if on_deny is not None:
                 return await _maybe_await(on_deny(result, call))
+            if result.approval_required:
+                raise PaybondSpendApprovalRequiredError(result)
             raise PaybondSpendDeniedError(result)
         return await _maybe_await(execute(call))
 

@@ -63,6 +63,7 @@ from paybond_kit.signal import (
 from paybond_kit.signing import sign_payee_evidence_binding
 from paybond_kit.spend_guard import (
     PaybondSpendDeniedError,
+    PaybondSpendApprovalRequiredError,
     PaybondSpendGuard,
     authorize_spend,
     guard_tool,
@@ -91,6 +92,7 @@ __all__ = [
     "PaybondCapabilityBinding",
     "PaybondIntents",
     "PaybondSpendDeniedError",
+    "PaybondSpendApprovalRequiredError",
     "PaybondSpendGuard",
     "SandboxGuardrailBootstrapResult",
     "SandboxGuardrailEvidenceResult",

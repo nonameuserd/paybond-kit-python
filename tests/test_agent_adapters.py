@@ -5,7 +5,11 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from paybond_kit import PaybondSpendDeniedError, paybond_runtime_tool_call_adapter
+from paybond_kit import (
+    PaybondSpendApprovalRequiredError,
+    PaybondSpendDeniedError,
+    paybond_runtime_tool_call_adapter,
+)
 from paybond_kit.harbor import VerifyCapabilityResult
 
 
@@ -28,6 +32,15 @@ class _FakeHarbor:
         token: str,
         operation: str,
         requested_spend_cents: int = 0,
+        vendor_id: str | None = None,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        tool_call_id: str | None = None,
+        tool_name: str | None = None,
+        currency: str | None = None,
+        agent_subject: str | None = None,
+        approval_token: str | None = None,
+        idempotency_key: str | None = None,
     ) -> VerifyCapabilityResult:
         self.calls.append(
             {
@@ -35,6 +48,15 @@ class _FakeHarbor:
                 "token": token,
                 "operation": operation,
                 "requested_spend_cents": requested_spend_cents,
+                "vendor_id": vendor_id,
+                "task_id": task_id,
+                "workflow_id": workflow_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "currency": currency,
+                "agent_subject": agent_subject,
+                "approval_token": approval_token,
+                "idempotency_key": idempotency_key,
             }
         )
         return self.result
@@ -78,6 +100,15 @@ async def test_runtime_tool_call_adapter_executes_after_allow() -> None:
             "token": "cap-token",
             "operation": "travel.book_hotel",
             "requested_spend_cents": 20_000,
+            "vendor_id": None,
+            "task_id": None,
+            "workflow_id": None,
+            "tool_call_id": None,
+            "tool_name": None,
+            "currency": None,
+            "agent_subject": None,
+            "approval_token": None,
+            "idempotency_key": None,
         }
     ]
     assert executed == ["NYC"]
@@ -121,4 +152,29 @@ async def test_runtime_tool_call_adapter_raises_denial_by_default() -> None:
     )
 
     with pytest.raises(PaybondSpendDeniedError):
+        await run({})
+
+
+@pytest.mark.asyncio
+async def test_runtime_tool_call_adapter_raises_approval_required_separately() -> None:
+    intent_id = uuid4()
+    harbor = _FakeHarbor(
+        VerifyCapabilityResult(
+            allow=False,
+            audit_id=uuid4(),
+            tenant="tenant-a",
+            intent_id=intent_id,
+            code="approval_required",
+            message="operator approval required",
+            reason_codes=("approval_threshold_exceeded",),
+        )
+    )
+    source = _Source(harbor=harbor, intent_id=intent_id, capability_token="cap-token")
+    run = paybond_runtime_tool_call_adapter(
+        source,
+        operation="travel.book_hotel",
+        execute=lambda _: {"status": "ok"},
+    )
+
+    with pytest.raises(PaybondSpendApprovalRequiredError):
         await run({})
