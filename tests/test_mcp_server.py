@@ -12,6 +12,7 @@ from paybond_kit.mcp_server import (
     DEFAULT_RECOGNITION_VERIFIER_ID,
     PaybondMCPSettings,
     build_mcp_server,
+    run_mcp_stdio,
 )
 
 
@@ -39,6 +40,13 @@ def test_mcp_settings_accepts_registry_gateway_url_alias() -> None:
     )
 
     assert settings.gateway_base_url == "https://gateway.registry.test"
+
+
+def test_run_mcp_stdio_invalid_tool_policy_exits_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PAYBOND_API_KEY", _api_key())
+    monkeypatch.setenv("PAYBOND_MCP_TOOL_POLICY", "allowlist")
+    with pytest.raises(SystemExit, match="tool-allowlist"):
+        run_mcp_stdio([])
 
 
 async def _close_server(server: object) -> None:
@@ -732,3 +740,66 @@ async def test_import_agent_mandate_tool_surfaces_explicit_protocol_error_codes(
             )
     finally:
         await _close_server(server)
+
+
+@pytest.mark.asyncio
+async def test_readonly_tool_policy_limits_exposed_tools() -> None:
+    from paybond_kit.mcp_policy import parse_mcp_tool_policy
+
+    server = build_mcp_server(
+        PaybondMCPSettings(
+            gateway_base_url="https://gateway.test",
+            api_key=_api_key(),
+            tool_policy=parse_mcp_tool_policy("readonly"),
+        )
+    )
+    try:
+        tools = await server.list_tools()
+        names = {tool.name for tool in tools}
+        assert "paybond_get_principal" in names
+        assert "paybond_create_spend_intent" not in names
+    finally:
+        await _close_server(server)
+
+
+def test_mcp_stdio_stdout_contract_is_mcp_pure(tmp_path) -> None:
+    import subprocess
+    import sys
+
+    from paybond_kit.cli.doctor_agent import _stdout_is_mcp_pure, encode_mcp_message
+
+    env_file = tmp_path / ".env.local"
+    env_file.write_text(f"PAYBOND_API_KEY={_api_key()}\n", encoding="utf-8")
+    process = subprocess.Popen(
+        [sys.executable, "-m", "paybond_kit.mcp_server"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=str(tmp_path),
+        env={
+            **dict(__import__("os").environ),
+            "PAYBOND_ENV_FILE": str(env_file),
+            "PAYBOND_API_KEY": "",
+        },
+    )
+    assert process.stdin is not None
+    assert process.stdout is not None
+    try:
+        initialize = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "paybond-test", "version": "0"},
+            },
+        }
+        process.stdin.write(encode_mcp_message(initialize))
+        process.stdin.flush()
+        stdout = process.stdout.read(4096)
+        assert _stdout_is_mcp_pure(stdout)
+    finally:
+        process.terminate()
+        process.wait(timeout=2)
+

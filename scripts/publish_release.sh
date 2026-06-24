@@ -15,7 +15,12 @@ if [[ ! -x "${MATURIN_BIN}" ]]; then
 fi
 
 if [[ -z "${MATURIN_PYPI_TOKEN:-}" ]]; then
-  echo "MATURIN_PYPI_TOKEN must be set to a PyPI API token." >&2
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo "CI publishes with PyPI Trusted Publishing via pypa/gh-action-pypi-publish; MATURIN_PYPI_TOKEN is not required." >&2
+    exit 1
+  fi
+  echo "MATURIN_PYPI_TOKEN must be set to a PyPI API token for manual publish." >&2
+  echo "For CI releases, configure PyPI Trusted Publishing instead (see docs/kit/package-provenance.md)." >&2
   exit 1
 fi
 

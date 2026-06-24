@@ -15,6 +15,15 @@ from uuid import UUID
 import httpx
 
 from paybond_kit.credentials import DEFAULT_PAYBOND_GATEWAY_BASE_URL
+from paybond_kit.mcp_policy import (
+    MCP_TOOL_ALLOWLIST_ENV,
+    MCP_TOOL_POLICY_ENV,
+    McpToolPolicyConfig,
+    merge_mcp_tool_policy,
+    parse_mcp_tool_allowlist,
+    parse_mcp_tool_policy,
+    tool_allowed_by_policy,
+)
 from paybond_kit.fraud import GatewayFraudClient
 from paybond_kit.harbor import TenantBindingError
 from paybond_kit.signal import GatewaySignalClient
@@ -108,6 +117,7 @@ class PaybondMCPSettings:
     gateway_base_url: str = DEFAULT_PAYBOND_GATEWAY_BASE_URL
     principal_path: str = DEFAULT_PRINCIPAL_PATH
     max_retries: int = 3
+    tool_policy: McpToolPolicyConfig = McpToolPolicyConfig()
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> PaybondMCPSettings:
@@ -123,6 +133,10 @@ class PaybondMCPSettings:
         )
         principal_path = values.get("PAYBOND_PRINCIPAL_PATH", "").strip() or DEFAULT_PRINCIPAL_PATH
         max_retries_raw = values.get("PAYBOND_MCP_MAX_RETRIES", "").strip()
+        tool_policy = merge_mcp_tool_policy(
+            parse_mcp_tool_policy(values.get(MCP_TOOL_POLICY_ENV, "").strip() or None),
+            allowlist=parse_mcp_tool_allowlist(values.get(MCP_TOOL_ALLOWLIST_ENV, "").strip() or None) or None,
+        )
 
         if not api_key:
             raise SystemExit("PAYBOND_API_KEY is required; run paybond-kit-login or configure your MCP host environment")
@@ -139,6 +153,7 @@ class PaybondMCPSettings:
             api_key=api_key,
             principal_path=principal_path,
             max_retries=max_retries,
+            tool_policy=tool_policy,
         )
 
 
@@ -983,6 +998,11 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
 
     def paybond_tool(*, name: str, description: str) -> Any:
         metadata = tool_metadata[name]
+        if not tool_allowed_by_policy(name, metadata["annotations"], resolved.tool_policy):
+            def skip_tool(func: Any) -> Any:
+                return func
+
+            return skip_tool
         return server.tool(
             name=name,
             title=metadata["title"],
@@ -1114,12 +1134,13 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             cursor=cursor,
         )
 
-    @paybond_tool(
+    async def _handle_get_intent(intent_id: str) -> dict[str, Any]:
+        return await runtime.get_intent(UUID(intent_id))
+
+    paybond_tool(
         name="paybond_get_intent",
         description="Fetch one tenant-scoped Harbor intent detail through the gateway operator view.",
-    )
-    async def paybond_get_intent(intent_id: str) -> dict[str, Any]:
-        return await runtime.get_intent(UUID(intent_id))
+    )(_handle_get_intent)
 
     @paybond_tool(
         name="paybond_get_reputation_receipt",
@@ -1130,20 +1151,23 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         score_version: str | None = None,
     ) -> dict[str, Any] | None:
         signal = await runtime.signal()
-        return await signal.get_reputation_receipt(
-            operator_did,
-            score_version=score_version,
+        return _jsonable(
+            await signal.get_reputation_receipt(
+                operator_did,
+                score_version=score_version,
+            )
         )
 
-    @paybond_tool(
-        name="paybond_get_portfolio_summary",
-        description="Fetch the tenant-scoped Signal portfolio summary.",
-    )
-    async def paybond_get_portfolio_summary(
+    async def _handle_get_portfolio_summary(
         score_version: str | None = None,
     ) -> dict[str, Any]:
         signal = await runtime.signal()
-        return await signal.get_portfolio_summary(score_version=score_version)
+        return _jsonable(await signal.get_portfolio_summary(score_version=score_version))
+
+    paybond_tool(
+        name="paybond_get_portfolio_summary",
+        description="Fetch the tenant-scoped Signal portfolio summary.",
+    )(_handle_get_portfolio_summary)
 
     @paybond_tool(
         name="paybond_get_signed_portfolio_artifact",
@@ -1156,7 +1180,7 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         score_version: str | None = None,
     ) -> dict[str, Any]:
         signal = await runtime.signal()
-        return await signal.get_signed_portfolio_artifact(score_version=score_version)
+        return _jsonable(await signal.get_signed_portfolio_artifact(score_version=score_version))
 
     @paybond_tool(
         name="paybond_get_fraud_assessment",
@@ -1167,9 +1191,11 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         score_version: str | None = None,
     ) -> dict[str, Any] | None:
         fraud = await runtime.fraud()
-        return await fraud.get_fraud_assessment(
-            operator_did,
-            score_version=score_version,
+        return _jsonable(
+            await fraud.get_fraud_assessment(
+                operator_did,
+                score_version=score_version,
+            )
         )
 
     @paybond_tool(
@@ -1181,7 +1207,7 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         score_version: str | None = None,
     ) -> dict[str, Any]:
         fraud = await runtime.fraud()
-        return await fraud.get_fraud_metrics(window=window, score_version=score_version)
+        return _jsonable(await fraud.get_fraud_metrics(window=window, score_version=score_version))
 
     @paybond_tool(
         name="paybond_get_a2a_agent_card",
@@ -1393,8 +1419,8 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
     return server
 
 
-def main(argv: list[str] | None = None) -> int:
-    """CLI entrypoint for `paybond-mcp-server`."""
+def run_mcp_stdio(argv: list[str] | None = None) -> int:
+    """Run the tenant-bound Paybond MCP server over stdio."""
 
     parser = argparse.ArgumentParser(
         description="Run the tenant-bound Paybond MCP server over stdio."
@@ -1403,10 +1429,18 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         server = build_mcp_server(PaybondMCPSettings.from_env())
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
     server.run(transport="stdio")
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    import sys
+
+    from paybond_kit.cli.router import main as cli_main
+
+    return cli_main(["mcp", "serve", *(argv if argv is not None else sys.argv[1:])])
 
 
 def _parse_retry_after(value: str | None) -> float | None:
@@ -1427,7 +1461,7 @@ def _backoff_seconds(attempt: int) -> float:
 
 
 def _jsonable(value: Any) -> Any:
-    if is_dataclass(value):
+    if is_dataclass(value) and not isinstance(value, type):
         return _jsonable(asdict(value))
     if isinstance(value, UUID):
         return str(value)

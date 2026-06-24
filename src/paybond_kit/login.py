@@ -74,6 +74,19 @@ class DeviceTokenResponse:
     expires_at: str = ""
 
 
+@dataclass(frozen=True)
+class LoginResult:
+    env_path: Path
+    key_masked: str
+    key_written: bool
+    environment: str
+    tenant_id: str
+    tenant_uuid: str
+    verification_uri: str
+    user_code: str
+    expires_at: str = ""
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="paybond-kit-login",
@@ -185,10 +198,31 @@ def assert_git_ignored(env_path: Path, *, cwd: Path) -> None:
     _ensure_git_ignored(env_path, cwd=cwd, auto_add_default_env_file=False)
 
 
+def _in_git_work_tree(start: Path) -> bool:
+    current = start.resolve()
+    for _ in range(256):
+        if (current / ".git").exists():
+            return True
+        parent = current.parent
+        if parent == current:
+            return False
+        current = parent
+    return False
+
+
+def _git_missing_for_secret_write_error() -> PaybondLoginError:
+    return PaybondLoginError(
+        "git is required to verify the env file is ignored before writing secrets; "
+        "install git or pass --env-file outside the repository"
+    )
+
+
 def _ensure_git_ignored(env_path: Path, *, cwd: Path, auto_add_default_env_file: bool) -> None:
     try:
         root_result = _git(["rev-parse", "--show-toplevel"], cwd=cwd)
     except FileNotFoundError:
+        if _in_git_work_tree(cwd):
+            raise _git_missing_for_secret_write_error()
         return
     if root_result.returncode != 0:
         return
@@ -384,31 +418,45 @@ async def _run_login_with_client(
     sleep: Any,
     open_browser: Any,
     now: Any,
-) -> int:
+    human_output: bool = True,
+) -> LoginResult:
     env_path = (cwd / options.env_file).resolve() if not Path(options.env_file).is_absolute() else Path(options.env_file).resolve()
     assert_can_write_env_file(env_path, force=options.force)
     _ensure_git_ignored(env_path, cwd=cwd, auto_add_default_env_file=options.env_file == DEFAULT_ENV_FILE)
 
     start = await _start_device_flow(client, options.gateway, options.environment)
     verification_url = start.verification_uri_complete or start.verification_uri
-    stdout.write(f"Paybond {options.environment} login\n")
-    stdout.write(f"Verification URL: {verification_url}\n")
-    stdout.write(f"Code: {start.user_code}\n")
-    if not options.no_open and not open_browser(verification_url):
-        stdout.write("Open the verification URL in a browser to approve this login.\n")
-    stdout.write("Waiting for approval...\n")
+    if human_output:
+        stdout.write(f"Paybond {options.environment} login\n")
+        stdout.write(f"Verification URL: {verification_url}\n")
+        stdout.write(f"Code: {start.user_code}\n")
+        if not options.no_open and not open_browser(verification_url):
+            stdout.write("Open the verification URL in a browser to approve this login.\n")
+        stdout.write("Waiting for approval...\n")
 
     token = await _poll_device_token(client, options.gateway, options.environment, start, sleep=sleep, now=now)
     write_env_file(env_path, token.access_token, force=options.force)
 
-    stdout.write(f"Wrote PAYBOND_API_KEY to {env_path}\n")
-    stdout.write(f"Key: {mask_api_key(token.access_token)}\n")
-    stdout.write(f"Target {token.environment} tenant: {token.tenant_id} ({token.tenant_uuid})\n")
-    if token.expires_at:
-        stdout.write(
-            f"This key auto-expires at {token.expires_at}; re-run paybond login to mint a new one.\n"
-        )
-    return 0
+    key_masked = mask_api_key(token.access_token)
+    if human_output:
+        stdout.write(f"Wrote PAYBOND_API_KEY to {env_path}\n")
+        stdout.write(f"Key: {key_masked}\n")
+        stdout.write(f"Target {token.environment} tenant: {token.tenant_id} ({token.tenant_uuid})\n")
+        if token.expires_at:
+            stdout.write(
+                f"This key auto-expires at {token.expires_at}; re-run paybond login to mint a new one.\n"
+            )
+    return LoginResult(
+        env_path=env_path,
+        key_masked=key_masked,
+        key_written=True,
+        environment=token.environment,
+        tenant_id=token.tenant_id,
+        tenant_uuid=token.tenant_uuid,
+        verification_uri=verification_url,
+        user_code=start.user_code,
+        expires_at=token.expires_at,
+    )
 
 
 async def run_login(
@@ -420,7 +468,8 @@ async def run_login(
     sleep: Any = asyncio.sleep,
     open_browser: Any = webbrowser.open,
     now: Any = time.monotonic,
-) -> int:
+    human_output: bool = True,
+) -> LoginResult:
     resolved_cwd = Path.cwd() if cwd is None else cwd
     resolved_stdout = sys.stdout if stdout is None else stdout
     if client is not None:
@@ -432,6 +481,7 @@ async def run_login(
             sleep=sleep,
             open_browser=open_browser,
             now=now,
+            human_output=human_output,
         )
     async with httpx.AsyncClient(timeout=30.0) as owned_client:
         return await _run_login_with_client(
@@ -442,19 +492,23 @@ async def run_login(
             sleep=sleep,
             open_browser=open_browser,
             now=now,
+            human_output=human_output,
         )
 
 
 async def async_main(argv: list[str] | None = None, *, stderr: TextIO | None = None) -> int:
     try:
-        return await run_login(parse_args(argv))
+        await run_login(parse_args(argv))
+        return 0
     except PaybondLoginError as exc:
         (stderr or sys.stderr).write(f"{exc}\n")
         return 1
 
 
 def main(argv: list[str] | None = None) -> int:
-    return asyncio.run(async_main(argv))
+    from paybond_kit.cli.router import main as cli_main
+
+    return cli_main(["login", *(argv or sys.argv[1:])])
 
 
 if __name__ == "__main__":  # pragma: no cover

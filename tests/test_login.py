@@ -12,6 +12,7 @@ import pytest
 
 from paybond_kit.login import (
     LoginOptions,
+    PaybondLoginError,
     assert_git_ignored,
     parse_args,
     run_login,
@@ -90,7 +91,9 @@ async def test_login_runs_device_flow_writes_0600_env_file_and_masks_output(tmp_
     )
 
     env_path = tmp_path / ".env.local"
-    assert result == 0
+    assert result.key_written is True
+    assert result.env_path == env_path
+    assert result.key_masked == "paybond_sk_sandbox_01234567...cdef"
     assert len(client.requests) == 3
     assert sleeps == [5, 5]
     assert env_path.read_text(encoding="utf-8") == f"PAYBOND_API_KEY={RAW_KEY}\n"
@@ -231,6 +234,18 @@ async def test_login_adds_default_env_file_to_gitignore(tmp_path: Path) -> None:
         now=lambda: 0.0,
     )
 
-    assert result == 0
+    assert result.key_written is True
     assert ".env.local" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
     assert_git_ignored(tmp_path / ".env.local", cwd=tmp_path)
+
+
+def test_assert_git_ignored_requires_git_inside_work_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / ".git").mkdir()
+    env_path = tmp_path / "secrets.env"
+
+    def missing_git(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise FileNotFoundError("git not found")
+
+    monkeypatch.setattr("paybond_kit.login._git", missing_git)
+    with pytest.raises(PaybondLoginError, match="git is required"):
+        assert_git_ignored(env_path, cwd=tmp_path)

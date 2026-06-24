@@ -92,6 +92,8 @@ def inspect_wheel(path: Path) -> None:
         raise RuntimeError("wheel must expose paybond-kit-login console script")
     if "paybond-kit-init=paybond_kit.init:main" not in normalized_entry_points:
         raise RuntimeError("wheel must expose paybond-kit-init console script")
+    if "paybond=paybond_kit.cli.router:main" not in normalized_entry_points:
+        raise RuntimeError("wheel must expose paybond console script")
     if "paybond-mcp-server=paybond_kit.mcp_server:main" not in normalized_entry_points:
         raise RuntimeError("wheel must expose paybond-mcp-server console script")
 
@@ -102,16 +104,22 @@ def assert_contains_all(text: str, fragments: tuple[str, ...], label: str) -> No
             raise RuntimeError(f"{label} missing expected fragment: {fragment}")
 
 
-def smoke_scaffold(command: list[str], scratch: Path) -> None:
-    out = scratch / "paybond_paid_tool_guard.py"
+def run_init_main(python: Path, env: dict[str, str], argv: list[str]) -> None:
     run(
-        *command,
-        "--preset",
-        "paid-tool-guard",
-        "--framework",
-        "provider-agnostic",
-        "--out",
-        str(out),
+        str(python),
+        "-c",
+        "import sys; from paybond_kit.init import main; raise SystemExit(main(sys.argv[1:]))",
+        *argv,
+        env=env,
+    )
+
+
+def smoke_scaffold(python: Path, env: dict[str, str], scratch: Path) -> None:
+    out = scratch / "paybond_paid_tool_guard.py"
+    run_init_main(
+        python,
+        env,
+        ["--preset", "paid-tool-guard", "--framework", "provider-agnostic", "--out", str(out)],
     )
     assert_contains_all(
         out.read_text(encoding="utf-8"),
@@ -137,7 +145,9 @@ def smoke_scaffold(command: list[str], scratch: Path) -> None:
 
     blocked = subprocess.run(
         [
-            *command,
+            str(python),
+            "-c",
+            "import sys; from paybond_kit.init import main; raise SystemExit(main(sys.argv[1:]))",
             "--preset",
             "paid-tool-guard",
             "--out",
@@ -147,19 +157,15 @@ def smoke_scaffold(command: list[str], scratch: Path) -> None:
         text=True,
         capture_output=True,
         check=False,
+        env=env,
     )
     if blocked.returncode == 0 or "already exists" not in blocked.stderr:
         raise RuntimeError("paybond-kit-init must refuse to overwrite scaffolds without --force")
 
-    run(
-        *command,
-        "--preset",
-        "paid-tool-guard",
-        "--framework",
-        "mcp",
-        "--out",
-        str(out),
-        "--force",
+    run_init_main(
+        python,
+        env,
+        ["--preset", "paid-tool-guard", "--framework", "mcp", "--out", str(out), "--force"],
     )
     assert_contains_all(
         out.read_text(encoding="utf-8"),
@@ -192,21 +198,7 @@ def smoke_install(wheel: Path) -> None:
             "print(dist.version)\n"
         )
         run(str(python), "-c", code, env=env)
-        package_dir = Path(
-            run(
-                str(python),
-                "-c",
-                (
-                    "from importlib import metadata\n"
-                    "from pathlib import Path\n"
-                    "site = Path(next(p for p in metadata.files('paybond-kit') if str(p).endswith('__init__.py')).locate())\n"
-                    "print(site.parent)\n"
-                ),
-                capture=True,
-                env=env,
-            ).strip()
-        )
-        smoke_scaffold([str(python), str(package_dir / "init.py")], scratch)
+        smoke_scaffold(python, env, scratch)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 

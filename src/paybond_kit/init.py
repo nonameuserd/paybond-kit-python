@@ -165,7 +165,7 @@ async def submit_sandbox_evidence(
 '''
 
 
-def main(argv: list[str] | None = None) -> int:
+def run_init_guardrail(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Scaffold a production-shaped Paybond guardrail integration helper."
     )
@@ -189,6 +189,14 @@ def main(argv: list[str] | None = None) -> int:
     out.write_text(_template(args.framework), encoding="utf-8")
     print(f"Created Paybond guardrail integration: {out}")
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    import sys
+
+    from paybond_kit.cli.router import main as cli_main
+
+    return cli_main(["init", "guardrail", *(argv if argv is not None else sys.argv[1:])])
 
 
 if __name__ == "__main__":  # pragma: no cover

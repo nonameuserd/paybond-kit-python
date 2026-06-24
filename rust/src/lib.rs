@@ -6,7 +6,7 @@
 mod intent_creation;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use intent_creation::intent_creation_sign_bytes_raw;
 use paybond_evidence::payee::sign_payee_evidence_request;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -187,9 +187,41 @@ fn build_signed_create_intent_json(
     serde_json::to_string(&body).map_err(|e| PyRuntimeError::new_err(e.to_string()))
 }
 
+/// Verify an Ed25519 signature over a SHA-256 digest (audit export manifest verification).
+#[pyfunction]
+fn verify_ed25519_sha256_hex(
+    digest_hex: String,
+    signature_hex: String,
+    public_key_hex: String,
+) -> PyResult<bool> {
+    let digest = hex::decode(digest_hex.trim())
+        .map_err(|e| PyValueError::new_err(format!("digest_hex: {e}")))?;
+    if digest.len() != 32 {
+        return Err(PyValueError::new_err("digest_hex must decode to 32 bytes"));
+    }
+    let sig_bytes = hex::decode(signature_hex.trim())
+        .map_err(|e| PyValueError::new_err(format!("signature_hex: {e}")))?;
+    let signature = Signature::from_slice(&sig_bytes)
+        .map_err(|e| PyValueError::new_err(format!("signature_hex: {e}")))?;
+    let pub_bytes = hex::decode(public_key_hex.trim())
+        .map_err(|e| PyValueError::new_err(format!("public_key_hex: {e}")))?;
+    let pub_array: [u8; 32] = pub_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| PyValueError::new_err("public_key_hex must decode to 32 bytes"))?;
+    let verifying_key = VerifyingKey::from_bytes(&pub_array)
+        .map_err(|e| PyValueError::new_err(format!("public_key_hex: {e}")))?;
+    let digest_array: [u8; 32] = digest
+        .as_slice()
+        .try_into()
+        .map_err(|_| PyValueError::new_err("digest_hex must decode to 32 bytes"))?;
+    Ok(verifying_key.verify(&digest_array, &signature).is_ok())
+}
+
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sign_payee_evidence_binding_json, m)?)?;
     m.add_function(wrap_pyfunction!(build_signed_create_intent_json, m)?)?;
+    m.add_function(wrap_pyfunction!(verify_ed25519_sha256_hex, m)?)?;
     Ok(())
 }
