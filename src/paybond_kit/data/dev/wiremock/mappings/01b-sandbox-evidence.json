@@ -1,0 +1,24 @@
+{
+  "name": "dev-sandbox-guardrails-evidence",
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "/v1/sandbox/guardrails/[^/]+/evidence",
+    "headers": {
+      "Authorization": {
+        "contains": "Bearer paybond_sk_"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "tenant_id": "dry-run-tenant",
+      "intent_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "sandbox_lifecycle_status": "released",
+      "predicate_passed": true
+    }
+  }
+}

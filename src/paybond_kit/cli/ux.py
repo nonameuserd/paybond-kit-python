@@ -79,7 +79,7 @@ def handle_completion_command(argv: list[str]) -> dict[str, Any]:
     return {"shell": shell, "script": script}
 
 
-def handle_onboarding(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+async def handle_onboarding(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     _, host, _rest = consume_flag(argv, "--host")
     try:
         install_host = parse_mcp_install_host(host) if host else "generic"
@@ -141,7 +141,7 @@ def handle_onboarding(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
         }
     )
 
-    doctor = handle_doctor(ctx, ["--agent"] if logged_in else [])
+    doctor = await handle_doctor(ctx, ["--agent"] if logged_in else [])
     doctor_ok = doctor.get("summary") == "pass"
     steps.append(
         {

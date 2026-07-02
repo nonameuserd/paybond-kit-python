@@ -21,7 +21,7 @@ def test_init_scaffolds_provider_agnostic_guardrail_integration(tmp_path, capsys
     assert_contains_all(
         out.read_text(encoding="utf-8"),
         (
-            "Production integration helpers only.",
+            "Paid-tool guardrail preset maps to completion catalog archetype",
             "def load_paybond_env_file",
             "async def open_paybond_from_env(env_file: str | None = \".env.local\") -> Paybond",
             "os.environ.get(\"PAYBOND_GATEWAY_URL\")",
@@ -29,6 +29,11 @@ def test_init_scaffolds_provider_agnostic_guardrail_integration(tmp_path, capsys
             "async def bootstrap_sandbox_guardrail_intent",
             "def wrap_paid_tool",
             "async def submit_sandbox_evidence",
+            "def build_completion_evidence",
+            "cost_and_completion",
+            "completion_budget_v1",
+            "status",
+            "cost_cents",
             "paybond.guardrails.bootstrap_sandbox",
             "paybond.spend_guard(guardrail.intent_id, guardrail.capability_token)",
             "paybond.guardrails.submit_sandbox_evidence",
@@ -95,3 +100,86 @@ def test_init_force_overwrites_with_framework_note(tmp_path) -> None:
             "Use the same operation name in your MCP tool handler before executing paid work.",
         ),
     )
+
+
+def test_init_scaffolds_agent_middleware_with_registry(tmp_path, capsys) -> None:
+    out = tmp_path / "paybond_agent_middleware.py"
+
+    assert main(["--preset", "agent-middleware", "--out", str(out)]) == 0
+
+    captured = capsys.readouterr()
+    assert "Created Paybond agent middleware integration" in captured.out
+    assert_contains_all(
+        out.read_text(encoding="utf-8"),
+        (
+            "Agent middleware preset maps to completion catalog archetype",
+            "create_paybond_tool_registry",
+            "create_agent_tool_registry",
+            "bind_agent_run",
+            "paybond.agent_run.bind",
+            '"default_deny": True',
+            "create_paybond_generic_agent_config",
+            "create_generic_agent_config",
+            "wrap_agent_tools",
+            "travel.book_hotel",
+            "cost_and_completion",
+        ),
+    )
+    assert "def wrap_paid_tool" not in out.read_text(encoding="utf-8")
+
+
+def test_init_accepts_provider_agnostic_alias_for_generic_agent_middleware(tmp_path) -> None:
+    out = tmp_path / "paybond_agent_middleware_alias.py"
+
+    assert main(["--preset", "agent-middleware", "--framework", "provider-agnostic", "--out", str(out)]) == 0
+
+    assert "create_paybond_generic_agent_config" in out.read_text(encoding="utf-8")
+
+
+def test_init_scaffolds_agent_middleware_claude_agents_framework(tmp_path) -> None:
+    out = tmp_path / "paybond_claude_agents.py"
+
+    assert main(["--preset", "agent-middleware", "--framework", "claude-agents", "--out", str(out)]) == 0
+
+    body = out.read_text(encoding="utf-8")
+    assert "claude_agent_sdk" in body
+    assert "create_guarded_agent" in body
+    assert "create_claude_agents_guarded_runner" in body
+    assert "create_guarded_agent_runner" in body
+    assert 'framework="claude-agents"' in body
+
+
+def test_init_scaffolds_agent_middleware_openai_framework(tmp_path) -> None:
+    out = tmp_path / "paybond_agent_middleware_openai.py"
+
+    assert main(["--preset", "agent-middleware", "--framework", "openai", "--out", str(out)]) == 0
+
+    body = out.read_text(encoding="utf-8")
+    assert "create_tool_input_guard_adapter" in body
+    assert "wrap_openai_agent_tools" in body
+
+
+def test_init_scaffolds_agent_middleware_langgraph_framework(tmp_path) -> None:
+    out = tmp_path / "paybond_agent_middleware_langgraph.py"
+
+    assert main(["--preset", "agent-middleware", "--framework", "langgraph", "--out", str(out)]) == 0
+
+    body = out.read_text(encoding="utf-8")
+    assert "paybond_awrap_tool_call" in body
+    assert "create_langgraph_tool_call_wrapper" in body
+
+
+def test_init_scaffolds_agent_middleware_vercel_ai_framework(tmp_path) -> None:
+    out = tmp_path / "paybond_agent_middleware_vercel.py"
+
+    assert main(["--preset", "agent-middleware", "--framework", "vercel-ai", "--out", str(out)]) == 0
+
+    body = out.read_text(encoding="utf-8")
+    assert "execute_guarded_vercel_tool" in body
+    assert "create_guarded_vercel_book_hotel_tool" in body
+
+
+def test_init_rejects_invalid_framework_for_agent_middleware(tmp_path) -> None:
+    out = tmp_path / "paybond_agent_middleware.py"
+
+    assert main(["--preset", "agent-middleware", "--framework", "mcp", "--out", str(out)]) == 1

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -10,12 +11,13 @@ from paybond_kit import (
     PaybondSpendDeniedError,
     paybond_runtime_tool_call_adapter,
 )
+from paybond_kit.agent_adapters import _CapabilityVerifier
 from paybond_kit.harbor import VerifyCapabilityResult
 
 
 @dataclass
 class _Source:
-    harbor: "_FakeHarbor"
+    harbor: _CapabilityVerifier
     intent_id: UUID
     capability_token: str
 
@@ -24,6 +26,7 @@ class _FakeHarbor:
     def __init__(self, result: VerifyCapabilityResult) -> None:
         self.result = result
         self.calls: list[dict[str, object]] = []
+        self.complete_spend_decision = AsyncMock()
 
     async def verify_capability(
         self,
@@ -62,7 +65,7 @@ class _FakeHarbor:
         return self.result
 
 
-def _result(*, intent_id: UUID, allow: bool) -> VerifyCapabilityResult:
+def _result(*, intent_id: UUID, allow: bool, decision_id: UUID | None = None) -> VerifyCapabilityResult:
     return VerifyCapabilityResult(
         allow=allow,
         audit_id=uuid4(),
@@ -70,6 +73,7 @@ def _result(*, intent_id: UUID, allow: bool) -> VerifyCapabilityResult:
         intent_id=intent_id,
         code=None if allow else "policy_mismatch",
         message=None if allow else "budget exceeded",
+        decision_id=decision_id,
     )
 
 
@@ -87,7 +91,7 @@ async def test_runtime_tool_call_adapter_executes_after_allow() -> None:
     run = paybond_runtime_tool_call_adapter(
         source,
         operation=lambda call: str(call["name"]),
-        requested_spend_cents=lambda call: int(call["spend"]),
+        requested_spend_cents=lambda call: int(str(call["spend"])),
         execute=execute,
     )
 
@@ -112,6 +116,50 @@ async def test_runtime_tool_call_adapter_executes_after_allow() -> None:
         }
     ]
     assert executed == ["NYC"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_tool_call_adapter_completes_spend_after_success() -> None:
+    intent_id = uuid4()
+    decision_id = uuid4()
+    harbor = _FakeHarbor(_result(intent_id=intent_id, allow=True, decision_id=decision_id))
+    source = _Source(harbor=harbor, intent_id=intent_id, capability_token="cap-token")
+    run = paybond_runtime_tool_call_adapter(
+        source,
+        operation="travel.book_hotel",
+        execute=lambda _: {"status": "ok"},
+    )
+
+    assert await run({}) == {"status": "ok"}
+    harbor.complete_spend_decision.assert_awaited_once_with(
+        decision_id=str(decision_id),
+        outcome="consumed",
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_tool_call_adapter_releases_spend_when_execute_fails() -> None:
+    intent_id = uuid4()
+    decision_id = uuid4()
+    harbor = _FakeHarbor(_result(intent_id=intent_id, allow=True, decision_id=decision_id))
+
+    async def execute(_: object) -> None:
+        raise RuntimeError("vendor down")
+
+    source = _Source(harbor=harbor, intent_id=intent_id, capability_token="cap-token")
+    run = paybond_runtime_tool_call_adapter(
+        source,
+        operation="travel.book_hotel",
+        execute=execute,
+    )
+
+    with pytest.raises(RuntimeError, match="vendor down"):
+        await run({})
+
+    harbor.complete_spend_decision.assert_awaited_once_with(
+        decision_id=str(decision_id),
+        outcome="released",
+    )
 
 
 @pytest.mark.asyncio

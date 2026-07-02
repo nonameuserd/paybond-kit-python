@@ -1,0 +1,51 @@
+{
+  "name": "partner-dry-run-signal-fairness",
+  "request": {
+    "method": "GET",
+    "urlPath": "/signal/v1/fairness"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "schema_version": 1,
+      "tenant_id": "dry-run-tenant",
+      "controller_version": "1.0.2",
+      "mode": "dry_run",
+      "workload_class": "replay",
+      "slice_pressure": "contended",
+      "lag_severity": "critical",
+      "observed_tip_seq": 120,
+      "checkpoint_before_seq": 20,
+      "checkpoint_after_seq": 20,
+      "lag_before_events": 100,
+      "lag_after_events": 100,
+      "requested_page_quota": 6,
+      "recommended_page_quota": 1,
+      "applied_page_quota": 4,
+      "base_page_quota": 4,
+      "slice_page_budget": 4,
+      "burst_page_allowance": 4,
+      "min_page_quota": 0,
+      "tenant_weight": 150,
+      "pages_processed": 0,
+      "entries_processed": 0,
+      "quota_exhausted": true,
+      "quota_exhausted_streak": 2,
+      "shared_slice": true,
+      "active": true,
+      "dry_run_only": true,
+      "safe_mode": false,
+      "reason_codes": [
+        "DRY_RUN_ONLY",
+        "MAINTENANCE_WORK_DEPRIORITIZED",
+        "SHARED_SLICE_CONTENDED"
+      ],
+      "summary": "mode=dry_run workload=replay slice_pressure=contended lag=critical requested_pages=6 recommended_pages=1 applied_pages=4 quota_exhausted=true quota_exhausted_streak=2 dry_run_only=true",
+      "rollback_summary": "Set PAYBOND_SIGNAL_FAIRNESS_MODE=safe to restore the static per-tenant page quota on the next poll cycle.",
+      "updated_at": "2026-04-30T18:15:00Z"
+    }
+  }
+}

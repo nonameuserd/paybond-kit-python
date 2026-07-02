@@ -10,6 +10,7 @@ from uuid import UUID
 
 import httpx
 
+from paybond_kit.credentials import normalize_gateway_base_url
 from paybond_kit.harbor import (
     HarborHttpError,
     TenantBindingError,
@@ -33,6 +34,15 @@ class SandboxGuardrailBootstrapResult:
 
 
 @dataclass(frozen=True)
+class SandboxGuardrailSchemaValidation:
+    vendor_schema_ok: bool
+    canonical_schema_ok: bool
+    quality_fields_missing: tuple[str, ...]
+    pack_stale: bool
+    drift_kinds: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class SandboxGuardrailEvidenceResult:
     tenant_id: str
     intent_id: UUID
@@ -45,6 +55,7 @@ class SandboxGuardrailEvidenceResult:
     predicate_passed: bool | None = None
     payload_digest: str | None = None
     artifacts_digest: str | None = None
+    schema_validation: SandboxGuardrailSchemaValidation | None = None
     simulator_event: Mapping[str, Any] | None = None
 
 
@@ -66,7 +77,7 @@ class GatewaySandboxGuardrailsClient:
         request_timeout_sec: float = 30.0,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._base = gateway_base_url.strip().rstrip("/") + "/"
+        self._base = normalize_gateway_base_url(gateway_base_url) + "/"
         self._tenant = tenant_id.strip()
         self._bearer = static_gateway_bearer_token.strip()
         self._max_retries = max(1, int(max_retries))
@@ -112,7 +123,7 @@ class GatewaySandboxGuardrailsClient:
                 continue
             if response.status_code in (429, 500, 502, 503, 504):
                 if attempt + 1 >= self._max_retries:
-                    break
+                    return response
                 delay = _parse_retry_after(response.headers.get("retry-after"))
                 if delay is None:
                     delay = _backoff_seconds(attempt)
@@ -121,7 +132,7 @@ class GatewaySandboxGuardrailsClient:
             return response
         if last_exc is not None:
             raise last_exc
-        return response
+        raise RuntimeError("sandbox guardrail POST exhausted retries without a response")
 
     async def bootstrap_sandbox(
         self,
@@ -131,6 +142,9 @@ class GatewaySandboxGuardrailsClient:
         currency: str | None = None,
         evidence_schema: Mapping[str, Any] | None = None,
         metadata: Mapping[str, Any] | None = None,
+        completion_preset: str | None = None,
+        template_id: str | None = None,
+        parameters: Mapping[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> SandboxGuardrailBootstrapResult:
         payload: dict[str, Any] = {
@@ -143,6 +157,12 @@ class GatewaySandboxGuardrailsClient:
             payload["evidence_schema"] = dict(evidence_schema)
         if metadata is not None:
             payload["metadata"] = dict(metadata)
+        if completion_preset is not None:
+            payload["completion_preset"] = completion_preset
+        if template_id is not None:
+            payload["template_id"] = template_id
+        if parameters is not None:
+            payload["parameters"] = dict(parameters)
         path = "v1/sandbox/guardrails/bootstrap"
         url = f"{self._base}{path}"
         response = await self._post_json_with_retries(
@@ -178,6 +198,7 @@ class GatewaySandboxGuardrailsClient:
         intent_id: UUID,
         payload: Mapping[str, Any] | None = None,
         *,
+        vendor_payload: Mapping[str, Any] | None = None,
         artifacts: list[str] | None = None,
         operation: str | None = None,
         requested_spend_cents: int | None = None,
@@ -187,6 +208,8 @@ class GatewaySandboxGuardrailsClient:
         body: dict[str, Any] = {}
         if payload is not None:
             body["payload"] = dict(payload)
+        if vendor_payload is not None:
+            body["vendor_payload"] = dict(vendor_payload)
         if artifacts is not None:
             body["artifacts"] = list(artifacts)
         if operation is not None:
@@ -314,7 +337,32 @@ def _parse_sandbox_evidence_result(
         predicate_passed=predicate_passed if isinstance(predicate_passed, bool) else None,
         payload_digest=_optional_string(body.get("payload_digest")),
         artifacts_digest=_optional_string(body.get("artifacts_digest")),
+        schema_validation=_parse_schema_validation(body.get("schema_validation")),
         simulator_event=simulator_event if isinstance(simulator_event, Mapping) else None,
+    )
+
+
+def _parse_schema_validation(value: Any) -> SandboxGuardrailSchemaValidation | None:
+    if not isinstance(value, dict):
+        return None
+    vendor_ok = value.get("vendor_schema_ok")
+    canonical_ok = value.get("canonical_schema_ok")
+    if not isinstance(vendor_ok, bool) or not isinstance(canonical_ok, bool):
+        return None
+    quality_fields = value.get("quality_fields_missing")
+    drift_kinds = value.get("drift_kinds")
+    return SandboxGuardrailSchemaValidation(
+        vendor_schema_ok=vendor_ok,
+        canonical_schema_ok=canonical_ok,
+        quality_fields_missing=tuple(
+            field for field in quality_fields if isinstance(field, str)
+        )
+        if isinstance(quality_fields, list)
+        else (),
+        pack_stale=bool(value.get("pack_stale")),
+        drift_kinds=tuple(kind for kind in drift_kinds if isinstance(kind, str))
+        if isinstance(drift_kinds, list)
+        else (),
     )
 
 

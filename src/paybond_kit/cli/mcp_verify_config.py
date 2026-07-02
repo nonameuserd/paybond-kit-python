@@ -22,6 +22,7 @@ from paybond_kit.mcp_policy import (
     merge_mcp_tool_policy,
     parse_mcp_tool_allowlist,
     parse_mcp_tool_policy,
+    resolve_mcp_tool_policy,
 )
 
 McpConfigSource = Literal["generated", "file"]
@@ -131,14 +132,15 @@ def _validate_entry(
     tool_policy: McpToolPolicyConfig | None = None
     raw_policy = entry.env.get(MCP_TOOL_POLICY_ENV, "").strip()
     raw_allowlist = entry.env.get(MCP_TOOL_ALLOWLIST_ENV, "").strip()
-    if raw_policy or raw_allowlist:
-        try:
-            tool_policy = merge_mcp_tool_policy(
+    try:
+        tool_policy = resolve_mcp_tool_policy(
+            merge_mcp_tool_policy(
                 parse_mcp_tool_policy(raw_policy or None),
                 allowlist=parse_mcp_tool_allowlist(raw_allowlist or None) or None,
             )
-        except ValueError as exc:
-            issues.append(McpConfigValidationIssue("tool_policy", str(exc)))
+        )
+    except ValueError as exc:
+        issues.append(McpConfigValidationIssue("tool_policy", str(exc)))
 
     return issues, tool_policy
 

@@ -13,7 +13,7 @@ import httpx
 
 from paybond_kit.cli.color import parse_color_mode, resolve_color_mode_from_env
 from paybond_kit.cli.suggest import format_unknown_global_flag_message
-from paybond_kit.credentials import DEFAULT_PAYBOND_GATEWAY_BASE_URL
+from paybond_kit.credentials import DEFAULT_PAYBOND_GATEWAY_BASE_URL, InsecureGatewayURLError, normalize_gateway_base_url
 from paybond_kit.login import mask_api_key
 from paybond_kit.cli.redact import redact_config_value
 
@@ -202,7 +202,7 @@ def parse_cli_argv(argv: list[str]) -> tuple[GlobalOptions, list[str]]:
             index += 2 if arg == "--gateway" else 1
             if not value.strip():
                 raise CliError("invalid --gateway", code="cli.usage.invalid_gateway")
-            globals_.gateway = value.strip()
+            globals_.gateway = _validate_cli_gateway(value.strip())
             continue
         if arg == "--env-file" or arg.startswith("--env-file="):
             value = _flag_value(argv, index, "--env-file")
@@ -341,7 +341,16 @@ def resolve_config_value(key: str, profile: str | None) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _validate_cli_gateway(url: str) -> str:
+    try:
+        return normalize_gateway_base_url(url)
+    except InsecureGatewayURLError as exc:
+        raise CliError(str(exc), category="validation", code="cli.validation.insecure_gateway") from exc
+
+
 def set_config_value(key: str, value: str, profile: str | None) -> None:
+    if key.lower() == "gateway":
+        value = _validate_cli_gateway(value)
     config = load_config_file()
     if profile:
         config.setdefault("profiles", {}).setdefault(profile, {})[key] = value
@@ -419,7 +428,7 @@ def resolve_api_key_with_meta(globals_: GlobalOptions, cwd: Path) -> tuple[str, 
             env_file = profile_env_file
             warnings.append(f"cli.warn.env_fallback: using profile {globals_.profile} env_file")
         if profile_gateway:
-            gateway = profile_gateway
+            gateway = _validate_cli_gateway(profile_gateway)
             warnings.append(f"cli.warn.env_fallback: using profile {globals_.profile} gateway")
     globals_.env_file = env_file
     globals_.gateway = gateway
@@ -478,7 +487,7 @@ def describe_credential_source(globals_: GlobalOptions, cwd: Path) -> dict[str, 
 
 
 def gateway_url(base: str, path: str) -> str:
-    return base.strip().rstrip("/") + (path if path.startswith("/") else f"/{path}")
+    return normalize_gateway_base_url(base) + (path if path.startswith("/") else f"/{path}")
 
 
 def gateway_request(ctx: CliContext, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -616,7 +625,30 @@ def write_success_output(
     elif canonical == "diagnose":
         for line in data.get("lines", []):
             ctx.stdout.write(f"{line}\n")
-    elif canonical not in ("login", "mcp serve"):
+    elif canonical == "agent sandbox smoke" and isinstance(data.get("checklist_lines"), list):
+        for line in data["checklist_lines"]:
+            ctx.stdout.write(f"{line}\n")
+        for warning in merged_warnings:
+            ctx.stderr.write(f"{warning}\n")
+    elif canonical in ("dev smoke", "dev loop") and isinstance(data.get("checklist_lines"), list):
+        if canonical == "dev loop" and isinstance(data.get("banner_lines"), list):
+            for line in data["banner_lines"]:
+                ctx.stdout.write(f"{line}\n")
+        for line in data["checklist_lines"]:
+            ctx.stdout.write(f"{line}\n")
+        for warning in merged_warnings:
+            ctx.stderr.write(f"{warning}\n")
+    elif canonical == "agent run trace" and isinstance(data.get("trace_lines"), list):
+        for line in data["trace_lines"]:
+            ctx.stdout.write(f"{line}\n")
+        for warning in merged_warnings:
+            ctx.stderr.write(f"{warning}\n")
+    elif canonical == "policy presets show" and isinstance(data.get("yaml_lines"), list):
+        for line in data["yaml_lines"]:
+            ctx.stdout.write(f"{line}\n")
+        for warning in merged_warnings:
+            ctx.stderr.write(f"{warning}\n")
+    elif canonical not in ("login", "mcp serve", "dev trace"):
         table_data = output if isinstance(output, dict) else {"value": output}
         for line in render_table(canonical, table_data, ctx.globals, ctx.stdout):
             ctx.stdout.write(f"{line}\n")

@@ -1,0 +1,19 @@
+{
+  "name": "dev-spend-decision-complete",
+  "request": {
+    "method": "POST",
+    "urlPathPattern": "/v1/spend/decisions/[^/]+/complete",
+    "headers": {
+      "Authorization": {
+        "contains": "Bearer paybond_sk_"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {}
+  }
+}

@@ -40,7 +40,7 @@ def sign_payee_evidence_binding(
         RuntimeError: For signing failures surfaced from Rust.
     """
     try:
-        from paybond_kit import _native
+        from paybond_kit._native import sign_payee_evidence_binding_json
     except ImportError as exc:  # pragma: no cover - exercised when wheel lacks native
         raise ImportError(
             "paybond_kit._native is required for evidence signing. Install a published wheel with "
@@ -51,7 +51,7 @@ def sign_payee_evidence_binding(
     if len(payee_signing_seed) != 32:
         raise ValueError("payee_signing_seed must be exactly 32 bytes")
 
-    raw: str = _native.sign_payee_evidence_binding_json(
+    raw: str = sign_payee_evidence_binding_json(
         tenant_id,
         str(intent_id),
         payee_did,

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import uuid
+from typing import cast
 
 import httpx
 import pytest
 import respx
 
-from paybond_kit.harbor import TenantBindingError
+from paybond_kit.harbor import HarborClient, SettlementRail, TenantBindingError
 from paybond_kit.paybond import Paybond, PaybondIntents
 
 
@@ -18,13 +19,14 @@ class _UnusedHarbor:
 
 @pytest.mark.asyncio
 async def test_paybond_intents_create_rejects_unknown_settlement_rail() -> None:
-    intents = PaybondIntents(_UnusedHarbor(), "tenant-a")
+    intents = PaybondIntents(cast(HarborClient, _UnusedHarbor()), "tenant-a")
 
     with pytest.raises(ValueError, match="settlement_rail must be one of"):
         await intents.create(
             principal_did="did:web:example.com#principal",
             principal_signing_seed=b"\x01" * 32,
             payee_did="did:web:example.com#payee",
+            payee_signing_seed=b"\x02" * 32,
             budget={"currency": "usd", "max_spend_usd": 10},
             predicate={"version": 1, "root": {"op": "true"}},
             currency="usd",
@@ -32,7 +34,7 @@ async def test_paybond_intents_create_rejects_unknown_settlement_rail() -> None:
             evidence_schema={"type": "object"},
             deadline_rfc3339="2030-01-01T00:00:00Z",
             allowed_tools=["payments.capture"],
-            settlement_rail="bogus",
+            settlement_rail=cast(SettlementRail, "bogus"),
             recognition_proof={},
         )
 

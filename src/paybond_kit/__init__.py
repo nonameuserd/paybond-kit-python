@@ -7,7 +7,10 @@ from paybond_kit.capability_binding import PaybondCapabilityBinding
 from paybond_kit.credentials import (
     DEFAULT_PAYBOND_GATEWAY_BASE_URL,
     GatewayAuthError,
+    InsecureGatewayURLError,
     PaybondEnvironment,
+    is_local_gateway_host,
+    normalize_gateway_base_url,
 )
 from paybond_kit.a2a import A2AHttpError, GatewayA2AClient
 from paybond_kit.fraud import (
@@ -77,6 +80,7 @@ __all__ = [
     "A2AHttpError",
     "DEFAULT_PAYBOND_GATEWAY_BASE_URL",
     "GatewayAuthError",
+    "InsecureGatewayURLError",
     "GatewayA2AClient",
     "GatewayFraudClient",
     "GatewayHarborClient",
@@ -88,6 +92,8 @@ __all__ = [
     "IntentFundingResult",
     "SettlementRail",
     "PaybondEnvironment",
+    "is_local_gateway_host",
+    "normalize_gateway_base_url",
     "Paybond",
     "PaybondCapabilityBinding",
     "PaybondIntents",

@@ -21,6 +21,21 @@ from paybond_kit.cli.core import (
 )
 from paybond_kit.cli.automation import deprecated_alias_warning
 from paybond_kit.cli.help_text import help_for_command
+from paybond_kit.cli.policy import (
+    handle_policy_extend,
+    handle_policy_import_mcp_receipt,
+    handle_policy_import_x402_receipt,
+    handle_policy_init,
+    handle_policy_init_org,
+    handle_policy_presets_list,
+    handle_policy_presets_show,
+    handle_policy_preview,
+    handle_policy_templates,
+    handle_policy_validate_evidence,
+    handle_policy_validate_tools,
+)
+from paybond_kit.cli.agent import handle_agent
+from paybond_kit.cli.dev import handle_dev
 from paybond_kit.cli.suggest import format_unknown_command_message
 from paybond_kit.cli.ux import (
     handle_completion_command,
@@ -51,11 +66,17 @@ async def _dispatch(ctx: CliContext, command: list[str]) -> tuple[str, dict[str,
     if head == "completion" and second:
         return "completion", handle_completion_command(command[1:])
     if head == "onboarding":
-        return "onboarding", handle_onboarding(ctx, command[1:])
+        return "onboarding", await handle_onboarding(ctx, command[1:])
     if head == "login":
         return "login", await commands.handle_login(ctx, command[1:])
     if head == "init" and second == "guardrail":
         return "init guardrail", commands.handle_init_guardrail(ctx, command[2:])
+    if head == "init" and second == "agent-middleware":
+        return "init agent-middleware", commands.handle_init_agent_middleware(ctx, command[2:])
+    if head == "init" and second == "completion":
+        return "init completion", commands.handle_init_completion(ctx, command[2:])
+    if head == "init":
+        return "init", commands.handle_init_wizard(ctx, command[1:])
     if head == "mcp" and second == "serve":
         return "mcp serve", commands.handle_mcp_serve(ctx, command[2:])
     if head == "mcp" and second == "install":
@@ -65,7 +86,9 @@ async def _dispatch(ctx: CliContext, command: list[str]) -> tuple[str, dict[str,
     if head == "mcp" and second == "verify-config":
         return "mcp verify-config", commands.handle_mcp_verify_config(ctx, command[2:])
     if head == "doctor":
-        return "doctor", commands.handle_doctor(ctx, command[1:])
+        return "doctor", await commands.handle_doctor(ctx, command[1:])
+    if head == "dev" and second:
+        return f"dev {second}", await handle_dev(ctx, second, command[2:])
     if head == "version":
         return "version", commands.handle_version(ctx, command[1:])
     if head == "diagnose":
@@ -92,6 +115,30 @@ async def _dispatch(ctx: CliContext, command: list[str]) -> tuple[str, dict[str,
         return f"a2a {second}", commands.handle_a2a(ctx, second, command[2:])
     if head == "audit" and second == "exports" and third:
         return f"audit exports {third}", commands.handle_audit_exports(ctx, third, rest)
+    if head == "policy" and second == "presets" and third == "list":
+        return "policy presets list", handle_policy_presets_list(ctx, command[3:])
+    if head == "policy" and second == "presets" and third == "show":
+        return "policy presets show", handle_policy_presets_show(ctx, command[3:])
+    if head == "policy" and second == "templates":
+        return "policy templates", handle_policy_templates(ctx, command[2:])
+    if head == "policy" and second == "preview":
+        return "policy preview", handle_policy_preview(ctx, command[2:])
+    if head == "policy" and second == "import-mcp-receipt":
+        return "policy import-mcp-receipt", handle_policy_import_mcp_receipt(ctx, command[2:])
+    if head == "policy" and second == "import-x402-receipt":
+        return "policy import-x402-receipt", handle_policy_import_x402_receipt(ctx, command[2:])
+    if head == "policy" and second == "validate-evidence":
+        return "policy validate-evidence", handle_policy_validate_evidence(ctx, command[2:])
+    if head == "policy" and second == "init-org":
+        return "policy init-org", handle_policy_init_org(ctx, command[2:])
+    if head == "policy" and second == "extend":
+        return "policy extend", handle_policy_extend(ctx, command[2:])
+    if head == "policy" and second == "init":
+        return "policy init", handle_policy_init(ctx, command[2:])
+    if head == "policy" and second == "validate-tools":
+        return "policy validate-tools", handle_policy_validate_tools(ctx, command[2:])
+    if head == "agent" and second and third:
+        return f"agent {second} {third}", await handle_agent(ctx, second, third, command[3:])
     raise CliError(format_unknown_command_message(" ".join(command)), code="cli.usage.unknown_command")
 
 

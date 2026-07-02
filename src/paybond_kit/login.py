@@ -18,7 +18,7 @@ from typing import Any, TextIO
 
 import httpx
 
-from paybond_kit.credentials import DEFAULT_PAYBOND_GATEWAY_BASE_URL
+from paybond_kit.credentials import DEFAULT_PAYBOND_GATEWAY_BASE_URL, InsecureGatewayURLError, normalize_gateway_base_url
 
 DEFAULT_ENV_FILE = ".env.local"
 CLIENT_ID = "paybond-kit-cli"
@@ -119,6 +119,10 @@ def parse_args(argv: list[str] | None = None) -> LoginOptions:
         raise PaybondLoginError("invalid --env-file")
     if not gateway:
         raise PaybondLoginError("invalid --gateway")
+    try:
+        gateway = normalize_gateway_base_url(gateway)
+    except InsecureGatewayURLError as exc:
+        raise PaybondLoginError(str(exc)) from exc
     if environment not in DEVICE_ENVIRONMENTS:
         if environment == "live":
             raise PaybondLoginError(
@@ -266,7 +270,7 @@ def _ensure_git_ignored(env_path: Path, *, cwd: Path, auto_add_default_env_file:
 
 
 def _gateway_url(gateway: str, path: str) -> str:
-    return gateway.strip().rstrip("/") + path
+    return normalize_gateway_base_url(gateway) + path
 
 
 async def _post_gateway_json(

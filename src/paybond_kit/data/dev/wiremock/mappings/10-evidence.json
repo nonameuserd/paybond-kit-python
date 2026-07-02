@@ -1,0 +1,30 @@
+{
+  "name": "partner-dry-run-gateway-evidence",
+  "request": {
+    "method": "POST",
+    "urlPath": "/harbor/intents/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/evidence",
+    "headers": {
+      "x-tenant-id": {
+        "equalTo": "dry-run-tenant"
+      },
+      "Authorization": {
+        "contains": "Bearer paybond_sk_"
+      },
+      "x-paybond-agent-recognition-proof": {
+        "matches": ".+"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "intent_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "tenant": "dry-run-tenant",
+      "state": "evidence_recorded",
+      "predicate_passed": true
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "partner-dry-run-signal-reputation",
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/reputation/[^/]+"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "schema_version": 1,
+      "updated_at": "2026-04-30T18:15:00Z",
+      "receipt": {
+        "tenant_id": "dry-run-tenant",
+        "operator_did": "did:example:alpha",
+        "scoring_model": "paybond.signal.v1",
+        "score_version": "1.0",
+        "receipt_version": "3",
+        "score": 812,
+        "message_digest_hex": "dry-run-digest-alpha"
+      }
+    }
+  }
+}

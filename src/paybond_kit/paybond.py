@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 from uuid import UUID, uuid4
 
 from paybond_kit.a2a import GatewayA2AClient
@@ -21,6 +21,16 @@ from paybond_kit.harbor import (
 from paybond_kit.protocol import GatewayProtocolClient
 from paybond_kit.signal import GatewaySignalClient, _resolve_gateway_tenant_id
 
+if TYPE_CHECKING:
+    from paybond_kit.agent import PaybondToolRegistry, PaybondToolRegistryConfig
+    from paybond_kit.agent.guarded_agent import (
+        CreateGuardedAgentInput,
+        CreateGuardedAgentResult,
+        GuardedAgentFramework,
+    )
+    from paybond_kit.agent.run import PaybondAgentRun
+    from paybond_kit.policy.load import PaybondPolicyLoadSource
+
 
 @dataclass
 class PaybondIntents:
@@ -35,6 +45,7 @@ class PaybondIntents:
         principal_did: str,
         principal_signing_seed: bytes,
         payee_did: str,
+        payee_signing_seed: bytes,
         budget: Mapping[str, Any],
         predicate: Mapping[str, Any],
         currency: str,
@@ -71,10 +82,13 @@ class PaybondIntents:
 
         if len(principal_signing_seed) != 32:
             raise ValueError("principal_signing_seed must be exactly 32 bytes")
+        if len(payee_signing_seed) != 32:
+            raise ValueError("payee_signing_seed must be exactly 32 bytes")
         iid = intent_id or uuid4()
         wire = _native.build_signed_create_intent_json(
             self._tenant_id,
             principal_signing_seed,
+            payee_signing_seed,
             str(iid),
             principal_did,
             payee_did,
@@ -87,6 +101,75 @@ class PaybondIntents:
             predicate_ref,
             json.dumps(allowed_tools),
             settlement_rail,
+        )
+        body = json.loads(wire)
+        return await self._harbor.create_intent(
+            body,
+            recognition_proof=recognition_proof,  # type: ignore[call-arg]
+            idempotency_key=idempotency_key,
+        )
+
+    async def create_with_policy_binding(
+        self,
+        *,
+        principal_did: str,
+        principal_signing_seed: bytes,
+        payee_did: str,
+        payee_signing_seed: bytes,
+        budget: Mapping[str, Any],
+        currency: str,
+        amount_cents: int,
+        evidence_schema: Mapping[str, Any],
+        deadline_rfc3339: str,
+        allowed_tools: list[str],
+        settlement_rail: SettlementRail,
+        recognition_proof: Mapping[str, Any],
+        policy_template_id: str,
+        policy_version_seq: int,
+        materialized_predicate: Mapping[str, Any],
+        policy_content_digest_hex: str,
+        intent_id: UUID | None = None,
+        predicate_ref: str = "",
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Build a signing-v5 ``POST /intents`` body bound to a published managed-policy head."""
+        settlement_rail = validate_settlement_rail(
+            settlement_rail,
+            field="settlement_rail",
+        )
+        try:
+            from paybond_kit import _native
+        except ImportError as exc:
+            raise ImportError(
+                "paybond_kit._native is required for intent creation. Install a published wheel "
+                "with `pip install paybond-kit`, or from a checkout run "
+                "`maturin develop` (Rust toolchain required)."
+            ) from exc
+
+        if len(principal_signing_seed) != 32:
+            raise ValueError("principal_signing_seed must be exactly 32 bytes")
+        if len(payee_signing_seed) != 32:
+            raise ValueError("payee_signing_seed must be exactly 32 bytes")
+        iid = intent_id or uuid4()
+        wire = _native.build_signed_create_intent_with_policy_binding_json(
+            self._tenant_id,
+            principal_signing_seed,
+            payee_signing_seed,
+            str(iid),
+            principal_did,
+            payee_did,
+            json.dumps(dict(budget)),
+            currency,
+            int(amount_cents),
+            json.dumps(dict(evidence_schema)),
+            deadline_rfc3339,
+            json.dumps(dict(materialized_predicate)),
+            predicate_ref,
+            json.dumps(allowed_tools),
+            settlement_rail,
+            policy_template_id,
+            int(policy_version_seq),
+            policy_content_digest_hex,
         )
         body = json.loads(wire)
         return await self._harbor.create_intent(
@@ -264,3 +347,169 @@ class Paybond:
             operation=operation,
             requested_spend_cents=requested_spend_cents,
         )
+
+    def tool_registry(
+        self,
+        config: PaybondToolRegistryConfig | None = None,
+    ) -> PaybondToolRegistry:
+        from paybond_kit.agent import PaybondToolRegistry
+
+        return PaybondToolRegistry(config)
+
+    async def create_guarded_agent(self, input_: "CreateGuardedAgentInput") -> "CreateGuardedAgentResult":
+        from paybond_kit.agent.guarded_agent import CreateGuardedAgentInput, CreateGuardedAgentResult, create_guarded_agent
+
+        return await create_guarded_agent(self, input_)
+
+    async def create_guarded_agent_runner(self, input_: "CreateGuardedAgentInput") -> "CreateGuardedAgentResult":
+        from paybond_kit.agent.guarded_agent import create_guarded_agent_runner
+
+        return await create_guarded_agent_runner(self, input_)
+
+    async def instrument(
+        self,
+        agent_or_config: Any = None,
+        /,
+        *,
+        policy: "PaybondPolicyLoadSource | Mapping[str, Any] | None" = None,
+        tools: Any | None = None,
+        framework: "GuardedAgentFramework | None" = None,
+        bootstrap: Any | None = None,
+        attach: Any | None = None,
+        run_id: str | None = None,
+        validate_policy: bool | Mapping[str, Any] | None = None,
+        sandbox: bool | None = None,
+        context: Any | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        from paybond_kit.agent.discover import is_instrumentable_agent_object
+        from paybond_kit.agent.instrument import instrument_paybond_agent
+
+        if agent_or_config is not None and is_instrumentable_agent_object(agent_or_config):
+            return await instrument_paybond_agent(
+                self,
+                agent_or_config,
+                framework=framework,
+                policy=policy,
+                sandbox=sandbox,
+                context=context,
+            )
+
+        payload: dict[str, Any] = {**kwargs}
+        if agent_or_config is not None and isinstance(agent_or_config, Mapping):
+            payload = {**dict(agent_or_config), **payload}
+        if policy is not None:
+            payload["policy"] = policy
+        if tools is not None:
+            payload["tools"] = tools
+        if framework is not None:
+            payload["framework"] = framework
+        if bootstrap is not None:
+            payload["bootstrap"] = bootstrap
+        if attach is not None:
+            payload["attach"] = attach
+        if run_id is not None:
+            payload["run_id"] = run_id
+        if validate_policy is not None:
+            payload["validate_policy"] = validate_policy
+        if sandbox is not None:
+            payload["sandbox"] = sandbox
+        if context is not None:
+            payload["context"] = context
+        return await instrument_paybond_agent(
+            self,
+            payload,
+            framework=framework,
+            policy=policy,
+            sandbox=sandbox,
+            context=context,
+        )
+
+    def policy(self, source: "PaybondPolicyLoadSource | Mapping[str, Any]") -> "PaybondInstrumentBuilder":
+        from paybond_kit.agent.facade import resolve_agent_policy_source
+        from paybond_kit.agent.instrument import PaybondInstrumentBuilder
+
+        resolved = resolve_agent_policy_source(source) if isinstance(source, str) else source
+        return PaybondInstrumentBuilder(paybond=self, policy=resolved)
+
+    def use_policy(self, preset_id: str) -> "PaybondInstrumentBuilder":
+        return self.policy(preset_id)
+
+    async def instrument_langgraph(self, **kwargs: Any) -> "PaybondInstrumented | PaybondInstrumentRuntime":
+        from paybond_kit.agent.instrument import instrument_paybond_langgraph
+
+        return await instrument_paybond_langgraph(self, kwargs)
+
+    async def instrument_openai(self, **kwargs: Any) -> "PaybondInstrumented | PaybondInstrumentRuntime":
+        from paybond_kit.agent.instrument import instrument_paybond_openai
+
+        return await instrument_paybond_openai(self, kwargs)
+
+    async def instrument_vercel(self, **kwargs: Any) -> "PaybondInstrumented | PaybondInstrumentRuntime":
+        from paybond_kit.agent.instrument import instrument_paybond_vercel
+
+        return await instrument_paybond_vercel(self, kwargs)
+
+    async def instrument_claude_agents(self, **kwargs: Any) -> "PaybondInstrumented | PaybondInstrumentRuntime":
+        from paybond_kit.agent.instrument import instrument_paybond_claude_agents
+
+        return await instrument_paybond_claude_agents(self, kwargs)
+
+    async def instrument_mcp(self, **kwargs: Any) -> "PaybondInstrumented | PaybondInstrumentRuntime":
+        from paybond_kit.agent.instrument import instrument_paybond_mcp
+
+        return await instrument_paybond_mcp(self, kwargs)
+
+    async def agent(
+        self,
+        *,
+        policy: "PaybondPolicyLoadSource",
+        tools: Any,
+        framework: "GuardedAgentFramework | None" = None,
+        bootstrap: Any | None = None,
+        attach: Any | None = None,
+        run_id: str | None = None,
+        validate_policy: bool | Mapping[str, Any] | None = None,
+    ) -> "PaybondAgentResult":
+        from paybond_kit.agent.facade import create_paybond_agent
+        from paybond_kit.agent.facade import PaybondAgentResult
+
+        return await create_paybond_agent(
+            self,
+            policy=policy,
+            tools=tools,
+            framework=framework,
+            bootstrap=bootstrap,
+            attach=attach,
+            run_id=run_id,
+            validate_policy=validate_policy,
+        )
+
+    def wrap_tools(
+        self,
+        run: "PaybondAgentRun",
+        tools: Any,
+        *,
+        framework: "GuardedAgentFramework" = "generic",
+    ) -> Any:
+        from paybond_kit.agent.facade import wrap_paybond_tools
+
+        return wrap_paybond_tools(run, tools, framework=framework)
+
+    @property
+    def policy_presets(self):
+        from paybond_kit.policy.policy_api import paybond_policy_presets
+
+        return paybond_policy_presets
+
+    @property
+    def solution(self):
+        from paybond_kit.solution_api import paybond_solution_presets
+
+        return paybond_solution_presets
+
+    @property
+    def agent_run(self):
+        from paybond_kit.agent.run import PaybondAgentRunFacade
+
+        return PaybondAgentRunFacade(self)

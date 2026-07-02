@@ -1,9 +1,12 @@
-"""Command-line scaffolder for Paybond guardrail integrations."""
+"""Command-line scaffolder for Paybond guardrail and agent middleware integrations."""
 
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
+
+from paybond_kit.completion_catalog import get_completion_preset
 
 FRAMEWORK_NOTES = {
     "generic": "Wrap the returned function around any side-effecting tool handler.",
@@ -18,35 +21,19 @@ FRAMEWORK_NOTES = {
     "mcp": "Use the same operation name in your MCP tool handler before executing paid work.",
 }
 
-PRESETS = ("paid-tool-guard",)
+PRESETS = ("paid-tool-guard", "agent-middleware")
+AGENT_MIDDLEWARE_FRAMEWORKS = ("generic", "claude-agents", "openai", "langgraph", "vercel-ai")
+AGENT_MIDDLEWARE_FRAMEWORK_ALIASES = {"provider-agnostic": "generic"}
+PRESET_DEFAULT_OUT = {
+    "paid-tool-guard": "paybond_paid_tool_guard.py",
+    "agent-middleware": "paybond_agent_middleware.py",
+}
 
 
-def _template(framework: str) -> str:
-    note = FRAMEWORK_NOTES[framework]
-    return f'''import os
-from pathlib import Path
-from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, TypeVar
-
-from paybond_kit import (
-    Paybond,
-    SandboxGuardrailBootstrapResult,
-    SandboxGuardrailEvidenceResult,
-)
-
-# Production integration helpers only. Add your paid-tool handler in
-# application code and pass it to wrap_paid_tool(...).
-DEFAULT_OPERATION = "paid_tool.operation"
-DEFAULT_REQUESTED_SPEND_CENTS = 500
-
-TInput = TypeVar("TInput")
-TResult = TypeVar("TResult")
-PaidToolHandler = Callable[[TInput], TResult | Awaitable[TResult]]
-
-
-def _read_env_value(body: str, key: str) -> str | None:
-    prefix = f"{{key}}="
-    export_prefix = f"export {{key}}="
+def _env_helpers_block() -> str:
+    return '''def _read_env_value(body: str, key: str) -> str | None:
+    prefix = f"{key}="
+    export_prefix = f"export {key}="
     for raw_line in body.splitlines():
         line = raw_line.strip()
         if line.startswith(export_prefix):
@@ -89,7 +76,278 @@ async def open_paybond_from_env(env_file: str | None = ".env.local") -> Paybond:
             or "https://api.paybond.ai"
         ),
         expected_environment="sandbox",
+    )'''
+
+
+def _normalize_agent_middleware_framework(framework: str) -> str:
+    normalized = AGENT_MIDDLEWARE_FRAMEWORK_ALIASES.get(framework, framework)
+    if normalized not in AGENT_MIDDLEWARE_FRAMEWORKS:
+        raise ValueError("invalid --framework for agent-middleware preset")
+    return normalized
+
+
+def _agent_middleware_framework_block(framework: str) -> str:
+    if framework == "claude-agents":
+        return '''import json
+
+from claude_agent_sdk import tool
+from paybond_kit.agent.guarded_agent import (
+    CreateGuardedAgentInput,
+    CreateGuardedAgentResult,
+    create_guarded_agent,
+    create_guarded_agent_runner,
+)
+
+TRAVEL_AGENT_POLICY = {
+    "version": 1,
+    "name": "travel-agent-v1",
+    "default_deny": True,
+    "tools": {
+        "travel.book_hotel": {
+            "side_effecting": True,
+            "max_spend_cents": DEFAULT_REQUESTED_SPEND_CENTS,
+            "evidence_preset": COMPLETION_PRESET_ID,
+        },
+        "search.web": {
+            "side_effecting": False,
+        },
+    },
+    "intent": {
+        "allowed_tools": ["travel.book_hotel"],
+        "budget": {"currency": "usd", "max_spend_usd": 200},
+    },
+}
+
+
+async def create_claude_agents_guarded_runner(paybond: Paybond) -> CreateGuardedAgentResult:
+    """Policy-driven Claude Agent SDK wiring: bind run, wrap tool() handlers, expose MCP server config."""
+
+    async def book_hotel_handler(args: Mapping[str, Any], _extra: Any) -> dict[str, Any]:
+        payload = await book_hotel(args)
+        return {
+            "content": [{"type": "text", "text": json.dumps(payload)}],
+            "structuredContent": payload,
+        }
+
+    sdk_tools = [
+        tool(
+            "travel.book_hotel",
+            "Book a hotel room",
+            {"city": str, "estimated_price_cents": int},
+            book_hotel_handler,
+        ),
+    ]
+    return await create_guarded_agent(
+        paybond,
+        CreateGuardedAgentInput(
+            policy=TRAVEL_AGENT_POLICY,
+            framework="claude-agents",
+            tools=sdk_tools,
+            bootstrap={
+                "operation": DEFAULT_OPERATION,
+                "requested_spend_cents": DEFAULT_REQUESTED_SPEND_CENTS,
+                "completion_preset": COMPLETION_PRESET_ID,
+            },
+        ),
     )
+
+
+create_claude_agents_guarded_agent_runner = create_claude_agents_guarded_runner'''
+    if framework == "openai":
+        return '''from paybond_kit.agent import create_tool_input_guard_adapter
+
+
+def wrap_openai_agent_tools(run: PaybondAgentRun, tools: list[dict[str, Any]]) -> list[Any]:
+    """Wrap provider-agnostic tool executors for OpenAI-style agent runtimes."""
+    guard = create_tool_input_guard_adapter(run)
+    return guard.wrap_executors(tools)'''
+    if framework == "langgraph":
+        return '''from paybond_kit.langgraph_hooks import paybond_awrap_tool_call
+
+
+def create_langgraph_tool_call_wrapper(run: PaybondAgentRun):
+    """LangGraph ToolNode hook — pass to ToolNode(..., awrap_tool_call=wrapper)."""
+    return paybond_awrap_tool_call(run)'''
+    if framework == "vercel-ai":
+        return '''async def execute_guarded_vercel_tool(
+    run: PaybondAgentRun,
+    *,
+    tool_name: str,
+    tool_call_id: str,
+    arguments: Mapping[str, Any],
+    execute: Callable[[Mapping[str, Any]], Awaitable[Any] | Any],
+) -> Any:
+    """Wire Paybond middleware into a Vercel AI SDK tool execute handler."""
+    wrapped = await run.interceptor.wrap_execute(
+        tool_name=tool_name,
+        tool_call_id=tool_call_id,
+        arguments=dict(arguments),
+        execute=lambda: execute(arguments),
+    )
+    return wrapped.tool_result
+
+
+def create_guarded_vercel_book_hotel_tool(run: PaybondAgentRun):
+    """Example factory — adapt to your Vercel AI SDK tool() registration."""
+    async def _execute(args: Mapping[str, Any], *, tool_call_id: str) -> Any:
+        return await execute_guarded_vercel_tool(
+            run,
+            tool_name="travel.book_hotel",
+            tool_call_id=tool_call_id,
+            arguments=args,
+            execute=book_hotel,
+        )
+
+    return _execute'''
+    return '''from paybond_kit.agent import create_paybond_generic_agent_config
+
+
+def create_generic_agent_config(run: PaybondAgentRun, tools: list[dict[str, Any]]) -> Any:
+    """Recommended default when the agent framework is unknown."""
+    return create_paybond_generic_agent_config(run, tools)
+
+
+def wrap_agent_tools(run: PaybondAgentRun, tools: list[dict[str, Any]]) -> list[Any]:
+    """Wrap {name, execute} tools for any agent-agnostic runtime."""
+    return create_generic_agent_config(run, tools).tools'''
+
+
+def _agent_middleware_template(framework: str) -> str:
+    completion_preset = get_completion_preset("cost_and_completion")
+    evidence_schema = json.dumps(completion_preset["evidence_schema"], indent=4)
+    framework_block = _agent_middleware_framework_block(_normalize_agent_middleware_framework(framework))
+    return f'''import os
+from collections.abc import Awaitable, Callable, Mapping
+from pathlib import Path
+from typing import Any
+
+from paybond_kit import Paybond
+from paybond_kit.agent import PaybondAgentRun, create_paybond_tool_registry
+
+{_env_helpers_block()}
+
+# Agent middleware preset maps to completion catalog archetype: cost_and_completion ({completion_preset["harbor_template_id"]}).
+COMPLETION_PRESET_ID = "cost_and_completion"
+DEFAULT_OPERATION = "travel.book_hotel"
+DEFAULT_REQUESTED_SPEND_CENTS = 20_000
+
+_COMPLETION_EVIDENCE_SCHEMA: dict[str, Any] = {evidence_schema}
+
+
+async def book_hotel(args: Mapping[str, Any]) -> dict[str, Any]:
+    estimated_price_cents = int(args["estimated_price_cents"])
+    return {{
+        "reservation": {{
+            "status": "confirmed",
+            "price_cents": estimated_price_cents,
+            "city": str(args["city"]),
+        }},
+    }}
+
+
+async def search_web(args: Mapping[str, Any]) -> dict[str, Any]:
+    query = str(args["query"])
+    return {{"hits": [{{"title": query, "url": "https://example.com"}}]}}
+
+
+def create_agent_tool_registry() -> Any:
+    return create_paybond_tool_registry(
+        {{
+            "side_effecting": {{
+                "travel.book_hotel": {{
+                    "spend_cents": lambda args: int(args["estimated_price_cents"]),
+                    "evidence_preset": COMPLETION_PRESET_ID,
+                    "evidence_mapper": lambda result, _ctx: {{
+                        "status": (
+                            "completed"
+                            if result["reservation"]["status"] == "confirmed"
+                            else result["reservation"]["status"]
+                        ),
+                        "cost_cents": result["reservation"]["price_cents"],
+                    }},
+                }},
+            }},
+            "default_deny": True,
+        }}
+    )
+
+
+async def bind_agent_run(
+    paybond: Paybond,
+    registry: Any,
+    *,
+    operation: str = DEFAULT_OPERATION,
+    requested_spend_cents: int = DEFAULT_REQUESTED_SPEND_CENTS,
+    evidence_schema: Mapping[str, Any] | None = None,
+    run_id: str | None = None,
+) -> PaybondAgentRun:
+    return await paybond.agent_run.bind(
+        {{
+            "bootstrap": {{
+                "kind": "sandbox",
+                "operation": operation,
+                "requested_spend_cents": requested_spend_cents,
+                "completion_preset": COMPLETION_PRESET_ID,
+                "evidence_schema": evidence_schema or _COMPLETION_EVIDENCE_SCHEMA,
+            }},
+            "registry": registry,
+            "run_id": run_id,
+        }}
+    )
+
+
+{framework_block}
+'''
+
+
+def _paid_tool_guard_template(framework: str) -> str:
+    note = FRAMEWORK_NOTES[framework]
+    completion_preset = get_completion_preset("cost_and_completion")
+    evidence_schema = json.dumps(completion_preset["evidence_schema"], indent=4)
+    parameters = json.dumps(completion_preset["parameters"], indent=4)
+    return f'''import os
+from pathlib import Path
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
+from typing import Any, TypeVar
+
+from paybond_kit import (
+    Paybond,
+    SandboxGuardrailBootstrapResult,
+    SandboxGuardrailEvidenceResult,
+)
+
+# Paid-tool guardrail preset maps to completion catalog archetype: cost_and_completion ({completion_preset["harbor_template_id"]}).
+COMPLETION_PRESET_ID = "cost_and_completion"
+HARBOR_TEMPLATE_ID = "{completion_preset["harbor_template_id"]}"
+
+
+@dataclass(frozen=True)
+class CompletionEvidence:
+    status: str
+    cost_cents: int
+
+
+def build_completion_evidence(fields: CompletionEvidence) -> dict[str, Any]:
+    return {{"status": fields.status, "cost_cents": fields.cost_cents}}
+
+
+# Production: use paybond.intents.create_with_policy_binding after publishing {completion_preset["harbor_template_id"]}.
+policy_binding_stub = {{
+    "template_id": HARBOR_TEMPLATE_ID,
+    "parameters": {parameters},
+}}
+
+_COMPLETION_EVIDENCE_SCHEMA: dict[str, Any] = {evidence_schema}
+
+DEFAULT_OPERATION = "paid_tool.operation"
+DEFAULT_REQUESTED_SPEND_CENTS = 500
+
+TInput = TypeVar("TInput")
+TResult = TypeVar("TResult")
+PaidToolHandler = Callable[[TInput], TResult | Awaitable[TResult]]
+
+{_env_helpers_block()}
 
 
 async def bootstrap_sandbox_guardrail_intent(
@@ -106,15 +364,8 @@ async def bootstrap_sandbox_guardrail_intent(
         operation=operation,
         requested_spend_cents=requested_spend_cents,
         currency=currency,
-        evidence_schema=evidence_schema
-        or {{
-            "type": "object",
-            "required": ["confirmation_id", "charged_cents"],
-            "properties": {{
-                "confirmation_id": {{"type": "string"}},
-                "charged_cents": {{"type": "integer"}},
-            }},
-        }},
+        evidence_schema=evidence_schema or _COMPLETION_EVIDENCE_SCHEMA,
+        completion_preset=COMPLETION_PRESET_ID,
         metadata=metadata,
         idempotency_key=idempotency_key,
     )
@@ -162,12 +413,34 @@ async def submit_sandbox_evidence(
         metadata=metadata,
         idempotency_key=idempotency_key,
     )
+
+
+# Prefer build_completion_evidence(CompletionEvidence(status="completed", cost_cents=10)) for catalog-aligned evidence.
 '''
 
 
-def run_init_guardrail(argv: list[str] | None = None) -> int:
+def _scaffold_body(preset: str, framework: str) -> str:
+    if preset == "agent-middleware":
+        return _agent_middleware_template(framework)
+    return _paid_tool_guard_template(framework)
+
+
+def _scaffold_label(preset: str) -> str:
+    if preset == "agent-middleware":
+        return "agent middleware integration"
+    return "guardrail integration"
+
+
+def _validate_framework_for_preset(preset: str, framework: str) -> None:
+    if preset == "agent-middleware":
+        _normalize_agent_middleware_framework(framework)
+
+
+def run_init_scaffold(argv: list[str] | None = None) -> int:
+    import sys
+
     parser = argparse.ArgumentParser(
-        description="Scaffold a production-shaped Paybond guardrail integration helper."
+        description="Scaffold a production-shaped Paybond guardrail or agent middleware integration helper."
     )
     parser.add_argument(
         "--preset",
@@ -176,19 +449,39 @@ def run_init_guardrail(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--framework",
-        choices=sorted(FRAMEWORK_NOTES),
-        default="provider-agnostic",
+        choices=sorted(set(FRAMEWORK_NOTES) | set(AGENT_MIDDLEWARE_FRAMEWORKS)),
+        default=None,
     )
-    parser.add_argument("--out", default="paybond_paid_tool_guard.py")
+    parser.add_argument("--out", default=None)
     parser.add_argument("--force", action="store_true")
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+        if args.framework is None:
+            args.framework = "generic" if args.preset == "agent-middleware" else "provider-agnostic"
+        _validate_framework_for_preset(args.preset, args.framework)
+    except SystemExit as exc:
+        return 0 if exc.code == 0 else 2
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
-    out = Path(args.out)
-    if out.exists() and not args.force:
-        parser.error(f"{out} already exists; pass --force to overwrite")
-    out.write_text(_template(args.framework), encoding="utf-8")
-    print(f"Created Paybond guardrail integration: {out}")
+    out_path = Path(args.out or PRESET_DEFAULT_OUT[args.preset])
+    if out_path.exists() and not args.force:
+        parser.error(f"{out_path} already exists; pass --force to overwrite")
+    out_path.write_text(_scaffold_body(args.preset, args.framework), encoding="utf-8")
+    print(f"Created Paybond {_scaffold_label(args.preset)}: {out_path}")
     return 0
+
+
+def run_init_guardrail(argv: list[str] | None = None) -> int:
+    return run_init_scaffold(argv)
+
+
+def run_init_agent_middleware(argv: list[str] | None = None) -> int:
+    import sys
+
+    preset_args = ["--preset", "agent-middleware", *(argv if argv is not None else [])]
+    return run_init_scaffold(preset_args)
 
 
 def main(argv: list[str] | None = None) -> int:

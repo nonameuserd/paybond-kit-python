@@ -7,7 +7,7 @@ mod intent_creation;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use intent_creation::intent_creation_sign_bytes_raw;
+use intent_creation::{intent_creation_sign_bytes_raw, intent_creation_sign_bytes_with_policy_binding};
 use paybond_evidence::payee::sign_payee_evidence_request;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -76,6 +76,7 @@ fn sign_payee_evidence_binding_json(
 #[pyo3(signature = (
     tenant_id,
     principal_seed,
+    payee_seed,
     intent_id,
     principal_did,
     payee_did,
@@ -92,6 +93,7 @@ fn sign_payee_evidence_binding_json(
 fn build_signed_create_intent_json(
     tenant_id: String,
     principal_seed: Vec<u8>,
+    payee_seed: Vec<u8>,
     intent_id: String,
     principal_did: String,
     payee_did: String,
@@ -108,6 +110,11 @@ fn build_signed_create_intent_json(
     if principal_seed.len() != 32 {
         return Err(PyValueError::new_err(
             "principal_seed must be exactly 32 bytes (Ed25519 signing key seed)",
+        ));
+    }
+    if payee_seed.len() != 32 {
+        return Err(PyValueError::new_err(
+            "payee_seed must be exactly 32 bytes (Ed25519 signing key seed)",
         ));
     }
     let intent_uuid = Uuid::parse_str(intent_id.trim())
@@ -142,11 +149,17 @@ fn build_signed_create_intent_json(
     )
     .map_err(|e| PyValueError::new_err(format!("deadline_rfc3339: {e}")))?;
 
+    let mut payee_seed_arr = [0_u8; 32];
+    payee_seed_arr.copy_from_slice(&payee_seed);
+    let payee_sk = SigningKey::from_bytes(&payee_seed_arr);
+    let payee_pubkey = payee_sk.verifying_key().to_bytes();
+
     let msg = intent_creation_sign_bytes_raw(
         &tenant_id,
         intent_uuid,
         &principal_did,
         &payee_did,
+        Some(payee_pubkey),
         amount_cents,
         &currency,
         deadline_ot,
@@ -156,6 +169,7 @@ fn build_signed_create_intent_json(
         &predicate_ref,
         &allowed_tools,
         &settlement_rail,
+        None,
     )
     .map_err(PyValueError::new_err)?;
 
@@ -170,6 +184,7 @@ fn build_signed_create_intent_json(
         "principal_pubkey": STANDARD.encode(sk.verifying_key().to_bytes()),
         "principal_signature": STANDARD.encode(sig.to_bytes()),
         "payee_did": payee_did,
+        "payee_pubkey": STANDARD.encode(payee_pubkey),
         "budget": budget,
         "currency": currency,
         "amount_cents": amount_cents,
@@ -177,8 +192,150 @@ fn build_signed_create_intent_json(
         "deadline": deadline_rfc3339,
         "predicate_dsl": predicate,
         "settlement_rail": settlement_rail,
-        "signing_version": 4,
+        "signing_version": 6,
         "policy_binding": serde_json::Value::Null,
+        "allowed_tools": allowed_tools,
+    });
+    if !predicate_ref.trim().is_empty() {
+        body["predicate_ref"] = serde_json::Value::String(predicate_ref);
+    }
+    serde_json::to_string(&body).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+}
+
+/// Returns a JSON string for ``POST /intents`` with signing v5 and a published managed-policy head.
+#[pyfunction]
+#[pyo3(signature = (
+    tenant_id,
+    principal_seed,
+    payee_seed,
+    intent_id,
+    principal_did,
+    payee_did,
+    budget_json,
+    currency,
+    amount_cents,
+    evidence_schema_json,
+    deadline_rfc3339,
+    materialized_predicate_json,
+    predicate_ref,
+    allowed_tools_json,
+    settlement_rail,
+    policy_template_id,
+    policy_version_seq,
+    policy_content_digest_hex,
+))]
+fn build_signed_create_intent_with_policy_binding_json(
+    tenant_id: String,
+    principal_seed: Vec<u8>,
+    payee_seed: Vec<u8>,
+    intent_id: String,
+    principal_did: String,
+    payee_did: String,
+    budget_json: String,
+    currency: String,
+    amount_cents: i64,
+    evidence_schema_json: String,
+    deadline_rfc3339: String,
+    materialized_predicate_json: String,
+    predicate_ref: String,
+    allowed_tools_json: String,
+    settlement_rail: String,
+    policy_template_id: String,
+    policy_version_seq: u32,
+    policy_content_digest_hex: String,
+) -> PyResult<String> {
+    if principal_seed.len() != 32 {
+        return Err(PyValueError::new_err(
+            "principal_seed must be exactly 32 bytes (Ed25519 signing key seed)",
+        ));
+    }
+    if payee_seed.len() != 32 {
+        return Err(PyValueError::new_err(
+            "payee_seed must be exactly 32 bytes (Ed25519 signing key seed)",
+        ));
+    }
+    let intent_uuid = Uuid::parse_str(intent_id.trim())
+        .map_err(|e| PyValueError::new_err(format!("intent_id: {e}")))?;
+    let budget: Value = serde_json::from_str(&budget_json)
+        .map_err(|e| PyValueError::new_err(format!("budget_json: {e}")))?;
+    let evidence_schema: Value = serde_json::from_str(&evidence_schema_json)
+        .map_err(|e| PyValueError::new_err(format!("evidence_schema_json: {e}")))?;
+    let materialized_predicate: Value = serde_json::from_str(&materialized_predicate_json)
+        .map_err(|e| PyValueError::new_err(format!("materialized_predicate_json: {e}")))?;
+    let allowed_tools: Vec<String> = serde_json::from_str(&allowed_tools_json).map_err(|e| {
+        PyValueError::new_err(format!(
+            "allowed_tools_json must be a JSON array of strings: {e}"
+        ))
+    })?;
+    if allowed_tools.is_empty() {
+        return Err(PyValueError::new_err("allowed_tools must be non-empty"));
+    }
+    let settlement_rail = match settlement_rail.trim() {
+        "stripe_connect" | "stripe_ach_debit" | "x402_usdc_base" => {
+            settlement_rail.trim().to_string()
+        }
+        _ => {
+            return Err(PyValueError::new_err(
+                "settlement_rail must be one of stripe_connect, stripe_ach_debit, x402_usdc_base",
+            ))
+        }
+    };
+    let deadline_ot = OffsetDateTime::parse(
+        &deadline_rfc3339,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .map_err(|e| PyValueError::new_err(format!("deadline_rfc3339: {e}")))?;
+
+    let mut payee_seed_arr = [0_u8; 32];
+    payee_seed_arr.copy_from_slice(&payee_seed);
+    let payee_sk = SigningKey::from_bytes(&payee_seed_arr);
+    let payee_pubkey = payee_sk.verifying_key().to_bytes();
+
+    let msg = intent_creation_sign_bytes_with_policy_binding(
+        &tenant_id,
+        intent_uuid,
+        &principal_did,
+        &payee_did,
+        Some(payee_pubkey),
+        amount_cents,
+        &currency,
+        deadline_ot,
+        &budget,
+        &evidence_schema,
+        &materialized_predicate,
+        &predicate_ref,
+        &allowed_tools,
+        &settlement_rail,
+        &policy_template_id,
+        policy_version_seq,
+        &policy_content_digest_hex,
+        None,
+    )
+    .map_err(PyValueError::new_err)?;
+
+    let mut seed = [0_u8; 32];
+    seed.copy_from_slice(&principal_seed);
+    let sk = SigningKey::from_bytes(&seed);
+    let sig = sk.sign(&msg);
+
+    let mut body = serde_json::json!({
+        "intent_id": intent_uuid,
+        "principal_did": principal_did,
+        "principal_pubkey": STANDARD.encode(sk.verifying_key().to_bytes()),
+        "principal_signature": STANDARD.encode(sig.to_bytes()),
+        "payee_did": payee_did,
+        "payee_pubkey": STANDARD.encode(payee_pubkey),
+        "budget": budget,
+        "currency": currency,
+        "amount_cents": amount_cents,
+        "evidence_schema": evidence_schema,
+        "deadline": deadline_rfc3339,
+        "settlement_rail": settlement_rail,
+        "signing_version": 7,
+        "policy_binding": {
+            "template_id": policy_template_id,
+            "version_seq": policy_version_seq,
+        },
         "allowed_tools": allowed_tools,
     });
     if !predicate_ref.trim().is_empty() {
@@ -222,6 +379,10 @@ fn verify_ed25519_sha256_hex(
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sign_payee_evidence_binding_json, m)?)?;
     m.add_function(wrap_pyfunction!(build_signed_create_intent_json, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        build_signed_create_intent_with_policy_binding_json,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(verify_ed25519_sha256_hex, m)?)?;
     Ok(())
 }

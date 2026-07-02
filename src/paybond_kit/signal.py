@@ -16,6 +16,7 @@ from paybond_kit.credentials import (
     PaybondEnvironment,
     _assert_expected_environment,
     _normalize_expected_environment,
+    normalize_gateway_base_url,
 )
 
 _DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal"
@@ -165,7 +166,7 @@ class GatewaySignalClient:
         request_timeout_sec: float = 30.0,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._base = gateway_base_url.strip().rstrip("/") + "/"
+        self._base = normalize_gateway_base_url(gateway_base_url) + "/"
         self._tenant = tenant_id.strip()
         self._bearer = static_gateway_bearer_token.strip()
         self._max_retries = max(1, int(max_retries))
@@ -183,6 +184,7 @@ class GatewaySignalClient:
     async def _get_json_with_retries(self, path: str) -> httpx.Response:
         url = f"{self._base}{path.lstrip('/')}"
         last_exc: BaseException | None = None
+        response: httpx.Response | None = None
         for attempt in range(self._max_retries):
             try:
                 response = await self._client.get(
@@ -209,6 +211,8 @@ class GatewaySignalClient:
             return response
         if last_exc is not None:
             raise last_exc
+        if response is None:
+            raise RuntimeError(f"GET {path} exhausted retries without a response")
         return response
 
     def _assert_tenant(self, body: dict[str, Any], *, url: str) -> None:
@@ -393,7 +397,7 @@ async def _resolve_gateway_tenant_id(
     client = httpx.AsyncClient(timeout=30.0)
     try:
         path = principal_path if principal_path.startswith("/") else f"/{principal_path}"
-        url = gateway_base_url.strip().rstrip("/") + path
+        url = normalize_gateway_base_url(gateway_base_url) + path
         last_exc: BaseException | None = None
         for attempt in range(retries):
             try:

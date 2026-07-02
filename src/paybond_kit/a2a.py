@@ -9,6 +9,8 @@ from urllib.parse import quote
 
 import httpx
 
+from paybond_kit.credentials import normalize_gateway_base_url
+
 
 class A2AHttpError(RuntimeError):
     """Raised for non-success HTTP status codes from gateway A2A discovery routes."""
@@ -39,7 +41,7 @@ class GatewayA2AClient:
         request_timeout_sec: float = 30.0,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._base = gateway_base_url.strip().rstrip("/") + "/"
+        self._base = normalize_gateway_base_url(gateway_base_url) + "/"
         self._bearer = (
             static_gateway_bearer_token.strip()
             if static_gateway_bearer_token and static_gateway_bearer_token.strip()

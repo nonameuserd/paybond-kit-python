@@ -7,6 +7,7 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, is_dataclass
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlencode, urljoin
@@ -14,7 +15,22 @@ from uuid import UUID
 
 import httpx
 
-from paybond_kit.credentials import DEFAULT_PAYBOND_GATEWAY_BASE_URL
+from paybond_kit.credentials import DEFAULT_PAYBOND_GATEWAY_BASE_URL, normalize_gateway_base_url
+from paybond_kit.mcp_capability_token_cache import (
+    McpCapabilityTokenCache,
+    McpCapabilityTokenCacheConfig,
+    mcp_tool_stores_capability_token,
+    parse_mcp_capability_token_cache_config,
+)
+from paybond_kit.mcp_evidence_policy import (
+    MCP_EVIDENCE_POLICY_ENV,
+    McpEvidencePolicy,
+    McpEvidenceValidationGate,
+    completion_evidence_validation_ok,
+    extract_harbor_evidence_validation_input,
+    extract_sandbox_guardrail_validation_input,
+    parse_mcp_evidence_policy,
+)
 from paybond_kit.mcp_policy import (
     MCP_TOOL_ALLOWLIST_ENV,
     MCP_TOOL_POLICY_ENV,
@@ -22,7 +38,15 @@ from paybond_kit.mcp_policy import (
     merge_mcp_tool_policy,
     parse_mcp_tool_allowlist,
     parse_mcp_tool_policy,
+    resolve_mcp_tool_policy,
     tool_allowed_by_policy,
+)
+from paybond_kit.mcp_policy_reload import (
+    McpPolicyReloadConfig,
+    McpPolicyReloadGate,
+    McpPolicySpendGateInput,
+    create_mcp_policy_gateway_adapter,
+    parse_mcp_policy_reload_config,
 )
 from paybond_kit.fraud import GatewayFraudClient
 from paybond_kit.harbor import TenantBindingError
@@ -109,6 +133,13 @@ def _gateway_http_error_message(
     return f"Gateway {method} {path} HTTP {status_code}: {body_text}"
 
 
+def _read_intent_allowed_tools(intent: dict[str, Any]) -> list[str]:
+    raw = intent.get("allowed_tools")
+    if not isinstance(raw, list):
+        return []
+    return [entry.strip() for entry in raw if isinstance(entry, str) and entry.strip()]
+
+
 @dataclass(frozen=True)
 class PaybondMCPSettings:
     """Environment-backed configuration for the MCP server."""
@@ -118,6 +149,9 @@ class PaybondMCPSettings:
     principal_path: str = DEFAULT_PRINCIPAL_PATH
     max_retries: int = 3
     tool_policy: McpToolPolicyConfig = McpToolPolicyConfig()
+    evidence_policy: McpEvidencePolicy = "strict"
+    policy_reload: McpPolicyReloadConfig | None = None
+    capability_token_cache: McpCapabilityTokenCacheConfig = McpCapabilityTokenCacheConfig()
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> PaybondMCPSettings:
@@ -126,17 +160,22 @@ class PaybondMCPSettings:
         values = env or os.environ
         env_file = values.get("PAYBOND_ENV_FILE", "").strip() or DEFAULT_ENV_FILE
         api_key = values.get("PAYBOND_API_KEY", "").strip() or _read_env_file_value(env_file, "PAYBOND_API_KEY")
-        gateway_base_url = (
+        gateway_base_url = normalize_gateway_base_url(
             values.get("PAYBOND_GATEWAY_URL", "").strip()
             or values.get("PAYBOND_GATEWAY_BASE_URL", "").strip()
             or DEFAULT_PAYBOND_GATEWAY_BASE_URL
         )
         principal_path = values.get("PAYBOND_PRINCIPAL_PATH", "").strip() or DEFAULT_PRINCIPAL_PATH
         max_retries_raw = values.get("PAYBOND_MCP_MAX_RETRIES", "").strip()
-        tool_policy = merge_mcp_tool_policy(
-            parse_mcp_tool_policy(values.get(MCP_TOOL_POLICY_ENV, "").strip() or None),
-            allowlist=parse_mcp_tool_allowlist(values.get(MCP_TOOL_ALLOWLIST_ENV, "").strip() or None) or None,
+        tool_policy = resolve_mcp_tool_policy(
+            merge_mcp_tool_policy(
+                parse_mcp_tool_policy(values.get(MCP_TOOL_POLICY_ENV, "").strip() or None),
+                allowlist=parse_mcp_tool_allowlist(values.get(MCP_TOOL_ALLOWLIST_ENV, "").strip() or None) or None,
+            )
         )
+        evidence_policy = parse_mcp_evidence_policy(values.get(MCP_EVIDENCE_POLICY_ENV, "").strip() or None)
+        policy_reload = parse_mcp_policy_reload_config(dict(values))
+        capability_token_cache = parse_mcp_capability_token_cache_config(values)
 
         if not api_key:
             raise SystemExit("PAYBOND_API_KEY is required; run paybond-kit-login or configure your MCP host environment")
@@ -154,6 +193,9 @@ class PaybondMCPSettings:
             principal_path=principal_path,
             max_retries=max_retries,
             tool_policy=tool_policy,
+            evidence_policy=evidence_policy,
+            policy_reload=policy_reload,
+            capability_token_cache=capability_token_cache,
         )
 
 
@@ -168,7 +210,7 @@ class GatewayAPIClient:
         max_retries: int = 3,
         request_timeout_sec: float = 30.0,
     ) -> None:
-        self._base = gateway_base_url.strip().rstrip("/") + "/"
+        self._base = normalize_gateway_base_url(gateway_base_url) + "/"
         self._api_key = api_key.strip()
         self._max_retries = max(1, int(max_retries))
         self._client = httpx.AsyncClient(timeout=request_timeout_sec)
@@ -279,13 +321,154 @@ class PaybondMCPRuntime:
         self._signal_lock = asyncio.Lock()
         self._fraud: GatewayFraudClient | None = None
         self._fraud_lock = asyncio.Lock()
+        self._capability_token_cache = McpCapabilityTokenCache(settings.capability_token_cache)
+        self._evidence_gate = McpEvidenceValidationGate(policy=settings.evidence_policy)
+        self._policy_reload_config = settings.policy_reload
+        self._opened_policy_gate: McpPolicyReloadGate | None = None
+        self._policy_gate_lock = asyncio.Lock()
+
+    async def _policy_gate(self) -> McpPolicyReloadGate | None:
+        if self._policy_reload_config is None:
+            return None
+        async with self._policy_gate_lock:
+            if self._opened_policy_gate is None:
+                self._opened_policy_gate = await McpPolicyReloadGate.open(
+                    self._policy_reload_config,
+                    gateway=create_mcp_policy_gateway_adapter(self._gateway),
+                )
+            return self._opened_policy_gate
+
+    async def begin_policy_tool_call(self) -> None:
+        gate = await self._policy_gate()
+        if gate is not None:
+            gate.begin_tool_call()
+
+    async def end_policy_tool_call(self) -> None:
+        gate = await self._policy_gate()
+        if gate is not None:
+            gate.end_tool_call()
+
+    def stop_policy_reload(self) -> None:
+        if self._opened_policy_gate is not None:
+            self._opened_policy_gate.stop()
+            self._opened_policy_gate = None
+
+    async def authorize_agent_spend(
+        self,
+        *,
+        intent_id: UUID,
+        token: str,
+        operation: str,
+        requested_spend_cents: int | None = None,
+        tool_name: str | None = None,
+    ) -> dict[str, Any]:
+        gate = await self._policy_gate()
+        policy_digest: str | None = None
+        resolved_operation = operation
+        resolved_spend = 0 if requested_spend_cents is None else int(requested_spend_cents)
+
+        if gate is not None:
+            intent = await self.get_intent(intent_id)
+            allowed_tools = _read_intent_allowed_tools(intent)
+            gated = gate.assert_spend_gate(
+                input=McpPolicySpendGateInput(
+                    tool_name=tool_name,
+                    operation=operation,
+                    allowed_tools=allowed_tools,
+                    requested_spend_cents=requested_spend_cents,
+                ),
+            )
+            resolved_operation = gated.operation
+            resolved_spend = gated.requested_spend_cents
+            policy_digest = gated.policy_digest
+
+        body = await self.verify_capability(
+            intent_id=intent_id,
+            token=token,
+            operation=resolved_operation,
+            requested_spend_cents=resolved_spend,
+        )
+        if policy_digest:
+            body["policy_digest"] = policy_digest
+        return body
+
+    def validate_completion_evidence(
+        self,
+        *,
+        preset_id: str,
+        vendor_payload: dict[str, Any] | None = None,
+        canonical_payload: dict[str, Any] | None = None,
+        frozen_vendor_api_version: str | None = None,
+        frozen_vendor_schema_digest_hex: str | None = None,
+        frozen_canonical_schema_digest_hex: str | None = None,
+    ) -> dict[str, Any]:
+        report = self._evidence_gate.validate_and_record(
+            preset_id=preset_id,
+            vendor_payload=vendor_payload,
+            canonical_payload=canonical_payload,
+            frozen_vendor_api_version=frozen_vendor_api_version,
+            frozen_vendor_schema_digest_hex=frozen_vendor_schema_digest_hex,
+            frozen_canonical_schema_digest_hex=frozen_canonical_schema_digest_hex,
+        )
+        return {
+            **report,
+            "ok": completion_evidence_validation_ok(report),
+        }
+
+    def _require_evidence_validation(
+        self,
+        *,
+        preset_id: str,
+        vendor_payload: dict[str, Any] | None = None,
+        canonical_payload: dict[str, Any] | None = None,
+    ) -> None:
+        self._evidence_gate.require_pass(
+            preset_id=preset_id,
+            vendor_payload=vendor_payload,
+            canonical_payload=canonical_payload,
+        )
+
+    def _store_capability_token(self, intent_id: str, token: str) -> None:
+        self._capability_token_cache.store(intent_id, token)
+
+    async def resolve_capability_token(self, intent_id: str, token: str | None = None) -> str:
+        explicit = (token or "").strip()
+        if explicit:
+            return explicit
+        stored = self._capability_token_cache.resolve(str(intent_id))
+        if stored:
+            return stored
+        raise ValueError(
+            f"capability token unavailable or expired for intent {intent_id}; "
+            "create or bootstrap a funded intent first"
+        )
+
+    def prepare_tool_response(self, body: dict[str, Any], *, tool_name: str) -> dict[str, Any]:
+        from paybond_kit.cli.redact import redact_sensitive_fields
+
+        intent_id = str(body.get("intent_id", "")).strip()
+        token = body.get("capability_token")
+        if (
+            mcp_tool_stores_capability_token(tool_name)
+            and intent_id
+            and isinstance(token, str)
+            and token.strip()
+        ):
+            self._store_capability_token(intent_id, token)
+        redacted = redact_sensitive_fields(body)
+        return redacted if isinstance(redacted, dict) else body
 
     async def aclose(self) -> None:
+        self.stop_policy_reload()
         if self._signal is not None:
             await self._signal.aclose()
         if self._fraud is not None:
             await self._fraud.aclose()
         await self._gateway.aclose()
+
+    async def preload_principal(self) -> None:
+        """Resolve and cache the gateway principal during MCP server startup."""
+        await self.principal()
 
     async def principal(self) -> dict[str, Any]:
         async with self._principal_lock:
@@ -430,8 +613,18 @@ class PaybondMCPRuntime:
         operation: str | None = None,
         requested_spend_cents: int | None = None,
         metadata: dict[str, Any] | None = None,
+        completion_preset_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
+        preset_id, vendor_payload, canonical_payload = extract_sandbox_guardrail_validation_input(
+            payload=payload,
+            completion_preset_id=completion_preset_id,
+        )
+        self._require_evidence_validation(
+            preset_id=preset_id,
+            vendor_payload=vendor_payload,
+            canonical_payload=canonical_payload,
+        )
         expected_tenant = await self.tenant_id()
         request_body: dict[str, Any] = {}
         if payload is not None:
@@ -470,11 +663,11 @@ class PaybondMCPRuntime:
         proof: dict[str, Any],
         expected_purpose: str,
         expected_request: dict[str, Any],
-        expected_verifier: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        verifier = dict(expected_verifier or {})
-        verifier.setdefault("tenant_id", await self.tenant_id())
-        verifier.setdefault("verifier_id", DEFAULT_RECOGNITION_VERIFIER_ID)
+        verifier = {
+            "tenant_id": await self.tenant_id(),
+            "verifier_id": DEFAULT_RECOGNITION_VERIFIER_ID,
+        }
         return await self._gateway.post_json(
             "/protocol/v2/recognition/verify",
             {
@@ -585,8 +778,18 @@ class PaybondMCPRuntime:
         *,
         body: dict[str, Any],
         recognition_proof: dict[str, Any],
+        completion_preset_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
+        preset_id, vendor_payload, canonical_payload = extract_harbor_evidence_validation_input(
+            body,
+            completion_preset_id=completion_preset_id,
+        )
+        self._require_evidence_validation(
+            preset_id=preset_id,
+            vendor_payload=vendor_payload,
+            canonical_payload=canonical_payload,
+        )
         return await self._gateway_harbor_mutation(
             f"/harbor/intents/{intent_id}/evidence",
             body,
@@ -745,6 +948,28 @@ def _mcp_tool_selection_metadata(tool_annotations_cls: Any) -> dict[str, dict[st
                     "requested_spend_cents",
                     "sandbox_lifecycle_status",
                 ],
+            ),
+        },
+        "paybond_validate_completion_evidence": {
+            "title": "Validate Completion Evidence",
+            "description": (
+                "Pre-validates vendor and canonical completion evidence against catalog JSON Schemas "
+                "and preset forbidden_evidence_fields. Required before evidence submit tools when "
+                "PAYBOND_MCP_EVIDENCE_POLICY=strict. Harbor remains authoritative at submit time."
+            ),
+            "annotations": read_only("Validate Completion Evidence"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "preset_id": {"type": "string"},
+                    "ok": {"type": "boolean"},
+                    "vendor_schema_ok": {"type": "boolean"},
+                    "canonical_schema_ok": {"type": "boolean"},
+                    "quality_fields_missing": {"type": "array", "items": {"type": "string"}},
+                    "forbidden_fields_present": {"type": "array", "items": {"type": "string"}},
+                    "pack_stale": {"type": "boolean"},
+                    "drift_kinds": {"type": "array", "items": {"type": "string"}},
+                },
+                ["preset_id", "ok"],
             ),
         },
         "paybond_submit_sandbox_guardrail_evidence": {
@@ -969,10 +1194,12 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         ) from exc
 
     resolved = settings or PaybondMCPSettings.from_env()
+    effective_policy = resolve_mcp_tool_policy(resolved.tool_policy)
     runtime = PaybondMCPRuntime(resolved)
 
     @asynccontextmanager
     async def lifespan(_: Any) -> AsyncIterator[None]:
+        await runtime.preload_principal()
         try:
             yield
         finally:
@@ -983,8 +1210,9 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         instructions=(
             "This server is bound to one Paybond tenant derived from the configured "
             "service-account API key. Use paybond_create_spend_intent or "
-            "paybond_fund_intent to obtain the intent_id and capability_token, then "
-            "call paybond_authorize_agent_spend before side-effecting tools. The server "
+            "paybond_bootstrap_sandbox_guardrail to obtain a funded intent_id, then "
+            "call paybond_authorize_agent_spend before side-effecting tools. Capability "
+            "tokens are stored inside this MCP server and are not returned to agent logs. "
             "works with any MCP-compatible host and does not assume a specific model "
             "provider. Do not invent tenant identifiers. Gateway-first Harbor mutation "
             "tools expect already-signed request bodies plus replay-safe recognition "
@@ -998,18 +1226,35 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
 
     def paybond_tool(*, name: str, description: str) -> Any:
         metadata = tool_metadata[name]
-        if not tool_allowed_by_policy(name, metadata["annotations"], resolved.tool_policy):
+        if not tool_allowed_by_policy(name, metadata["annotations"], effective_policy):
             def skip_tool(func: Any) -> Any:
                 return func
 
             return skip_tool
-        return server.tool(
+
+        tool_decorator = server.tool(
             name=name,
             title=metadata["title"],
             description=metadata.get("description", description),
             annotations=metadata["annotations"],
             structured_output=True,
         )
+
+        def register_tool(func: Any) -> Any:
+            @wraps(func)
+            async def wrapped(*args: Any, **kwargs: Any):
+                await runtime.begin_policy_tool_call()
+                try:
+                    result = await func(*args, **kwargs)
+                    if isinstance(result, dict):
+                        return runtime.prepare_tool_response(result, tool_name=name)
+                    return result
+                finally:
+                    await runtime.end_policy_tool_call()
+
+            return tool_decorator(wrapped)
+
+        return register_tool
 
     @paybond_tool(
         name="paybond_get_principal",
@@ -1030,15 +1275,17 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
     )
     async def paybond_verify_capability(
         intent_id: str,
-        token: str,
         operation: str,
-        requested_spend_cents: int = 0,
+        requested_spend_cents: int | None = None,
+        token: str | None = None,
     ) -> dict[str, Any]:
-        return await runtime.verify_capability(
+        resolved_token = await runtime.resolve_capability_token(intent_id, token)
+        return await runtime.authorize_agent_spend(
             intent_id=UUID(intent_id),
-            token=token,
+            token=resolved_token,
             operation=operation,
             requested_spend_cents=requested_spend_cents,
+            tool_name=operation,
         )
 
     @paybond_tool(
@@ -1051,15 +1298,17 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
     )
     async def paybond_authorize_agent_spend(
         intent_id: str,
-        token: str,
         operation: str,
-        requested_spend_cents: int = 0,
+        requested_spend_cents: int | None = None,
+        token: str | None = None,
     ) -> dict[str, Any]:
-        return await runtime.verify_capability(
+        resolved_token = await runtime.resolve_capability_token(intent_id, token)
+        return await runtime.authorize_agent_spend(
             intent_id=UUID(intent_id),
-            token=token,
+            token=resolved_token,
             operation=operation,
             requested_spend_cents=requested_spend_cents,
+            tool_name=operation,
         )
 
     @paybond_tool(
@@ -1088,6 +1337,30 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         )
 
     @paybond_tool(
+        name="paybond_validate_completion_evidence",
+        description=(
+            "Pre-validates completion evidence against the shared preset catalog. "
+            "Call this before paybond_submit_*_evidence when PAYBOND_MCP_EVIDENCE_POLICY=strict."
+        ),
+    )
+    async def paybond_validate_completion_evidence(
+        preset_id: str,
+        vendor_payload: dict[str, Any] | None = None,
+        canonical_payload: dict[str, Any] | None = None,
+        frozen_vendor_api_version: str | None = None,
+        frozen_vendor_schema_digest_hex: str | None = None,
+        frozen_canonical_schema_digest_hex: str | None = None,
+    ) -> dict[str, Any]:
+        return runtime.validate_completion_evidence(
+            preset_id=preset_id,
+            vendor_payload=vendor_payload,
+            canonical_payload=canonical_payload,
+            frozen_vendor_api_version=frozen_vendor_api_version,
+            frozen_vendor_schema_digest_hex=frozen_vendor_schema_digest_hex,
+            frozen_canonical_schema_digest_hex=frozen_canonical_schema_digest_hex,
+        )
+
+    @paybond_tool(
         name="paybond_submit_sandbox_guardrail_evidence",
         description=(
             "Submit evidence for a sandbox-only Paybond guardrail intent. Tenant scope "
@@ -1102,6 +1375,7 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         operation: str | None = None,
         requested_spend_cents: int | None = None,
         metadata: dict[str, Any] | None = None,
+        completion_preset_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         return await runtime.submit_sandbox_guardrail_evidence(
@@ -1111,6 +1385,7 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             operation=operation,
             requested_spend_cents=requested_spend_cents,
             metadata=metadata,
+            completion_preset_id=completion_preset_id,
             idempotency_key=idempotency_key,
         )
 
@@ -1244,21 +1519,20 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
     @paybond_tool(
         name="paybond_verify_agent_recognition_proof_v1",
         description=(
-            "Verify a replay-safe AgentRecognitionProofV1 against an expected purpose, "
-            "verifier context, and request envelope."
+            "Verify a replay-safe AgentRecognitionProofV1 against an expected purpose and "
+            "request envelope. Verifier context (tenant_id, verifier_id) is derived from the "
+            "authenticated MCP session only."
         ),
     )
     async def paybond_verify_agent_recognition_proof_v1(
         proof: dict[str, Any],
         expected_purpose: str,
         expected_request: dict[str, Any],
-        expected_verifier: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return await runtime.verify_agent_recognition_proof_v1(
             proof=proof,
             expected_purpose=expected_purpose,
             expected_request=expected_request,
-            expected_verifier=expected_verifier,
         )
 
     @paybond_tool(
@@ -1365,34 +1639,39 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         intent_id: str,
         body: dict[str, Any],
         recognition_proof: dict[str, Any],
+        completion_preset_id: str | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         return await runtime.submit_harbor_evidence(
             UUID(intent_id),
             body=body,
             recognition_proof=recognition_proof,
+            completion_preset_id=completion_preset_id,
             idempotency_key=idempotency_key,
         )
 
-    @paybond_tool(
+    async def _handle_submit_spend_evidence(
+        intent_id: str,
+        body: dict[str, Any],
+        recognition_proof: dict[str, Any],
+        completion_preset_id: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        return await runtime.submit_harbor_evidence(
+            UUID(intent_id),
+            body=body,
+            recognition_proof=recognition_proof,
+            completion_preset_id=completion_preset_id,
+            idempotency_key=idempotency_key,
+        )
+
+    paybond_tool(
         name="paybond_submit_spend_evidence",
         description=(
             "Submit signed evidence for a Paybond spend intent so release, refund, "
             "review, and receipt generation use the same audit-ready record."
         ),
-    )
-    async def paybond_submit_spend_evidence(
-        intent_id: str,
-        body: dict[str, Any],
-        recognition_proof: dict[str, Any],
-        idempotency_key: str | None = None,
-    ) -> dict[str, Any]:
-        return await runtime.submit_harbor_evidence(
-            UUID(intent_id),
-            body=body,
-            recognition_proof=recognition_proof,
-            idempotency_key=idempotency_key,
-        )
+    )(_handle_submit_spend_evidence)
 
     @paybond_tool(
         name="paybond_confirm_settlement",

@@ -16,6 +16,7 @@ from paybond_kit.credentials import (
     PaybondEnvironment,
     _assert_expected_environment,
     _normalize_expected_environment,
+    normalize_gateway_base_url,
 )
 
 _DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal"
@@ -137,7 +138,7 @@ class SignalFraudReleaseGateDecision(TypedDict):
     summary: str
 
 
-class SignalFraudAssessmentResponse(TypedDict, total=False):
+class SignalFraudAssessmentResponse(TypedDict):
     schema_version: int
     tenant_id: str
     operator_did: str
@@ -147,22 +148,22 @@ class SignalFraudAssessmentResponse(TypedDict, total=False):
     review_reasons: list[str]
     fraud_signals: list[SignalFraudSignal]
     fraud_assessment: SignalFraudAssessment
-    release_gate: SignalFraudReleaseGateDecision
+    release_gate: NotRequired[SignalFraudReleaseGateDecision]
 
 
-class SignalFraudReviewQueueItem(TypedDict, total=False):
+class SignalFraudReviewQueueItem(TypedDict):
     operator_did: str
     review_state: str
     review_outcome: str
     review_reasons: list[str]
-    anomaly_flagged: bool
-    opened_at: str
-    reviewed_at: str
-    updated_at: str
-    last_receipt_message_digest_hex: str
     fraud_signals: list[SignalFraudSignal]
     fraud_assessment: SignalFraudAssessment
-    release_gate: SignalFraudReleaseGateDecision
+    anomaly_flagged: NotRequired[bool]
+    opened_at: NotRequired[str]
+    reviewed_at: NotRequired[str]
+    updated_at: NotRequired[str]
+    last_receipt_message_digest_hex: NotRequired[str]
+    release_gate: NotRequired[SignalFraudReleaseGateDecision]
 
 
 class SignalFraudReviewQueueResponse(TypedDict):
@@ -233,19 +234,19 @@ class SignalFraudReviewEventInput(TypedDict, total=False):
     summary: str
 
 
-class SignalFraudReviewEventResponse(TypedDict, total=False):
+class SignalFraudReviewEventResponse(TypedDict):
     schema_version: int
     tenant_id: str
     operator_did: str
     score_model_version: str
     requested_event_type: str
     recorded_event_type: str
-    review_outcome: str
-    signal_code: str
-    intent_id: str
-    provider_event_id: str
     accepted: bool
-    next_eligible_at: str
+    review_outcome: NotRequired[str]
+    signal_code: NotRequired[str]
+    intent_id: NotRequired[str]
+    provider_event_id: NotRequired[str]
+    next_eligible_at: NotRequired[str]
 
 
 class GatewayFraudClient:
@@ -261,7 +262,7 @@ class GatewayFraudClient:
         request_timeout_sec: float = 30.0,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._base = gateway_base_url.strip().rstrip("/") + "/"
+        self._base = normalize_gateway_base_url(gateway_base_url) + "/"
         self._tenant = tenant_id.strip()
         self._bearer = static_gateway_bearer_token.strip()
         self._max_retries = max(1, int(max_retries))
@@ -585,7 +586,7 @@ async def _resolve_gateway_tenant_id(
     client = httpx.AsyncClient(timeout=30.0)
     try:
         path = principal_path if principal_path.startswith("/") else f"/{principal_path}"
-        url = gateway_base_url.strip().rstrip("/") + path
+        url = normalize_gateway_base_url(gateway_base_url) + path
         last_exc: BaseException | None = None
         for attempt in range(retries):
             try:

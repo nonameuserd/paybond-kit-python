@@ -8,11 +8,21 @@ import json
 import random
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
+
+if TYPE_CHECKING:
+    from paybond_kit.agent.gateway_trace_reporter import GatewayAgentRunTraceReporter
+    from paybond_kit.policy.load_effective import PolicyEffectiveResolveResult
+    from paybond_kit.policy.validate_remote import (
+        PolicyRemoteValidateOptions,
+        PolicyRemoteValidateResult,
+    )
 from urllib.parse import urlencode
 from uuid import UUID
 
 import httpx
+
+from paybond_kit.credentials import normalize_gateway_base_url
 
 SettlementRail: TypeAlias = Literal["stripe_connect", "stripe_ach_debit", "x402_usdc_base"]
 _SETTLEMENT_RAIL_VALUES = frozenset({"stripe_connect", "stripe_ach_debit", "x402_usdc_base"})
@@ -24,7 +34,7 @@ def validate_settlement_rail(value: str, *, field: str = "settlement_rail") -> S
         raise ValueError(
             f"{field} must be one of {', '.join(sorted(_SETTLEMENT_RAIL_VALUES))}"
         )
-    return value
+    return cast(SettlementRail, value)
 
 
 @dataclass(frozen=True)
@@ -308,6 +318,7 @@ class HarborClient:
             **headers,
         }
         last_exc: BaseException | None = None
+        response: httpx.Response | None = None
         for attempt in range(self._max_retries):
             try:
                 response = await self._client.post(url, headers=merged, json=payload)
@@ -329,6 +340,8 @@ class HarborClient:
             return response
         if last_exc is not None:
             raise last_exc
+        if response is None:
+            raise RuntimeError("POST request exhausted retries without a response")
         return response
 
     async def _get_json_with_retries(self, path: str) -> httpx.Response:
@@ -341,6 +354,7 @@ class HarborClient:
             **auth_hdr,
         }
         last_exc: BaseException | None = None
+        response: httpx.Response | None = None
         for attempt in range(self._max_retries):
             try:
                 response = await self._client.get(url, headers=merged)
@@ -362,6 +376,8 @@ class HarborClient:
             return response
         if last_exc is not None:
             raise last_exc
+        if response is None:
+            raise RuntimeError("GET request exhausted retries without a response")
         return response
 
     def _assert_ledger_tenant(self, body: dict[str, Any], *, url: str) -> None:
@@ -486,6 +502,7 @@ class HarborClient:
             **extra,
         }
         last_exc: BaseException | None = None
+        response: httpx.Response | None = None
         for attempt in range(self._max_retries):
             try:
                 response = await self._client.post(url, headers=merged, json=body)
@@ -514,6 +531,8 @@ class HarborClient:
             return response.json()
         if last_exc is not None:
             raise last_exc
+        if response is None:
+            raise RuntimeError("Harbor create intent request exhausted retries without a response")
         raise HarborHttpError(
             f"Harbor create intent HTTP {response.status_code}: {response.text}",
             status_code=response.status_code,
@@ -675,6 +694,7 @@ class HarborClient:
             **extra,
         }
         last_exc: BaseException | None = None
+        response: httpx.Response | None = None
         for attempt in range(self._max_retries):
             try:
                 response = await self._client.post(
@@ -705,6 +725,8 @@ class HarborClient:
             return response.json()
         if last_exc is not None:
             raise last_exc
+        if response is None:
+            raise RuntimeError("Harbor evidence request exhausted retries without a response")
         raise HarborHttpError(
             f"Harbor evidence HTTP {response.status_code}: {response.text}",
             status_code=response.status_code,
@@ -848,7 +870,7 @@ class GatewayHarborClient:
         request_timeout_sec: float = 30.0,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._base = gateway_base_url.strip().rstrip("/") + "/"
+        self._base = normalize_gateway_base_url(gateway_base_url) + "/"
         self._tenant = tenant_id.strip()
         self._bearer = static_gateway_bearer_token.strip()
         self._max_retries = max(1, int(max_retries))
@@ -885,6 +907,7 @@ class GatewayHarborClient:
         if extra_headers:
             headers.update(extra_headers)
         last_exc: BaseException | None = None
+        response: httpx.Response | None = None
         for attempt in range(self._max_retries):
             try:
                 response = await self._client.post(url, headers=headers, json=payload)
@@ -905,7 +928,127 @@ class GatewayHarborClient:
             return response
         if last_exc is not None:
             raise last_exc
+        if response is None:
+            raise RuntimeError("POST request exhausted retries without a response")
         return response
+
+    async def _put_json_with_retries(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        extra_headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        url = f"{self._base}{path.lstrip('/')}"
+        headers = self._headers(content_type="application/json")
+        if extra_headers:
+            headers.update(extra_headers)
+        last_exc: BaseException | None = None
+        response: httpx.Response | None = None
+        for attempt in range(self._max_retries):
+            try:
+                response = await self._client.put(url, headers=headers, json=payload)
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                last_exc = exc
+                if attempt + 1 >= self._max_retries:
+                    raise
+                await asyncio.sleep(_backoff_seconds(attempt))
+                continue
+            if response.status_code in (429, 500, 502, 503, 504):
+                if attempt + 1 >= self._max_retries:
+                    break
+                delay = _parse_retry_after(response.headers.get("retry-after"))
+                if delay is None:
+                    delay = _backoff_seconds(attempt)
+                await asyncio.sleep(delay)
+                continue
+            return response
+        if last_exc is not None:
+            raise last_exc
+        if response is None:
+            raise RuntimeError("PUT request exhausted retries without a response")
+        return response
+
+    def create_agent_run_trace_reporter(self, run_id: str) -> GatewayAgentRunTraceReporter:
+        """Gateway-backed middleware trace reporter for tenant console agent-runs view."""
+        from paybond_kit.agent.gateway_trace_reporter import GatewayAgentRunTraceReporter
+
+        trimmed = run_id.strip()
+        if not trimmed:
+            raise ValueError("create_agent_run_trace_reporter requires a non-empty run_id")
+
+        async def write_json(method: str, path: str, body: dict[str, Any]) -> Any:
+            if method == "PUT":
+                response = await self._put_json_with_retries(path, body)
+            else:
+                response = await self._post_json_with_retries(path, body)
+            url = f"{self._base}{path.lstrip('/')}"
+            if response.status_code >= 400:
+                raise HarborHttpError(
+                    f"Gateway agent run trace HTTP {response.status_code}: {response.text}",
+                    status_code=response.status_code,
+                    url=url,
+                    body_text=response.text,
+                )
+            if not response.text.strip():
+                return {}
+            parsed = response.json()
+            return parsed if isinstance(parsed, dict) else {}
+
+        return GatewayAgentRunTraceReporter(write_json, trimmed)
+
+    async def _get_json_with_retries(self, path: str) -> httpx.Response:
+        url = f"{self._base}{path.lstrip('/')}"
+        headers = self._headers()
+        last_exc: BaseException | None = None
+        for attempt in range(self._max_retries):
+            try:
+                response = await self._client.get(url, headers=headers)
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                last_exc = exc
+                if attempt + 1 >= self._max_retries:
+                    raise
+                await asyncio.sleep(_backoff_seconds(attempt))
+                continue
+            if response.status_code in (429, 500, 502, 503, 504):
+                if attempt + 1 >= self._max_retries:
+                    return response
+                delay = _parse_retry_after(response.headers.get("retry-after"))
+                if delay is None:
+                    delay = _backoff_seconds(attempt)
+                await asyncio.sleep(delay)
+                continue
+            return response
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("GET request exhausted retries without a response")
+
+    async def get_intent(self, intent_id: UUID) -> dict[str, Any]:
+        """Tenant-scoped Harbor operator intent detail (for attach run binding)."""
+        path = f"harbor/operator/v1/intents/{intent_id}"
+        url = f"{self._base}{path}"
+        response = await self._get_json_with_retries(path)
+        if response.status_code >= 400:
+            raise HarborHttpError(
+                f"Gateway Harbor get intent HTTP {response.status_code}: {response.text}",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        body = response.json()
+        if not isinstance(body, dict):
+            raise HarborHttpError(
+                "Gateway Harbor get intent response was not a JSON object",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        tenant = str(body.get("tenant_id", "")).strip()
+        if tenant != self._tenant:
+            raise TenantBindingError(
+                f"intent tenant mismatch: client={self._tenant!r} remote={tenant!r}"
+            )
+        return body
 
     def _mutation_headers(
         self,
@@ -1031,6 +1174,62 @@ class GatewayHarborClient:
                 url=url,
                 body_text=response.text,
             )
+
+    async def validate_policy(
+        self,
+        document: dict[str, Any],
+        *,
+        options: "PolicyRemoteValidateOptions | None" = None,
+    ) -> "PolicyRemoteValidateResult":
+        """Validate a paybond.policy.yaml document against the tenant Harbor registry."""
+        from paybond_kit.policy.validate_remote import (
+            PolicyRemoteValidateOptions,
+            PolicyRemoteValidateResult,
+            parse_policy_remote_validate_response,
+            policy_validate_query_string,
+        )
+
+        options = options or PolicyRemoteValidateOptions()
+        path = f"v1/policy/validate{policy_validate_query_string(options=options)}"
+        url = f"{self._base}{path}"
+        response = await self._post_json_with_retries(path, document)
+        if response.status_code >= 400:
+            raise HarborHttpError(
+                f"Gateway policy validate HTTP {response.status_code}: {response.text}",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        return parse_policy_remote_validate_response(response.json())
+
+    async def resolve_policy_effective(
+        self,
+        org_policy_id: str,
+        overlay: dict[str, Any],
+        *,
+        current_digest: str | None = None,
+    ) -> "PolicyEffectiveResolveResult":
+        """Resolve merged effective policy for a tenant overlay."""
+        from paybond_kit.policy.load_effective import (
+            PolicyEffectiveResolveResult,
+            parse_policy_effective_resolve_response,
+        )
+
+        path = f"v1/org-policies/{org_policy_id}/effective"
+        if current_digest and current_digest.strip():
+            from urllib.parse import quote
+
+            path = f"{path}?digest={quote(current_digest.strip(), safe='')}"
+        url = f"{self._base}{path}"
+        response = await self._post_json_with_retries(path, overlay)
+        if response.status_code >= 400:
+            raise HarborHttpError(
+                f"Gateway policy effective HTTP {response.status_code}: {response.text}",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        return parse_policy_effective_resolve_response(response.json())
 
     async def create_intent(
         self,

@@ -1,0 +1,59 @@
+{
+  "name": "partner-dry-run-signal-explanation",
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/signal/v1/operators/[^/]+/explanation"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "schema_version": 1,
+      "tenant_id": "dry-run-tenant",
+      "operator_did": "did:example:alpha",
+      "score_model_version": "1.0",
+      "scoring_model": "paybond.signal.v1",
+      "receipt_version": "3",
+      "updated_at": "2026-04-30T18:15:00Z",
+      "confidence": {
+        "band": "low",
+        "support_score": 32,
+        "summary": "band=low support_score=32 terminal_intents=2 history_depth=1 receipted_volume_cents=2400000"
+      },
+      "support_depth": {
+        "band": "thin",
+        "terminal_intents": 2,
+        "receipted_volume_cents": 2400000,
+        "history_depth": 1,
+        "latency_sample_count": 2
+      },
+      "review_state": "open",
+      "explanation_delta": {
+        "basis": "previous_snapshot",
+        "previous_score": 834,
+        "score_delta": -22,
+        "previous_ledger_watermark_seq": 41,
+        "changed_metrics": [
+          {
+            "metric": "refunded",
+            "previous": 0,
+            "current": 2,
+            "delta": 2
+          }
+        ],
+        "reason_codes_added": ["LOW_SUPPORT_DEPTH"],
+        "reason_codes_removed": [],
+        "summary": "Sparse support and recent adverse outcomes now require review."
+      },
+      "trust_policy": {
+        "version": "1.0.2",
+        "decision_band": "review_required",
+        "auto_reliance_allowed": false,
+        "reasons": ["LOW_SUPPORT_DEPTH", "LOW_SAMPLE_TERMINAL_HISTORY"],
+        "summary": "Low support depth and sparse recent history require review before reliance."
+      }
+    }
+  }
+}

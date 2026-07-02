@@ -1,0 +1,29 @@
+{
+  "name": "partner-dry-run-gateway-verify",
+  "request": {
+    "method": "POST",
+    "urlPath": "/verify",
+    "headers": {
+      "x-tenant-id": {
+        "equalTo": "dry-run-tenant"
+      },
+      "Authorization": {
+        "contains": "Bearer paybond_sk_"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "allow": true,
+      "audit_id": "550e8400-e29b-41d4-a716-446655440001",
+      "tenant": "dry-run-tenant",
+      "intent_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "code": null,
+      "message": null
+    }
+  }
+}

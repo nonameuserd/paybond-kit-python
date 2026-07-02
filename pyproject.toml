@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "paybond-kit"
-version = "0.10.0"
+version = "0.11.0"
 description = "Paybond Kit for Python: agent spend governance for paid tool calls with spend authorization, evidence receipts, refunds, disputes, hosted Gateway sessions, and settlement."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -56,7 +56,13 @@ classifiers = [
   "Topic :: Security",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-dependencies = ["httpx>=0.27,<1"]
+dependencies = [
+  "blake3>=1.0,<2",
+  "cryptography>=48.0,<49",
+  "ecdsa>=0.19,<1",
+  "httpx>=0.27,<1",
+  "pycryptodome>=3.21,<4",
+]
 
 [project.urls]
 Homepage = "https://github.com/nonameuserd/paybond-kit-python"
@@ -72,8 +78,10 @@ paybond-mcp-server = "paybond_kit.mcp_server:main"
 
 [project.optional-dependencies]
 langgraph = ["langgraph>=0.2.50", "langchain-core>=0.3.0"]
+claude-agents = ["claude-agent-sdk>=0.2.100"]
 mcp = ["mcp>=1.27,<2"]
 dev = [
+  "jsonschema>=4.26",
   "mcp>=1.27,<2",
   "pytest>=8",
   "pytest-asyncio>=0.24",
@@ -86,7 +94,18 @@ dev = [
 manifest-path = "rust/Cargo.toml"
 module-name = "paybond_kit._native"
 python-source = "src"
-include = ["LICENSE"]
+include = [
+  "LICENSE",
+  "src/paybond_kit/data/completion_presets/catalog.json",
+  "src/paybond_kit/data/completion_presets/catalog.sha256",
+  "src/paybond_kit/data/policy/policy.schema.json",
+  "src/paybond_kit/data/policy/presets/*.yaml",
+  "src/paybond_kit/data/solutions/*.json",
+  "src/paybond_kit/data/templates/manifest.json",
+  "src/paybond_kit/data/templates/**",
+  "src/paybond_kit/data/dev/wiremock/mappings/*.json",
+  "src/paybond_kit/data/dev/trace-ui/dashboard.html",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -1,0 +1,140 @@
+{
+  "name": "partner-dry-run-signal-review-status",
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/signal/v1/operators/[^/]+/review-status"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "schema_version": 1,
+      "tenant_id": "dry-run-tenant",
+      "operator_did": "did:example:alpha",
+      "score_model_version": "1.0",
+      "review_state": "open",
+      "review_reasons": ["LOW_SUPPORT_DEPTH", "SHADOW_RISK_CRITICAL"],
+      "anomaly_flagged": false,
+      "opened_at": "2026-04-30T17:00:00Z",
+      "updated_at": "2026-04-30T18:15:00Z",
+      "last_receipt_message_digest_hex": "dry-run-digest-alpha",
+      "confidence": {
+        "band": "low",
+        "support_score": 32,
+        "summary": "band=low support_score=32 terminal_intents=2 history_depth=1 receipted_volume_cents=2400000"
+      },
+      "support_depth": {
+        "band": "thin",
+        "terminal_intents": 2,
+        "receipted_volume_cents": 2400000,
+        "history_depth": 1,
+        "latency_sample_count": 2
+      },
+      "maturity_tier": {
+        "band": "provisional",
+        "terminal_intents": 2,
+        "receipted_volume_cents": 2400000,
+        "history_depth": 1,
+        "latency_sample_count": 2,
+        "summary": "Limited settlement history keeps this operator in a provisional tier."
+      },
+      "trust_policy": {
+        "version": "1.0.2",
+        "decision_band": "review_required",
+        "auto_reliance_allowed": false,
+        "reasons": ["LOW_SUPPORT_DEPTH", "SHADOW_RISK_CRITICAL"],
+        "summary": "Sparse support combined with critical manipulation risk requires review."
+      },
+      "shadow_risk": {
+        "version": "1.0.2",
+        "level": "critical",
+        "review_priority": "urgent",
+        "recommended_friction_band": "heightened",
+        "escalation_band": "review_required",
+        "summary": "Refund bursts and reciprocal loops place this operator in a critical tenant-scoped cluster.",
+        "features": [
+          {
+            "code": "REPEATED_COUNTERPARTY_CONCENTRATION",
+            "category": "manipulation",
+            "severity": "high",
+            "evidence_count": 3,
+            "window": "30d",
+            "related_operators": ["did:example:beta", "did:example:gamma"],
+            "summary": "A small set of counterparties dominates recent outcomes."
+          },
+          {
+            "code": "REPLAY_STORM_PATTERN",
+            "category": "manipulation",
+            "severity": "critical",
+            "evidence_count": 2,
+            "window": "24h",
+            "summary": "Replay requests clustered into a short burst."
+          }
+        ],
+        "cluster": {
+          "hint": "tenant-loop-alpha",
+          "member_count": 3,
+          "shared_principal_count": 2,
+          "related_operators": [
+            {
+              "operator_did": "did:example:beta",
+              "shared_principal_count": 1,
+              "reciprocal_loop": true,
+              "summary": "Shares principals and a reciprocal loop with alpha."
+            },
+            {
+              "operator_did": "did:example:gamma",
+              "shared_principal_count": 1,
+              "reciprocal_loop": false,
+              "summary": "Shares principals with alpha inside the same tenant-scoped cluster."
+            }
+          ],
+          "summary": "Alpha, beta, and gamma form a tenant-local dense cluster."
+        }
+      },
+      "canonical_input_policy": {
+        "settlement_evidence_only": true,
+        "allowed_sources": ["signed_terminal_settlement_evidence"],
+        "shadow_sources": ["review_events", "shadow_annotations", "graph_risk"],
+        "non_settlement_requires_new_score_review": true,
+        "summary": "Only signed terminal settlement evidence affects score_version = 1.0."
+      },
+      "active_annotations": [
+        {
+          "code": "GRAPH_RISK_CLUSTER",
+          "category": "manipulation",
+          "source_kind": "shadow_risk",
+          "summary": "Cluster-aware risk is elevated for this operator.",
+          "affects_score": false,
+          "created_at": "2026-04-30T17:15:00Z",
+          "updated_at": "2026-04-30T18:15:00Z"
+        }
+      ],
+      "friction": {
+        "band": "heightened",
+        "review_open_request_count_7d": 1,
+        "appeal_count_30d": 2,
+        "replay_count_7d": 2,
+        "review_open_throttled": false,
+        "appeal_throttled": true,
+        "replay_throttled": false,
+        "shadow_escalated": true,
+        "shadow_reasons": ["SHADOW_RISK_CRITICAL", "REPLAY_STORM_PATTERN"],
+        "next_appeal_eligible_at": "2026-05-02T18:15:00Z",
+        "summary": "Appeals are rate-limited and the workflow remains heightened because of critical shadow risk."
+      },
+      "recent_events": [
+        {
+          "event_type": "replay_requested",
+          "event_source": "gateway",
+          "actor_kind": "principal",
+          "actor_subject": "actor-replay",
+          "summary": "Replay requested for the latest disputed cycle.",
+          "created_at": "2026-04-30T17:45:00Z"
+        }
+      ]
+    }
+  }
+}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from paybond_kit.mcp_policy import (
+    McpToolPolicyConfig,
     merge_mcp_tool_policy,
     parse_mcp_tool_allowlist,
     parse_mcp_tool_policy,
@@ -54,4 +55,16 @@ def test_parse_allowlist_splits_comma_separated_names() -> None:
     assert parse_mcp_tool_allowlist("paybond_get_principal,paybond_list_intents") == (
         "paybond_get_principal",
         "paybond_list_intents",
+    )
+
+
+def test_unset_policy_defaults_to_spend_write() -> None:
+    from paybond_kit.mcp_policy import default_mcp_tool_policy_config, resolve_mcp_tool_policy
+
+    assert resolve_mcp_tool_policy(McpToolPolicyConfig()).policy == "spend-write"
+    assert default_mcp_tool_policy_config().policy == "spend-write"
+    assert not tool_allowed_by_policy(
+        "paybond_fund_intent",
+        _Annotations(readOnlyHint=False, destructiveHint=True),
+        McpToolPolicyConfig(),
     )

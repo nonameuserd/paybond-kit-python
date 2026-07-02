@@ -7,6 +7,7 @@ McpToolPolicy = Literal["readonly", "spend-write", "allowlist"]
 
 MCP_TOOL_POLICY_ENV = "PAYBOND_MCP_TOOL_POLICY"
 MCP_TOOL_ALLOWLIST_ENV = "PAYBOND_MCP_TOOL_ALLOWLIST"
+DEFAULT_MCP_TOOL_POLICY: McpToolPolicy = "spend-write"
 
 LIVE_MONEY_TOOL_NAMES: frozenset[str] = frozenset(
     {
@@ -20,6 +21,16 @@ LIVE_MONEY_TOOL_NAMES: frozenset[str] = frozenset(
 class McpToolPolicyConfig:
     policy: McpToolPolicy | None = None
     allowlist: tuple[str, ...] = ()
+
+
+def default_mcp_tool_policy_config() -> McpToolPolicyConfig:
+    return McpToolPolicyConfig(policy=DEFAULT_MCP_TOOL_POLICY)
+
+
+def resolve_mcp_tool_policy(config: McpToolPolicyConfig) -> McpToolPolicyConfig:
+    if config.policy is not None:
+        return config
+    return default_mcp_tool_policy_config()
 
 
 def parse_mcp_tool_policy(raw: str | None) -> McpToolPolicyConfig:
@@ -54,11 +65,10 @@ def merge_mcp_tool_policy(
 
 
 def mcp_tool_policy_env(config: McpToolPolicyConfig) -> dict[str, str]:
-    if config.policy is None:
-        return {}
-    env = {MCP_TOOL_POLICY_ENV: config.policy}
-    if config.policy == "allowlist":
-        env[MCP_TOOL_ALLOWLIST_ENV] = ",".join(config.allowlist)
+    resolved = resolve_mcp_tool_policy(config)
+    env = {MCP_TOOL_POLICY_ENV: resolved.policy or DEFAULT_MCP_TOOL_POLICY}
+    if resolved.policy == "allowlist":
+        env[MCP_TOOL_ALLOWLIST_ENV] = ",".join(resolved.allowlist)
     return env
 
 
@@ -76,8 +86,7 @@ def tool_allowed_by_policy(
     annotations: Any,
     config: McpToolPolicyConfig,
 ) -> bool:
-    if config.policy is None:
-        return True
+    config = resolve_mcp_tool_policy(config)
     if config.policy == "readonly":
         read_only, _ = tool_annotations_flags(annotations)
         return read_only

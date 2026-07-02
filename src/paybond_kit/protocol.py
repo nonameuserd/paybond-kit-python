@@ -10,6 +10,8 @@ from urllib.parse import quote
 
 import httpx
 
+from paybond_kit.credentials import normalize_gateway_base_url
+
 
 class AgentMandateAuthorization(TypedDict, total=False):
     kind: str
@@ -128,7 +130,7 @@ class ProtocolAuthorizationReceiptV1(TypedDict):
     ed25519_signature_hex: str
 
 
-class ProtocolSettlementReceiptV1(TypedDict, total=False):
+class ProtocolSettlementReceiptV1(TypedDict):
     schema_version: int
     kind: str
     receipt_version: str
@@ -230,7 +232,7 @@ class GatewayProtocolClient:
         request_timeout_sec: float = 30.0,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._base = gateway_base_url.strip().rstrip("/") + "/"
+        self._base = normalize_gateway_base_url(gateway_base_url) + "/"
         self._tenant = tenant_id.strip()
         self._bearer = (
             static_gateway_bearer_token.strip()
@@ -273,6 +275,7 @@ class GatewayProtocolClient:
         if extra_headers is not None:
             headers.update(extra_headers)
         last_exc: BaseException | None = None
+        response: httpx.Response | None = None
         for attempt in range(self._max_retries):
             try:
                 response = await self._client.request(
@@ -298,6 +301,8 @@ class GatewayProtocolClient:
             return response
         if last_exc is not None:
             raise last_exc
+        if response is None:
+            raise RuntimeError(f"{method} {path} exhausted retries without a response")
         return response
 
     async def import_agent_mandate_v1(

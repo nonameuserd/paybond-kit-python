@@ -104,7 +104,18 @@ def paybond_runtime_tool_call_adapter(
             if result.approval_required:
                 raise PaybondSpendApprovalRequiredError(result)
             raise PaybondSpendDeniedError(result)
-        return await _maybe_await(execute(call))
+        try:
+            out = await _maybe_await(execute(call))
+            if result.decision_id is not None:
+                await guard.complete_spend_authorization(str(result.decision_id), "consumed")
+            return out
+        except Exception:
+            if result.decision_id is not None:
+                try:
+                    await guard.complete_spend_authorization(str(result.decision_id), "released")
+                except Exception:
+                    pass
+            raise
 
     return wrapped
 

@@ -67,8 +67,9 @@ async def test_get_fraud_assessment_checks_tenant_and_operator_binding() -> None
         assert assessment["tenant_id"] == "tenant-a"
         assert assessment["operator_did"] == "did:example:alpha"
         assert assessment["fraud_assessment"]["level"] == "high"
-        assert assessment["fraud_signals"][0]["signal_source"] == "signal_model"
-        assert assessment["fraud_signals"][0]["intent_refs"] == ["intent-1"]
+        first_signal = assessment["fraud_signals"][0]
+        assert first_signal.get("signal_source") == "signal_model"
+        assert first_signal.get("intent_refs") == ["intent-1"]
     finally:
         await client.aclose()
 
@@ -294,9 +295,9 @@ async def test_record_fraud_review_event_allows_only_review_event_types() -> Non
             },
         )
         assert result["accepted"] is True
-        assert result["signal_code"] == "PROVIDER_STRIPE_EARLY_FRAUD_WARNING"
-        assert result["intent_id"] == "00000000-0000-4000-8000-000000000123"
-        assert result["provider_event_id"] == "evt_review_signal"
+        assert result.get("signal_code") == "PROVIDER_STRIPE_EARLY_FRAUD_WARNING"
+        assert result.get("intent_id") == "00000000-0000-4000-8000-000000000123"
+        assert result.get("provider_event_id") == "evt_review_signal"
         assert captured["body"] == {
             "event_type": "review_outcome_recorded",
             "review_outcome": "confirmed_risk",

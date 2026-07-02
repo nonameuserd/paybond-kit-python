@@ -1,6 +1,6 @@
 //! Payee Ed25519 signatures over [`EvidenceSignV1`] for Harbor evidence submission.
 
-use crate::{artifacts_digest, encode_evidence_sign_v1, json_value_digest, EvidenceSignV1};
+use crate::{artifacts_digest, encode_evidence_sign_v1, json_value_digest, EvidenceSignV1, EVIDENCE_SIGN_VERSION};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
@@ -51,6 +51,13 @@ fn parse_hex32(name: &str, index: usize, hex: &str) -> Result<[u8; 32], PayeeEvi
 }
 
 /// Builds a Harbor-ready evidence request with a detached Ed25519 signature over [`EvidenceSignV1`].
+///
+/// `tenant_id` must match the Harbor `x-tenant-id` scope; `intent_id` must match the URL path.
+///
+/// # Errors
+///
+/// Returns [`PayeeEvidenceError`] when artifact digests are malformed or signing bytes cannot be
+/// encoded.
 pub fn sign_payee_evidence_request(
     tenant_id: &str,
     intent_id: Uuid,
@@ -70,7 +77,7 @@ pub fn sign_payee_evidence_request(
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(|e| PayeeEvidenceError::SubmittedAt(e.to_string()))?;
     let sign_payload = EvidenceSignV1 {
-        version: 1,
+        version: EVIDENCE_SIGN_VERSION,
         tenant_id: tenant_id.to_string(),
         intent_id,
         payee_did: payee_did.to_string(),
@@ -89,4 +96,49 @@ pub fn sign_payee_evidence_request(
         payee_signature: STANDARD.encode(sig.to_bytes()),
         submitted_at: submitted_at_str,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::{Signature, Verifier};
+    use serde_json::json;
+
+    #[test]
+    fn signing_round_trip_digest_matches_payload() {
+        let tenant = "tenant-a";
+        let intent_id = Uuid::new_v4();
+        let mut seed = [7_u8; 32];
+        let key = SigningKey::from_bytes(&seed);
+        seed[0] = 8;
+        let other = SigningKey::from_bytes(&seed);
+        let payload = json!({"status": "done"});
+        let now = OffsetDateTime::now_utc();
+        let req =
+            sign_payee_evidence_request(tenant, intent_id, "did:payee:1", &payload, &[], now, &key)
+                .unwrap();
+        let vk = key.verifying_key();
+        let pk = STANDARD.decode(&req.payee_pubkey).unwrap();
+        assert_eq!(pk, vk.to_bytes().as_slice());
+        let msg = encode_evidence_sign_v1(&EvidenceSignV1 {
+            version: EVIDENCE_SIGN_VERSION,
+            tenant_id: tenant.to_string(),
+            intent_id,
+            payee_did: "did:payee:1".into(),
+            payload_digest: json_value_digest(&payload),
+            artifacts_digest: artifacts_digest(&[]),
+            submitted_at: now,
+        })
+        .unwrap();
+        let sig_bytes = STANDARD.decode(&req.payee_signature).unwrap();
+        let mut sig_arr = [0_u8; 64];
+        sig_arr.copy_from_slice(&sig_bytes);
+        let sig = Signature::from_bytes(&sig_arr);
+        vk.verify(&msg, &sig).expect("signature verifies");
+        assert_ne!(
+            vk.to_bytes(),
+            other.verifying_key().to_bytes(),
+            "fixture keys must differ"
+        );
+    }
 }

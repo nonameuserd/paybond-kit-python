@@ -1,0 +1,243 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://paybond.ai/schemas/paybond-policy.json",
+  "title": "Paybond policy file",
+  "description": "Portable policy-as-code definition for agent tool registry, spend rules, evidence presets, and intent alignment (v1 flat or v2 with inheritance).",
+  "oneOf": [
+    { "$ref": "#/$defs/policy_document_v1" },
+    { "$ref": "#/$defs/policy_document_v2" }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]{1,64}$"
+    },
+    "json_path": {
+      "type": "string",
+      "pattern": "^[a-zA-Z_][a-zA-Z0-9_.]*$"
+    },
+    "head_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-fA-F]{64}$"
+    },
+    "policy_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "tool_name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{0,127}$"
+    },
+    "org_id": {
+      "type": "string",
+      "pattern": "^org_[a-z][a-z0-9_]{0,57}$"
+    },
+    "tool_entry": {
+      "type": "object",
+      "required": ["side_effecting"],
+      "additionalProperties": false,
+      "properties": {
+        "side_effecting": { "type": "boolean" },
+        "max_spend_cents": { "type": "integer", "minimum": 0 },
+        "spend_from_args": { "$ref": "#/$defs/json_path" },
+        "evidence_preset": { "$ref": "#/$defs/identifier" },
+        "vendor_pack": { "$ref": "#/$defs/identifier" },
+        "operation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "side_effecting": { "const": true } },
+            "required": ["side_effecting"]
+          },
+          "then": { "required": ["evidence_preset"] }
+        },
+        {
+          "if": {
+            "properties": { "max_spend_cents": { "type": "integer" } },
+            "required": ["max_spend_cents"]
+          },
+          "then": {
+            "not": { "required": ["spend_from_args"] }
+          }
+        }
+      ]
+    },
+    "tool_override_entry": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "side_effecting": { "type": "boolean" },
+        "max_spend_cents": { "type": "integer", "minimum": 0 },
+        "spend_from_args": { "$ref": "#/$defs/json_path" },
+        "evidence_preset": { "$ref": "#/$defs/identifier" },
+        "vendor_pack": { "$ref": "#/$defs/identifier" },
+        "operation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "max_spend_cents": { "type": "integer" } },
+            "required": ["max_spend_cents"]
+          },
+          "then": {
+            "not": { "required": ["spend_from_args"] }
+          }
+        }
+      ]
+    },
+    "policy_binding": {
+      "type": "object",
+      "required": ["template_id"],
+      "additionalProperties": false,
+      "properties": {
+        "template_id": { "$ref": "#/$defs/identifier" },
+        "version_seq": { "type": "integer", "minimum": 1 },
+        "head_digest": { "$ref": "#/$defs/head_digest" }
+      }
+    },
+    "policy_binding_override": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "template_id": { "$ref": "#/$defs/identifier" },
+        "version_seq": { "type": "integer", "minimum": 1 },
+        "head_digest": { "$ref": "#/$defs/head_digest" }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "required": ["currency"],
+      "additionalProperties": true,
+      "properties": {
+        "currency": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 3,
+          "pattern": "^[a-z]{3}$"
+        },
+        "max_spend_usd": { "type": "number", "minimum": 0 }
+      }
+    },
+    "intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "policy_binding": { "$ref": "#/$defs/policy_binding" },
+        "budget": { "$ref": "#/$defs/budget" },
+        "allowed_tools": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/tool_name" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "intent_override": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "policy_binding": { "$ref": "#/$defs/policy_binding_override" },
+        "budget": { "$ref": "#/$defs/budget" },
+        "allowed_tools": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/tool_name" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "extends_block": {
+      "type": "object",
+      "required": ["org_policy_id", "org_id"],
+      "additionalProperties": false,
+      "properties": {
+        "org_policy_id": { "$ref": "#/$defs/policy_name" },
+        "org_id": { "$ref": "#/$defs/org_id" },
+        "base_digest": { "$ref": "#/$defs/head_digest" },
+        "base_policy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      }
+    },
+    "overrides_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default_deny": { "type": "boolean" },
+        "tools": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/tool_override_entry" },
+          "propertyNames": { "$ref": "#/$defs/tool_name" }
+        },
+        "intent": { "$ref": "#/$defs/intent_override" }
+      },
+      "anyOf": [
+        { "required": ["default_deny"] },
+        { "required": ["tools"] },
+        { "required": ["intent"] }
+      ]
+    },
+    "policy_document_v1": {
+      "type": "object",
+      "required": ["version", "name", "default_deny", "tools"],
+      "additionalProperties": false,
+      "properties": {
+        "$schema": { "type": "string" },
+        "version": { "type": "integer", "const": 1 },
+        "name": { "$ref": "#/$defs/policy_name" },
+        "default_deny": { "type": "boolean" },
+        "tools": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/tool_entry" },
+          "propertyNames": { "$ref": "#/$defs/tool_name" }
+        },
+        "intent": { "$ref": "#/$defs/intent" }
+      }
+    },
+    "policy_document_v2": {
+      "type": "object",
+      "required": ["version", "name", "default_deny", "tools"],
+      "additionalProperties": false,
+      "properties": {
+        "$schema": { "type": "string" },
+        "version": { "type": "integer", "const": 2 },
+        "name": { "$ref": "#/$defs/policy_name" },
+        "default_deny": { "type": "boolean" },
+        "extends": { "$ref": "#/$defs/extends_block" },
+        "overrides": { "$ref": "#/$defs/overrides_block" },
+        "tools": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/tool_entry" },
+          "propertyNames": { "$ref": "#/$defs/tool_name" }
+        },
+        "intent": { "$ref": "#/$defs/intent" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "not": { "required": ["extends"] }
+          },
+          "then": {
+            "properties": {
+              "tools": { "minProperties": 1 }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from paybond_kit.mcp_policy import McpToolPolicyConfig, mcp_tool_policy_env
+from paybond_kit.mcp_policy import McpToolPolicyConfig, mcp_tool_policy_env, resolve_mcp_tool_policy
 
 McpInstallFormat = Literal["json", "toml"]
 McpInstallScope = Literal["local", "project", "user"]
@@ -55,7 +55,7 @@ def build_mcp_server_entry(
     *,
     tool_policy: McpToolPolicyConfig | None = None,
 ) -> McpServerEntry:
-    env = {"PAYBOND_ENV_FILE": env_file, **mcp_tool_policy_env(tool_policy or McpToolPolicyConfig())}
+    env = {"PAYBOND_ENV_FILE": env_file, **mcp_tool_policy_env(resolve_mcp_tool_policy(tool_policy or McpToolPolicyConfig()))}
     return McpServerEntry(
         command=server_command[0],
         args=server_command[1:],

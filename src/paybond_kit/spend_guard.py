@@ -5,13 +5,19 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Literal, ParamSpec, Protocol, TypeVar
+from typing import Literal, ParamSpec, Protocol, TypeVar
 from uuid import UUID
 
 from paybond_kit.harbor import VerifyCapabilityResult
 
 P = ParamSpec("P")
 R = TypeVar("R")
+
+
+async def _maybe_await(value: R | Awaitable[R]) -> R:
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 class _CapabilityVerifier(Protocol):
@@ -22,6 +28,15 @@ class _CapabilityVerifier(Protocol):
         token: str,
         operation: str,
         requested_spend_cents: int = 0,
+        vendor_id: str | None = None,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        tool_call_id: str | None = None,
+        tool_name: str | None = None,
+        currency: str | None = None,
+        agent_subject: str | None = None,
+        approval_token: str | None = None,
+        idempotency_key: str | None = None,
     ) -> VerifyCapabilityResult: ...
 
 
@@ -198,6 +213,18 @@ class PaybondSpendGuard:
         idempotency_key: str | None = None,
         handler: Callable[P, R | Awaitable[R]],
     ) -> Callable[P, Awaitable[R]]:
+        """Authorize spend for ``operation``, then invoke ``handler``.
+
+        The ``operation`` label and ``requested_spend_cents`` are sent to Harbor
+        for policy evaluation only. This wrapper does not inspect or constrain
+        what ``handler`` actually does — callers must keep the authorization
+        label, spend amount, and handler side effects aligned with the bound
+        intent's ``allowed_tools`` and policy predicates.
+
+        For registry-backed operation-to-handler coupling, prefer
+        ``paybond.instrument()`` or ``wrap_tools()`` over per-tool
+        ``guard_tool``.
+        """
         async def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
             auth = await self.assert_spend_authorized(
                 operation=operation,
@@ -213,9 +240,7 @@ class PaybondSpendGuard:
                 idempotency_key=idempotency_key,
             )
             try:
-                out = handler(*args, **kwargs)
-                if inspect.isawaitable(out):
-                    out = await out
+                out = await _maybe_await(handler(*args, **kwargs))
                 if auth.decision_id is not None:
                     await self.complete_spend_authorization(str(auth.decision_id), "consumed")
                 return out
@@ -258,6 +283,7 @@ def guard_tool(
     idempotency_key: str | None = None,
     handler: Callable[P, R | Awaitable[R]],
 ) -> Callable[P, Awaitable[R]]:
+    """Standalone alias for :meth:`PaybondSpendGuard.guard_tool`."""
     return PaybondSpendGuard(source).guard_tool(
         operation=operation,
         requested_spend_cents=requested_spend_cents,

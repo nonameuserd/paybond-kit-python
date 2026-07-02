@@ -23,6 +23,7 @@ def test_json_payload_references_env_file_not_raw_key() -> None:
     body = json.loads(serialize_mcp_install_payload("json", entry))
     server = body["mcpServers"]["paybond"]
     assert server["env"]["PAYBOND_ENV_FILE"] == ".env.local"
+    assert server["env"]["PAYBOND_MCP_TOOL_POLICY"] == "spend-write"
     assert "PAYBOND_API_KEY" not in server["env"]
 
 

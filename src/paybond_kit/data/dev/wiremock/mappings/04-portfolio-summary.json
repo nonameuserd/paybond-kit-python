@@ -1,0 +1,25 @@
+{
+  "name": "partner-dry-run-signal-portfolio-summary",
+  "request": {
+    "method": "GET",
+    "urlPath": "/signal/v1/portfolio/summary"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "schema_version": 1,
+      "tenant_id": "dry-run-tenant",
+      "score_model_version": "1.0",
+      "scoring_model": "paybond.signal.v1",
+      "checkpoint_last_ledger_seq": 44,
+      "operator_count": 3,
+      "average_score": 782,
+      "total_terminal_intents": 18,
+      "total_receipted_volume_cents": 2400000,
+      "operators_under_review": 1
+    }
+  }
+}

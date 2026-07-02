@@ -1,0 +1,56 @@
+{
+  "name": "partner-dry-run-signal-review-queue",
+  "request": {
+    "method": "GET",
+    "urlPath": "/signal/v1/review-queue"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "schema_version": 1,
+      "tenant_id": "dry-run-tenant",
+      "score_model_version": "1.0",
+      "items": [
+        {
+          "operator_did": "did:example:alpha",
+          "review_state": "open",
+          "review_reasons": ["LOW_SUPPORT_DEPTH", "SHADOW_RISK_CRITICAL"],
+          "anomaly_flagged": false,
+          "opened_at": "2026-04-30T17:00:00Z",
+          "updated_at": "2026-04-30T18:15:00Z",
+          "last_receipt_message_digest_hex": "dry-run-digest-alpha",
+          "score": 812,
+          "receipt_version": "3",
+          "trust_policy": {
+            "version": "1.0.2",
+            "decision_band": "review_required",
+            "auto_reliance_allowed": false,
+            "reasons": ["LOW_SUPPORT_DEPTH", "SHADOW_RISK_CRITICAL"],
+            "summary": "Sparse support and critical shadow risk require review."
+          },
+          "shadow_risk": {
+            "version": "1.0.2",
+            "level": "critical",
+            "review_priority": "urgent",
+            "recommended_friction_band": "heightened",
+            "escalation_band": "review_required",
+            "summary": "This operator leads the queue because its tenant-scoped cluster risk is critical.",
+            "features": [
+              {
+                "code": "REPLAY_STORM_PATTERN",
+                "category": "manipulation",
+                "severity": "critical",
+                "evidence_count": 2,
+                "window": "24h",
+                "summary": "Replay requests spiked in a short window."
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

@@ -24,6 +24,28 @@ _SENSITIVE_CONFIG_KEY_EXACT = frozenset(
 
 _SENSITIVE_CONFIG_KEY_TOKEN_ALLOWLIST = frozenset({"token_type", "token_endpoint"})
 
+_SENSITIVE_SEED_EXACT_FIELDS = frozenset(
+    {
+        "payee_signing_seed",
+        "agent_recognition_signing_seed",
+    }
+)
+
+
+def _is_sensitive_seed_key(key: str) -> bool:
+    lowered = key.lower()
+    if lowered in _SENSITIVE_SEED_EXACT_FIELDS:
+        return True
+    return lowered.endswith("_seed") or lowered.endswith("_seed_hex")
+
+
+def _has_redactable_scalar_content(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (bytes, bytearray)):
+        return len(value) > 0
+    return False
+
 
 def is_sensitive_config_key(key: str) -> bool:
     lowered = key.lower()
@@ -47,9 +69,11 @@ def _redact_sensitive_scalar(key: str, value: Any) -> Any:
     if lowered in _SENSITIVE_EXACT_FIELDS or (
         lowered.endswith("_token") and lowered not in {"token_type"}
     ):
-        return "[redacted]" if isinstance(value, str) and value.strip() else value
+        return "[redacted]" if _has_redactable_scalar_content(value) else value
     if lowered == "api_key" or lowered.endswith("_api_key"):
         return mask_api_key(value) if isinstance(value, str) else value
+    if _is_sensitive_seed_key(key):
+        return "[redacted]" if _has_redactable_scalar_content(value) else value
     return value
 
 

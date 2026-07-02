@@ -8,8 +8,10 @@ import pytest
 import respx
 from mcp.server.fastmcp.exceptions import ToolError
 
+from paybond_kit.mcp_capability_token_cache import McpCapabilityTokenCacheConfig
 from paybond_kit.mcp_server import (
     DEFAULT_RECOGNITION_VERIFIER_ID,
+    PaybondMCPRuntime,
     PaybondMCPSettings,
     build_mcp_server,
     run_mcp_stdio,
@@ -79,11 +81,14 @@ async def test_gateway_only_server_exposes_gateway_first_mutation_tools() -> Non
         assert "paybond_authorize_agent_spend" in names
         assert "paybond_bootstrap_sandbox_guardrail" in names
         assert "paybond_submit_sandbox_guardrail_evidence" in names
+        assert "paybond_validate_completion_evidence" in names
         assert "paybond_create_intent" in names
         assert "paybond_create_spend_intent" in names
         assert "paybond_submit_evidence" in names
         assert "paybond_submit_spend_evidence" in names
         assert "paybond_create_intent_legacy" not in names
+        assert "paybond_fund_intent" not in names
+        assert "paybond_confirm_settlement" not in names
         authorize = tool_by_name["paybond_authorize_agent_spend"].model_dump(
             by_alias=True, exclude_none=True
         )
@@ -110,14 +115,6 @@ async def test_gateway_only_server_exposes_gateway_first_mutation_tools() -> Non
         assert create_spend["outputSchema"]["properties"]["intent_id"]["type"] == "string"
         assert create_spend["outputSchema"]["properties"]["capability_token"]["type"] == "string"
 
-        fund = tool_by_name["paybond_fund_intent"].model_dump(
-            by_alias=True, exclude_none=True
-        )
-        assert fund["title"] == "Fund Intent"
-        assert fund["annotations"]["readOnlyHint"] is False
-        assert fund["annotations"]["destructiveHint"] is True
-        assert "paybond_authorize_agent_spend" in fund["description"]
-
         principal = tool_by_name["paybond_get_principal"].model_dump(
             by_alias=True, exclude_none=True
         )
@@ -126,6 +123,52 @@ async def test_gateway_only_server_exposes_gateway_first_mutation_tools() -> Non
         assert "sandbox-only" in tool_by_name["paybond_bootstrap_sandbox_guardrail"].description
     finally:
         await _close_server(server)
+
+
+@pytest.mark.asyncio
+async def test_allowlist_policy_exposes_live_money_tool_metadata() -> None:
+    from paybond_kit.mcp_policy import parse_mcp_tool_allowlist, parse_mcp_tool_policy, merge_mcp_tool_policy
+
+    server = build_mcp_server(
+        PaybondMCPSettings(
+            gateway_base_url="https://gateway.test",
+            api_key=_api_key(),
+            tool_policy=merge_mcp_tool_policy(
+                parse_mcp_tool_policy("allowlist"),
+                allowlist=parse_mcp_tool_allowlist("paybond_fund_intent"),
+            ),
+        )
+    )
+    try:
+        tools = await server.list_tools()
+        tool_by_name = {tool.name: tool for tool in tools}
+        fund = tool_by_name["paybond_fund_intent"].model_dump(by_alias=True, exclude_none=True)
+        assert fund["title"] == "Fund Intent"
+        assert fund["annotations"]["destructiveHint"] is True
+        assert "paybond_authorize_agent_spend" in fund["description"]
+    finally:
+        await _close_server(server)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_preload_principal_caches_gateway_principal_at_startup() -> None:
+    principal_route = respx.get("https://gateway.test/v1/auth/principal").mock(
+        return_value=httpx.Response(200, json={"tenant_id": "tenant-a"}),
+    )
+    runtime = PaybondMCPRuntime(
+        PaybondMCPSettings(
+            gateway_base_url="https://gateway.test",
+            api_key=_api_key(),
+        )
+    )
+    try:
+        await runtime.preload_principal()
+        assert principal_route.call_count == 1
+        assert await runtime.tenant_id() == "tenant-a"
+        assert principal_route.call_count == 1
+    finally:
+        await runtime.aclose()
 
 
 @pytest.mark.asyncio
@@ -473,7 +516,7 @@ async def test_sandbox_guardrail_tools_call_sandbox_routes_without_tenant_header
 
         assert bootstrap["tenant_id"] == "tenant-a"
         assert bootstrap["intent_id"] == str(intent_id)
-        assert bootstrap["capability_token"] == "cap-sandbox"
+        assert bootstrap["capability_token"] == "[redacted]"
         assert evidence["sandbox_lifecycle_status"] == "evidence_submitted"
         assert evidence["predicate_passed"] is True
         assert captured["bootstrap_authorization"] == f"Bearer {_api_key()}"
@@ -542,6 +585,71 @@ async def test_recognition_verify_defaults_verifier_context() -> None:
                     "method": "POST",
                     "path": "/harbor/policy/v1/rollback",
                     "body_digest_sha256_hex": "ab" * 32,
+                },
+            },
+        )
+        assert structured["valid"] is True
+        assert captured["body"] == {
+            "proof": {"nonce": "nonce-123"},
+            "expected_purpose": "harbor.policy.rollback",
+            "expected_verifier": {
+                "tenant_id": "tenant-a",
+                "verifier_id": DEFAULT_RECOGNITION_VERIFIER_ID,
+            },
+            "expected_request": {
+                "method": "POST",
+                "path": "/harbor/policy/v1/rollback",
+                "body_digest_sha256_hex": "ab" * 32,
+            },
+        }
+    finally:
+        await _close_server(server)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_recognition_verify_ignores_caller_supplied_expected_verifier() -> None:
+    respx.get("https://gateway.test/v1/auth/principal").mock(
+        return_value=httpx.Response(200, json={"tenant_id": "tenant-a"})
+    )
+
+    captured: dict[str, object] = {}
+
+    def handle_verify(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(
+            200,
+            json={
+                "valid": True,
+                "proof": {
+                    "nonce": "nonce-123",
+                },
+            },
+        )
+
+    respx.post("https://gateway.test/protocol/v2/recognition/verify").mock(
+        side_effect=handle_verify
+    )
+    server = build_mcp_server(
+        PaybondMCPSettings(
+            gateway_base_url="https://gateway.test",
+            api_key=_api_key(),
+        )
+    )
+    try:
+        _, structured = await server.call_tool(
+            "paybond_verify_agent_recognition_proof_v1",
+            {
+                "proof": {"nonce": "nonce-123"},
+                "expected_purpose": "harbor.policy.rollback",
+                "expected_request": {
+                    "method": "POST",
+                    "path": "/harbor/policy/v1/rollback",
+                    "body_digest_sha256_hex": "ab" * 32,
+                },
+                "expected_verifier": {
+                    "tenant_id": "tenant-evil",
+                    "verifier_id": "attacker-controlled",
                 },
             },
         )
@@ -743,6 +851,24 @@ async def test_import_agent_mandate_tool_surfaces_explicit_protocol_error_codes(
 
 
 @pytest.mark.asyncio
+async def test_default_spend_write_policy_blocks_live_money_tools() -> None:
+    server = build_mcp_server(
+        PaybondMCPSettings(
+            gateway_base_url="https://gateway.test",
+            api_key=_api_key(),
+        )
+    )
+    try:
+        tools = await server.list_tools()
+        names = {tool.name for tool in tools}
+        assert "paybond_create_spend_intent" in names
+        assert "paybond_fund_intent" not in names
+        assert "paybond_confirm_settlement" not in names
+    finally:
+        await _close_server(server)
+
+
+@pytest.mark.asyncio
 async def test_readonly_tool_policy_limits_exposed_tools() -> None:
     from paybond_kit.mcp_policy import parse_mcp_tool_policy
 
@@ -758,6 +884,37 @@ async def test_readonly_tool_policy_limits_exposed_tools() -> None:
         names = {tool.name for tool in tools}
         assert "paybond_get_principal" in names
         assert "paybond_create_spend_intent" not in names
+    finally:
+        await _close_server(server)
+
+
+@pytest.mark.asyncio
+async def test_capability_token_cache_expires_between_tool_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+
+    now = 1_000.0
+    monkeypatch.setattr(time, "monotonic", lambda: now)
+
+    server = build_mcp_server(
+        PaybondMCPSettings(
+            gateway_base_url="https://gateway.test",
+            api_key=_api_key(),
+            capability_token_cache=McpCapabilityTokenCacheConfig(
+                ttl_sec=30.0,
+                max_entries=4,
+            ),
+        )
+    )
+    runtime = server._paybond_runtime
+    try:
+        runtime._store_capability_token("intent-1", "cap-token")
+        assert await runtime.resolve_capability_token("intent-1") == "cap-token"
+
+        now += 31.0
+        with pytest.raises(ValueError, match="unavailable or expired"):
+            await runtime.resolve_capability_token("intent-1")
     finally:
         await _close_server(server)
 

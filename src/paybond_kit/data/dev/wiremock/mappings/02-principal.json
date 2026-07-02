@@ -1,0 +1,21 @@
+{
+  "name": "partner-dry-run-principal",
+  "request": {
+    "method": "GET",
+    "urlPath": "/v1/auth/principal"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "tenant_id": "dry-run-tenant",
+      "tenant_uuid": "550e8400-e29b-41d4-a716-446655440000",
+      "environment": "sandbox",
+      "service_account_role": "operator",
+      "subject": "00000000-0000-0000-0000-000000000011",
+      "roles": ["analyst"]
+    }
+  }
+}

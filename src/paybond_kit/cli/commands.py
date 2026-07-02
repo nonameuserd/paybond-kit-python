@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, IO
 from urllib.parse import quote
 
 import httpx
@@ -39,10 +40,37 @@ from paybond_kit.cli.core import (
 from paybond_kit.cli.body import resolve_json_body
 from paybond_kit.cli.redact import redact_config_value, redact_sensitive_fields
 from paybond_kit.cli.doctor_agent import package_version, run_agent_mcp_checks
+from paybond_kit.cli.doctor_agent_middleware import run_agent_middleware_doctor_check
+from paybond_kit.doctor_completion import run_completion_catalog_doctor_checks
 from paybond_kit.cli.support_diagnostics import build_support_diagnostics, format_support_diagnostics_table
 from paybond_kit.init import run_init_guardrail
+from paybond_kit.project_init import (
+    FRAMEWORK_ALIASES,
+    ProjectInitFramework,
+    ProjectInitLanguage,
+    ProjectInitOptions,
+    ProjectInitSolution,
+    SOLUTION_ALIASES,
+    parse_project_init_argv,
+    run_project_init,
+)
+from paybond_kit.template_init import (
+    CopyTemplateOptions,
+    copy_template_to_directory,
+    normalize_template_id,
+    template_init_usage,
+)
+from paybond_kit.completion_catalog import list_completion_preset_ids
+from paybond_kit.completion_init import scaffold_completion_init
 from paybond_kit.login import LoginOptions, LoginResult, PaybondLoginError, parse_args as parse_login_args, run_login
 from paybond_kit.mcp_server import _mcp_tool_selection_metadata
+
+
+def _stdout_line_writer(stdout: IO[str]) -> Callable[[str], None]:
+    def write(line: str) -> None:
+        stdout.write(f"{line}\n")
+
+    return write
 
 
 class _ToolAnnotations:
@@ -102,17 +130,122 @@ async def handle_login(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     return _login_result_data(result)
 
 
+def handle_init_wizard(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+    try:
+        args = parse_project_init_argv(argv)
+    except SystemExit as exc:
+        raise CliError("invalid init arguments", category="usage", code="cli.usage.invalid_init", exit_code=int(exc.code or 2)) from exc
+    if args.help:
+        raise CliError(template_init_usage(), category="usage", code="cli.help")
+    if args.template:
+        try:
+            return copy_template_to_directory(
+                CopyTemplateOptions(
+                    cwd=ctx.cwd,
+                    template_id=normalize_template_id(args.template),
+                    framework=args.framework,
+                    force=args.force,
+                    write_stdout=(
+                        _stdout_line_writer(ctx.stdout)
+                        if ctx.globals.format != "json"
+                        else None
+                    ),
+                )
+            )
+        except (RuntimeError, ValueError) as exc:
+            raise CliError(str(exc), category="validation", code="cli.init.failed") from exc
+    solution: ProjectInitSolution | None = None
+    if args.solution:
+        normalized = SOLUTION_ALIASES.get(args.solution.strip().lower())
+        if not normalized:
+            raise CliError(f"invalid --solution: {args.solution}", category="usage", code="cli.usage.invalid_init")
+        solution = normalized
+    framework: ProjectInitFramework | None = None
+    if args.framework:
+        normalized = FRAMEWORK_ALIASES.get(args.framework.strip().lower())
+        if not normalized:
+            raise CliError(f"invalid --framework: {args.framework}", category="usage", code="cli.usage.invalid_init")
+        framework = normalized
+    language: ProjectInitLanguage | None = None
+    if args.language:
+        value = args.language.strip().lower()
+        if value in {"typescript", "ts"}:
+            language = "typescript"
+        elif value in {"python", "py"}:
+            language = "python"
+        else:
+            raise CliError(f"invalid --language: {args.language}", category="usage", code="cli.usage.invalid_init")
+    try:
+        return run_project_init(
+            ProjectInitOptions(
+                cwd=ctx.cwd,
+                solution=solution,
+                max_spend_usd=args.max_spend_usd,
+                framework=framework,
+                language=language,
+                non_interactive=args.non_interactive,
+                force=args.force,
+                write_stdout=(
+                    _stdout_line_writer(ctx.stdout)
+                    if ctx.globals.format != "json"
+                    else None
+                ),
+            )
+        )
+    except RuntimeError as exc:
+        raise CliError(str(exc), category="validation", code="cli.init.failed") from exc
+
+
 def handle_init_guardrail(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+    return _handle_init_scaffold(argv, "paid-tool-guard", "paybond_paid_tool_guard.py")
+
+
+def handle_init_agent_middleware(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+    return _handle_init_scaffold(
+        ["--preset", "agent-middleware", *argv],
+        "agent-middleware",
+        "paybond_agent_middleware.py",
+    )
+
+
+def _handle_init_scaffold(argv: list[str], default_preset: str, default_out: str) -> dict[str, Any]:
     code = run_init_guardrail(argv)
     if code != 0:
-        raise CliError("init guardrail failed", category="validation", code="cli.init.failed", exit_code=code)
+        raise CliError(f"init {default_preset} failed", category="validation", code="cli.init.failed", exit_code=code)
     _, out, _ = consume_flag(argv, "--out")
     _, framework, _ = consume_flag(argv, "--framework")
     _, preset, _ = consume_flag(argv, "--preset")
+    resolved_preset = preset or default_preset
+    default_framework = "generic" if resolved_preset == "agent-middleware" else "provider-agnostic"
     return {
-        "out": out or "paybond_paid_tool_guard.py",
-        "preset": preset or "paid-tool-guard",
-        "framework": framework or "provider-agnostic",
+        "out": out or default_out,
+        "preset": resolved_preset,
+        "framework": framework or default_framework,
+        "bytes_written": True,
+        "completion_preset": "cost_and_completion",
+    }
+
+
+def handle_init_completion(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+    presets = list_completion_preset_ids()
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--preset", choices=presets)
+    parser.add_argument("--out", default="")
+    parser.add_argument("--force", action="store_true")
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        raise CliError("invalid init completion arguments", category="usage", code="cli.usage.invalid_init_completion", exit_code=int(exc.code or 2)) from exc
+    if not args.preset:
+        raise CliError("missing --preset", category="usage", code="cli.usage.missing_args")
+    out = Path(args.out or f"paybond_completion_{args.preset}.py")
+    try:
+        scaffold_completion_init(preset_id=args.preset, out=out, force=args.force)
+    except FileExistsError as exc:
+        raise CliError(str(exc), category="validation", code="cli.init.failed") from exc
+    return {
+        "out": str(out),
+        "preset": args.preset,
         "bytes_written": True,
     }
 
@@ -142,7 +275,7 @@ def handle_mcp_install(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
         parse_mcp_install_scope,
         plan_mcp_install,
     )
-    from paybond_kit.mcp_policy import merge_mcp_tool_policy, parse_mcp_tool_allowlist, parse_mcp_tool_policy
+    from paybond_kit.mcp_policy import merge_mcp_tool_policy, parse_mcp_tool_allowlist, parse_mcp_tool_policy, resolve_mcp_tool_policy
 
     _, host, rest = consume_flag(argv, "--host")
     _, fmt, rest = consume_flag(rest, "--format")
@@ -169,7 +302,7 @@ def handle_mcp_install(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
         out=out,
         cwd=ctx.cwd,
         home=Path.home(),
-        tool_policy=tool_policy if tool_policy.policy else None,
+        tool_policy=resolve_mcp_tool_policy(tool_policy),
     )
     if plan.printed:
         if ctx.globals.format != "json":
@@ -237,7 +370,7 @@ def handle_mcp_verify_config(ctx: CliContext, argv: list[str]) -> dict[str, Any]
     }
 
 
-def handle_doctor(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+async def handle_doctor(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     agent, rest = consume_boolean_flag(argv, "--agent")
     _, host, _ = consume_flag(rest, "--host")
     checks: list[dict[str, Any]] = [
@@ -293,6 +426,28 @@ def handle_doctor(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
                 if item.details:
                     entry["details"] = item.details
                 checks.append(entry)
+        if api_key:
+            smoke = await run_agent_middleware_doctor_check(ctx, api_key)
+            entry = {"name": smoke.name, "ok": smoke.ok, "message": smoke.message}
+            if smoke.details:
+                entry["details"] = smoke.details
+            checks.append(entry)
+        else:
+            checks.append(
+                {
+                    "name": "agent_middleware_smoke",
+                    "ok": False,
+                    "message": "skipped (missing API key)",
+                }
+            )
+
+    gateway_get = None
+    if api_key:
+        gateway_get = lambda path: gateway_request(ctx, "GET", path)
+    checks.extend(
+        run_completion_catalog_doctor_checks(cwd=ctx.cwd, gateway_get=gateway_get)
+    )
+
     summary = "pass" if all(item["ok"] for item in checks) else "fail"
     return {"checks": checks, "summary": summary}
 
@@ -486,24 +641,30 @@ def handle_intents(ctx: CliContext, subcommand: str, argv: list[str]) -> dict[st
 def handle_guardrails(ctx: CliContext, subcommand: str, argv: list[str]) -> dict[str, Any]:
     if subcommand == "bootstrap":
         _, operation, rest = consume_flag(argv, "--operation")
-        _, spend, _ = consume_flag(rest, "--requested-spend-cents")
+        _, spend, rest = consume_flag(rest, "--requested-spend-cents")
+        _, completion_preset, _ = consume_flag(rest, "--completion-preset")
         if not operation or not spend:
             raise CliError("guardrails bootstrap requires --operation and --requested-spend-cents", code="cli.usage.missing_args")
         spend_cents = parse_required_non_negative_int(spend, field="--requested-spend-cents")
+        payload: dict[str, Any] = {"operation": operation, "requested_spend_cents": spend_cents}
+        if completion_preset:
+            payload["completion_preset"] = completion_preset
         body = gateway_request(
             ctx,
             "POST",
             "/v1/sandbox/guardrails/bootstrap",
-            {"operation": operation, "requested_spend_cents": spend_cents},
+            payload,
         )
-        return {
-            "tenant_id": str(body.get("tenant_id", "")),
-            "intent_id": str(body.get("intent_id", "")),
-            "capability_token": str(body.get("capability_token", "")),
-            "operation": str(body.get("operation", operation)),
-            "requested_spend_cents": int(body.get("requested_spend_cents", spend_cents)),
-            "sandbox_lifecycle_status": str(body.get("sandbox_lifecycle_status", "")),
-        }
+        return _redact_intent_response(
+            {
+                "tenant_id": str(body.get("tenant_id", "")),
+                "intent_id": str(body.get("intent_id", "")),
+                "capability_token": str(body.get("capability_token", "")),
+                "operation": str(body.get("operation", operation)),
+                "requested_spend_cents": int(body.get("requested_spend_cents", spend_cents)),
+                "sandbox_lifecycle_status": str(body.get("sandbox_lifecycle_status", "")),
+            }
+        )
     if subcommand == "evidence":
         _, intent_id, rest = consume_flag(argv, "--intent-id")
         if not intent_id:
@@ -662,12 +823,17 @@ def handle_audit_exports(ctx: CliContext, subcommand: str, argv: list[str]) -> d
             token = str(job.get("download_token", ""))
             if not token:
                 raise CliError("audit exports get --output requires a ready export with --issue-download", category="validation", code="cli.audit.missing_download_token")
-            api_key = resolve_api_key(ctx.globals, ctx.cwd)
-            url = gateway_url(ctx.globals.gateway, f"/v1/compliance/audit-exports/{job_id}/bundle?token={token}")
+            url = gateway_url(ctx.globals.gateway, f"/v1/compliance/audit-exports/{job_id}/bundle")
             client = ctx.client or httpx.Client(timeout=30.0)
             owns_client = ctx.client is None
             try:
-                response = client.get(url, headers={"authorization": f"Bearer {api_key}", "x-request-id": ctx.globals.request_id})
+                response = client.post(
+                    url,
+                    headers={
+                        "authorization": f"Bearer {token}",
+                        "x-request-id": ctx.globals.request_id,
+                    },
+                )
                 response.raise_for_status()
                 content = response.content
                 write_atomic_file(output_path, content, mode=0o600)

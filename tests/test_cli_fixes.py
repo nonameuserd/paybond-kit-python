@@ -96,6 +96,33 @@ def test_redact_sensitive_fields_masks_capability_token() -> None:
     assert redacted == {"capability_token": "[redacted]", "intent_id": "intent-1"}
 
 
+def test_redact_sensitive_fields_masks_signing_seeds() -> None:
+    payload = {
+        "payee_signing_seed": "a" * 64,
+        "payee_signing_seed_hex": "b" * 64,
+        "agent_recognition_signing_seed": bytes(range(32)),
+        "agent_recognition_signing_seed_hex": "c" * 64,
+        "principal_signing_seed": bytes(range(32)),
+        "intent_id": "intent-1",
+    }
+    redacted = redact_sensitive_fields(payload)
+    assert redacted["payee_signing_seed"] == "[redacted]"
+    assert redacted["payee_signing_seed_hex"] == "[redacted]"
+    assert redacted["agent_recognition_signing_seed"] == "[redacted]"
+    assert redacted["agent_recognition_signing_seed_hex"] == "[redacted]"
+    assert redacted["principal_signing_seed"] == "[redacted]"
+    assert redacted["intent_id"] == "intent-1"
+
+
+def test_redact_sensitive_fields_masks_nested_signing_seeds() -> None:
+    redacted = redact_sensitive_fields(
+        {"production_evidence": {"payee_signing_seed_hex": "d" * 64, "payee_did": "did:example:payee"}}
+    )
+    assert redacted == {
+        "production_evidence": {"payee_signing_seed_hex": "[redacted]", "payee_did": "did:example:payee"}
+    }
+
+
 def test_manifest_core_bytes_omits_signature_fields() -> None:
     core = build_manifest_core(
         {
@@ -153,6 +180,47 @@ async def test_intents_create_json_redacts_capability_token(tmp_path: Path, monk
     stdout = io.StringIO()
     code = await run_cli(
         ["--format", "json", "intents", "create", "--body", str(body_path)],
+        stdout=stdout,
+    )
+    assert code == 0
+    payload = json.loads(stdout.getvalue())
+    assert payload["data"]["capability_token"] == "[redacted]"
+    assert "cap-secret" not in stdout.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_guardrails_bootstrap_json_redacts_capability_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PAYBOND_API_KEY", RAW_KEY)
+
+    def fake_gateway_request(ctx, method, path, payload=None):  # type: ignore[no-untyped-def]
+        assert method == "POST"
+        assert path == "/v1/sandbox/guardrails/bootstrap"
+        return {
+            "tenant_id": "tenant-a",
+            "intent_id": "intent-1",
+            "capability_token": "cap-secret",
+            "operation": "paid-tool",
+            "requested_spend_cents": 100,
+            "sandbox_lifecycle_status": "funded",
+        }
+
+    monkeypatch.setattr("paybond_kit.cli.commands.gateway_request", fake_gateway_request)
+
+    stdout = io.StringIO()
+    code = await run_cli(
+        [
+            "--format",
+            "json",
+            "guardrails",
+            "bootstrap",
+            "--operation",
+            "paid-tool",
+            "--requested-spend-cents",
+            "100",
+        ],
         stdout=stdout,
     )
     assert code == 0
