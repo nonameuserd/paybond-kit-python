@@ -99,7 +99,6 @@ def test_dev_trace_collector_builds_dashboard_event() -> None:
     assert event is not None
     assert event["id"] == "run-collector-1"
     assert [step["phase"] for step in event["steps"]] == [
-        "agent",
         "tool",
         "authorize",
         "result",

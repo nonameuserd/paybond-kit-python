@@ -81,7 +81,7 @@ async def run_generic_sandbox_demo(
     sandbox = run.binding.sandbox
     sandbox_status = sandbox.sandbox_lifecycle_status if sandbox else None
     authorization = wrapped_result.get("authorization") or {}
-    evidence = wrapped_result.get("evidence") or {}
+    evidence = wrapped_result.get("evidence")
 
     return {
         "bind": {
@@ -100,9 +100,9 @@ async def run_generic_sandbox_demo(
         "execute": {
             "tool_result": wrapped_result.get("tool_result"),
             "evidence": {
-                "submitted": bool(evidence.get("submitted")),
+                "submitted": bool(getattr(evidence, "submitted", False)) if evidence is not None else False,
                 "sandbox_lifecycle_status": sandbox_status,
-                "predicate_passed": evidence.get("predicate_passed"),
+                "predicate_passed": getattr(evidence, "predicate_passed", None) if evidence is not None else None,
             },
         },
     }
