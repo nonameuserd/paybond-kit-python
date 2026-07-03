@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 mod intent_creation;
+mod wire_golden;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
@@ -66,6 +67,37 @@ fn sign_payee_evidence_binding_json(
     )
     .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     serde_json::to_string(&wire).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+}
+
+/// Returns hex-encoded EvidenceSignV1 signing bytes (parity helper for wire goldens).
+#[pyfunction]
+#[pyo3(signature = (
+    tenant_id,
+    intent_id,
+    payee_did,
+    payload_json,
+    artifacts_hex,
+    submitted_at_rfc3339,
+))]
+fn encode_evidence_sign_v1_hex(
+    tenant_id: String,
+    intent_id: String,
+    payee_did: String,
+    payload_json: String,
+    artifacts_hex: Vec<String>,
+    submitted_at_rfc3339: String,
+) -> PyResult<String> {
+    let payload: Value = serde_json::from_str(&payload_json)
+        .map_err(|e| PyValueError::new_err(format!("payload_json: {e}")))?;
+    wire_golden::encode_evidence_sign_v1_hex(
+        &tenant_id,
+        &intent_id,
+        &payee_did,
+        &payload,
+        &artifacts_hex,
+        &submitted_at_rfc3339,
+    )
+    .map_err(PyRuntimeError::new_err)
 }
 
 /// Returns a JSON string for ``POST /intents`` (principal-signed ``CreateIntentRequest``, raw ``predicate_dsl``).
@@ -378,6 +410,7 @@ fn verify_ed25519_sha256_hex(
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sign_payee_evidence_binding_json, m)?)?;
+    m.add_function(wrap_pyfunction!(encode_evidence_sign_v1_hex, m)?)?;
     m.add_function(wrap_pyfunction!(build_signed_create_intent_json, m)?)?;
     m.add_function(wrap_pyfunction!(
         build_signed_create_intent_with_policy_binding_json,

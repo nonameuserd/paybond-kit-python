@@ -149,7 +149,7 @@ class GatewaySandboxGuardrailsClient:
         )
         if response.status_code >= 400:
             raise HarborHttpError(
-                f"Gateway sandbox guardrail bootstrap HTTP {response.status_code}: {response.text}",
+                f"Gateway sandbox guardrail bootstrap HTTP {response.status_code}",
                 status_code=response.status_code,
                 url=url,
                 body_text=response.text,
@@ -204,7 +204,7 @@ class GatewaySandboxGuardrailsClient:
         )
         if response.status_code >= 400:
             raise HarborHttpError(
-                f"Gateway sandbox guardrail evidence HTTP {response.status_code}: {response.text}",
+                f"Gateway sandbox guardrail evidence HTTP {response.status_code}",
                 status_code=response.status_code,
                 url=url,
                 body_text=response.text,

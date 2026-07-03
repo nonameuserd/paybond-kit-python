@@ -32,6 +32,7 @@ from paybond_kit.dev.trace_buffer import (
     find_dev_trace_event_for_run,
     resolve_dev_trace_sink,
 )
+from paybond_kit.cli.http_error_message import resolve_cli_gateway_error_message
 from paybond_kit.cli.agent_env_write import append_agent_run_env_vars
 from paybond_kit.cli.agent_paybond import with_paybond_agent_cli
 from paybond_kit.cli.agent_policy_file import resolve_agent_policy_bind, resolve_agent_policy_bind_from_content
@@ -313,7 +314,7 @@ def _map_tool_execute_error(err: Exception, *, tool_result: Any) -> CliError:
         )
     if isinstance(err, PaybondAutoEvidenceSubmitError):
         return _agent_cli_error(
-            str(err),
+            resolve_cli_gateway_error_message(err),
             code="cli.agent.evidence_failed",
             exit_code=5,
             category="gateway",
@@ -373,6 +374,7 @@ async def handle_agent_run_bind(ctx: CliContext, argv: list[str]) -> dict[str, A
         policy_snapshot = None
         resolved_operation = (operation or "").strip()
         resolved_completion_preset = (completion_preset or "").strip() or None
+        attach_smoke_completion_preset: str | None = None
 
         if policy_file:
             try:
@@ -414,6 +416,11 @@ async def handle_agent_run_bind(ctx: CliContext, argv: list[str]) -> dict[str, A
                 )
             preset = (completion_preset or "cost_and_completion").strip()
             registry = build_smoke_registry(operation, preset)
+            default_deny = True
+        elif (operation or "").strip() and not registry_file:
+            resolved_operation = operation.strip()
+            attach_smoke_completion_preset = (completion_preset or "cost_and_completion").strip()
+            registry = build_smoke_registry(resolved_operation, attach_smoke_completion_preset)
             default_deny = True
         else:
             registry = create_paybond_tool_registry({"default_deny": False, "side_effecting": {}})
@@ -469,6 +476,7 @@ async def handle_agent_run_bind(ctx: CliContext, argv: list[str]) -> dict[str, A
             paybond,
             run,
             completion_preset=resolved_completion_preset
+            or attach_smoke_completion_preset
             or (None if registry_path or policy_path or has_attach else "cost_and_completion"),
         )
         sandbox = run.binding.sandbox
@@ -505,6 +513,7 @@ async def handle_agent_run_bind(ctx: CliContext, argv: list[str]) -> dict[str, A
                 sandbox_lifecycle_status=sandbox.sandbox_lifecycle_status if sandbox else None,
                 requested_spend_cents=sandbox.requested_spend_cents if sandbox else None,
                 completion_preset=resolved_completion_preset
+                or attach_smoke_completion_preset
                 or (None if registry_path or policy_path or has_attach else "cost_and_completion"),
                 registry_file=registry_path or policy_path,
                 default_deny=default_deny,
@@ -978,6 +987,204 @@ async def handle_agent_sandbox_smoke(ctx: CliContext, argv: list[str]) -> dict[s
     return {"bind": bind_data, "execute": execute_data, "checklist_lines": checklist_lines, **deep_links}
 
 
+async def handle_agent_harbor_evidence_smoke(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+    from datetime import datetime, timezone
+
+    from paybond_kit.agent.attach_bundle import PAYBOND_ATTACH_INTENT_ID_ENV
+    from paybond_kit.agent_recognition import sign_harbor_evidence_submit_recognition_proof
+    from paybond_kit.cli.agent_harbor_evidence_smoke_checklist import (
+        format_agent_harbor_evidence_smoke_checklist,
+    )
+    from paybond_kit.signing import sign_payee_evidence_binding
+
+    _, intent_id, argv = consume_flag(argv, "--intent-id")
+    _, payee_did, argv = consume_flag(argv, "--payee-did")
+    _, payee_seed, argv = consume_flag(argv, "--payee-signing-seed-hex")
+    _, recognition_key_id, argv = consume_flag(argv, "--agent-recognition-key-id")
+    _, recognition_seed, argv = consume_flag(argv, "--agent-recognition-signing-seed-hex")
+    _, idempotency_key, argv = consume_flag(argv, "--idempotency-key")
+
+    import os
+
+    resolved_intent_id = (intent_id or "").strip() or (
+        os.environ.get(PAYBOND_ATTACH_INTENT_ID_ENV, "").strip()
+        or os.environ.get("PAYBOND_HARBOR_EVIDENCE_INTENT_ID", "").strip()
+    )
+    if not resolved_intent_id:
+        raise _agent_cli_error(
+            "agent harbor evidence smoke requires --intent-id "
+            "(or PAYBOND_ATTACH_INTENT_ID / PAYBOND_HARBOR_EVIDENCE_INTENT_ID)",
+            code="cli.usage.missing_args",
+            category="usage",
+        )
+
+    payload, _ = _parse_inline_json(argv, "--result-body", "--result-file")
+    if not payload:
+        raise _agent_cli_error(
+            "agent harbor evidence smoke requires --result-body or --result-file",
+            code="cli.usage.missing_args",
+            category="usage",
+        )
+
+    async def _run(paybond: Paybond, _warnings: list[str]) -> dict[str, Any]:
+        production_evidence = resolve_production_evidence_from_cli(
+            cwd=ctx.cwd,
+            env_file=ctx.globals.env_file,
+            payee_did=payee_did,
+            payee_signing_seed_hex=payee_seed,
+            agent_recognition_key_id=recognition_key_id,
+            agent_recognition_signing_seed_hex=recognition_seed,
+        )
+        tenant_id = paybond.harbor.tenant_id
+        submitted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        wire = sign_payee_evidence_binding(
+            tenant_id=tenant_id,
+            intent_id=resolved_intent_id,
+            payee_did=production_evidence.payee_did,
+            payload=dict(payload),
+            artifacts_blake3_hex=[],
+            submitted_at_rfc3339=submitted_at,
+            payee_signing_seed=production_evidence.payee_signing_seed,
+        )
+        recognition_proof = sign_harbor_evidence_submit_recognition_proof(
+            tenant_id=tenant_id,
+            intent_id=resolved_intent_id,
+            evidence_body=wire,
+            key_id=production_evidence.agent_recognition_key_id,
+            signing_seed=production_evidence.agent_recognition_signing_seed,
+        )
+        evidence = await paybond.harbor.submit_evidence(
+            resolved_intent_id,
+            wire,
+            recognition_proof=recognition_proof,
+            idempotency_key=(idempotency_key or "").strip() or None,
+        )
+        checklist_lines = format_agent_harbor_evidence_smoke_checklist(
+            intent_id=resolved_intent_id,
+            evidence=evidence,
+            globals_=ctx.globals,
+        )
+        return {
+            "intent_id": resolved_intent_id,
+            "harbor_path": f"/harbor/intents/{resolved_intent_id}/evidence",
+            "evidence": evidence,
+            "checklist_lines": checklist_lines,
+        }
+
+    return await with_paybond_agent_cli(ctx, True, _run)
+
+
+async def handle_agent_production_attach_smoke(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+    from paybond_kit.agent.attach_bundle import (
+        PAYBOND_ATTACH_INTENT_ID_ENV,
+        PAYBOND_CAPABILITY_TOKEN_ENV,
+    )
+
+    _, attach_intent_id, argv = consume_flag(argv, "--attach-intent-id")
+    _, capability_token, argv = consume_flag(argv, "--capability-token")
+    _, operation, argv = consume_flag(argv, "--operation")
+    _, spend_raw, argv = consume_flag(argv, "--requested-spend-cents")
+    _, policy_file, argv = consume_flag(argv, "--policy-file")
+    _, payee_did, argv = consume_flag(argv, "--payee-did")
+    _, payee_seed, argv = consume_flag(argv, "--payee-signing-seed-hex")
+    _, recognition_key_id, argv = consume_flag(argv, "--agent-recognition-key-id")
+    _, recognition_seed, argv = consume_flag(argv, "--agent-recognition-signing-seed-hex")
+
+    resolved_intent_id = (attach_intent_id or "").strip() or (
+        __import__("os").environ.get(PAYBOND_ATTACH_INTENT_ID_ENV, "").strip()
+    )
+    resolved_capability = (capability_token or "").strip() or (
+        __import__("os").environ.get(PAYBOND_CAPABILITY_TOKEN_ENV, "").strip()
+    )
+    if not resolved_intent_id or not resolved_capability:
+        raise _agent_cli_error(
+            "agent production attach smoke requires --attach-intent-id and --capability-token "
+            "(or PAYBOND_ATTACH_INTENT_ID and PAYBOND_CAPABILITY_TOKEN)",
+            code="cli.usage.missing_args",
+            category="usage",
+        )
+
+    resolved_operation = (operation or "").strip()
+    if not resolved_operation:
+        raise _agent_cli_error(
+            "agent production attach smoke requires --operation",
+            code="cli.usage.missing_args",
+            category="usage",
+        )
+
+    result_body, _ = _parse_inline_json(argv, "--result-body", "--result-file")
+    if not result_body:
+        raise _agent_cli_error(
+            "agent production attach smoke requires --result-body or --result-file",
+            code="cli.usage.missing_args",
+            category="usage",
+        )
+
+    bind_argv = [
+        "--production",
+        "--attach-intent-id",
+        resolved_intent_id,
+        "--capability-token",
+        resolved_capability,
+        "--operation",
+        resolved_operation,
+    ]
+    if (spend_raw or "").strip():
+        bind_argv.extend(["--requested-spend-cents", spend_raw.strip()])
+    if (policy_file or "").strip():
+        bind_argv.extend(["--policy-file", policy_file.strip()])
+    if (payee_did or "").strip():
+        bind_argv.extend(["--payee-did", payee_did.strip()])
+    if (payee_seed or "").strip():
+        bind_argv.extend(["--payee-signing-seed-hex", payee_seed.strip()])
+    if (recognition_key_id or "").strip():
+        bind_argv.extend(["--agent-recognition-key-id", recognition_key_id.strip()])
+    if (recognition_seed or "").strip():
+        bind_argv.extend(["--agent-recognition-signing-seed-hex", recognition_seed.strip()])
+
+    bind_data = await handle_agent_run_bind(ctx, bind_argv)
+    run_id = str(bind_data["run_id"])
+    stored_for_execute = load_agent_run_context(ctx.cwd, run_id)
+    execute_argv = [
+        "--production",
+        "--run-id",
+        run_id,
+        "--operation",
+        resolved_operation,
+        "--tool-call-id",
+        "prod-attach-smoke-1",
+        "--result-body",
+        json.dumps(result_body),
+    ]
+    bind_spend = stored_for_execute.get("requested_spend_cents")
+    if bind_spend is not None:
+        execute_argv.extend(["--requested-spend-cents", str(bind_spend)])
+    elif (spend_raw or "").strip():
+        execute_argv.extend(["--requested-spend-cents", spend_raw.strip()])
+    if (payee_seed or "").strip():
+        execute_argv.extend(["--payee-signing-seed-hex", payee_seed.strip()])
+    if (recognition_seed or "").strip():
+        execute_argv.extend(["--agent-recognition-signing-seed-hex", recognition_seed.strip()])
+
+    try:
+        execute_data = await handle_agent_tool_execute(ctx, execute_argv)
+    except CliError as exc:
+        details = dict(exc.details or {})
+        details["bind"] = bind_data
+        raise CliError(exc.message, category=exc.category, code=exc.code, exit_code=exc.exit_code, details=details) from exc
+
+    from paybond_kit.cli.agent_production_attach_smoke_checklist import (
+        format_agent_production_attach_smoke_checklist,
+    )
+
+    checklist_lines = format_agent_production_attach_smoke_checklist(
+        bind=bind_data,
+        execute=execute_data,
+        globals_=ctx.globals,
+    )
+    return {"bind": bind_data, "execute": execute_data, "checklist_lines": checklist_lines}
+
+
 async def handle_agent_demo_langgraph_smoke(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     production, argv = consume_boolean_flag(argv, "--production")
     _, runtime_flag, argv = consume_flag(argv, "--runtime")
@@ -1168,6 +1375,22 @@ async def handle_agent(ctx: CliContext, group: str, subcommand: str, argv: list[
         return await handle_agent_registry_validate(ctx, argv)
     if group == "sandbox" and subcommand == "smoke":
         return await handle_agent_sandbox_smoke(ctx, argv)
+    if group == "production" and subcommand == "attach":
+        if not argv or argv[0] != "smoke":
+            raise _agent_cli_error(
+                "agent production attach requires smoke subcommand",
+                code="cli.usage.unknown_command",
+                category="usage",
+            )
+        return await handle_agent_production_attach_smoke(ctx, argv[1:])
+    if group == "harbor" and subcommand == "evidence":
+        if not argv or argv[0] != "smoke":
+            raise _agent_cli_error(
+                "agent harbor evidence requires smoke subcommand",
+                code="cli.usage.unknown_command",
+                category="usage",
+            )
+        return await handle_agent_harbor_evidence_smoke(ctx, argv[1:])
     if group == "demo" and subcommand == "langgraph":
         if not argv or argv[0] != "smoke":
             raise _agent_cli_error(

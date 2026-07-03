@@ -30,6 +30,7 @@ from paybond_kit.cli.core import (
     list_config_entries,
     mask_api_key,
     parse_optional_non_negative_int,
+    parse_cli_argv,
     parse_required_non_negative_int,
     require_confirmation,
     resolve_api_key,
@@ -250,16 +251,53 @@ def handle_init_completion(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     }
 
 
-def handle_mcp_serve(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
-    if argv and argv[0] not in ("--help", "-h"):
-        raise CliError(f"unexpected arguments: {' '.join(argv)}", code="cli.usage.unexpected_args")
+def mcp_serve_argv_matches(argv: list[str]) -> bool:
+    """Return True when argv resolves to ``mcp serve`` (after global flags)."""
+
+    try:
+        _, command = parse_cli_argv(argv)
+    except CliError:
+        return False
+    return len(command) >= 2 and command[0] == "mcp" and command[1] == "serve"
+
+
+def run_mcp_serve_command_sync(
+    argv: list[str],
+    *,
+    stdout: IO[str],
+    stderr: IO[str],
+) -> int:
+    """Run the blocking MCP stdio server. Must not run inside asyncio.run()."""
+
+    from paybond_kit.cli.help_text import help_for_command
     from paybond_kit.mcp_server import run_mcp_stdio
 
-    ctx.stderr.write("Starting Paybond MCP stdio server (stdout is reserved for MCP JSON-RPC).\n")
-    code = run_mcp_stdio([])
-    if code != 0:
-        raise CliError("mcp serve failed", category="internal", code="cli.mcp.serve_failed", exit_code=code)
-    return {"started": True}
+    try:
+        _, command = parse_cli_argv(argv)
+    except CliError as exc:
+        stderr.write(f"{exc.message}\n")
+        return exc.exit_code
+
+    help_parts = [part for part in command if part not in ("--help", "-h")]
+    if not command or "--help" in command or "-h" in command:
+        stdout.write(f"{help_for_command(' '.join(help_parts) or 'mcp serve')}\n")
+        return 0
+
+    rest = command[2:]
+    if rest and rest[0] not in ("--help", "-h"):
+        stderr.write(f"unexpected arguments: {' '.join(rest)}\n")
+        return 2
+
+    stderr.write("Starting Paybond MCP stdio server (stdout is reserved for MCP JSON-RPC).\n")
+    return run_mcp_stdio([])
+
+
+def handle_mcp_serve(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+    raise CliError(
+        "mcp serve must run via the sync CLI entrypoint (not the async dispatcher)",
+        category="internal",
+        code="cli.mcp.serve_async_forbidden",
+    )
 
 
 def handle_mcp_tools(ctx: CliContext) -> dict[str, Any]:

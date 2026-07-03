@@ -630,6 +630,16 @@ def write_success_output(
             ctx.stdout.write(f"{line}\n")
         for warning in merged_warnings:
             ctx.stderr.write(f"{warning}\n")
+    elif canonical == "agent production attach smoke" and isinstance(data.get("checklist_lines"), list):
+        for line in data["checklist_lines"]:
+            ctx.stdout.write(f"{line}\n")
+        for warning in merged_warnings:
+            ctx.stderr.write(f"{warning}\n")
+    elif canonical == "agent harbor evidence smoke" and isinstance(data.get("checklist_lines"), list):
+        for line in data["checklist_lines"]:
+            ctx.stdout.write(f"{line}\n")
+        for warning in merged_warnings:
+            ctx.stderr.write(f"{warning}\n")
     elif canonical in ("dev smoke", "dev loop") and isinstance(data.get("checklist_lines"), list):
         if canonical == "dev loop" and isinstance(data.get("banner_lines"), list):
             for line in data["banner_lines"]:

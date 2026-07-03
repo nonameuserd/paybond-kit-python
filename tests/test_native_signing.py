@@ -33,6 +33,7 @@ def test_sign_payee_evidence_binding_produces_harbor_shaped_json() -> None:
         "submitted_at",
     }
     assert body["payee_did"] == "did:payee:1"
+    assert body["artifacts"] == []
     assert isinstance(body["payee_pubkey"], str)
     assert isinstance(body["payee_signature"], str)
     json.dumps(body)

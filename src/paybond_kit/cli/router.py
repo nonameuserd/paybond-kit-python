@@ -214,4 +214,10 @@ async def run_cli(argv: list[str] | None = None, *, stdout: Any = None, stderr: 
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    alias_warning = deprecated_alias_warning(sys.argv[0])
+    if alias_warning:
+        sys.stderr.write(f"{alias_warning}\n")
+    if commands.mcp_serve_argv_matches(argv):
+        return commands.run_mcp_serve_command_sync(argv, stdout=sys.stdout, stderr=sys.stderr)
     return asyncio.run(run_cli(argv))

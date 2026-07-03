@@ -522,6 +522,7 @@ async def test_interceptor_submits_production_auto_evidence_with_recognition_pro
     args, kwargs = await_args
     _intent_id, wire = args
     assert wire["payload"] == {"status": "completed", "cost_cents": 100}
+    assert wire["artifacts"] == []
     assert kwargs["recognition_proof"]["purpose"] == "harbor.intent.evidence.submit"
     assert kwargs["recognition_proof"]["key_id"] == "kid-1"
     assert kwargs["idempotency_key"] == f"evidence:{run.intent_id}:call-prod-1"

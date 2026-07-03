@@ -1696,9 +1696,13 @@ def run_mcp_stdio(argv: list[str] | None = None) -> int:
 def main(argv: list[str] | None = None) -> int:
     import sys
 
-    from paybond_kit.cli.router import main as cli_main
+    from paybond_kit.cli.automation import deprecated_alias_warning
 
-    return cli_main(["mcp", "serve", *(argv if argv is not None else sys.argv[1:])])
+    argv_list = list(argv if argv is not None else sys.argv[1:])
+    alias_warning = deprecated_alias_warning(sys.argv[0])
+    if alias_warning:
+        sys.stderr.write(f"{alias_warning}\n")
+    return run_mcp_stdio(argv_list)
 
 
 def _jsonable(value: Any) -> Any:

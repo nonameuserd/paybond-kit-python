@@ -76,3 +76,40 @@ def format_sdk_http_error_message(
   if summary_message.startswith("Gateway unavailable"):
     return f"{operation}: {summary_message}"
   return f"{operation} HTTP {status_code}: {summary_message}"
+
+
+def _parse_embedded_http_error_body(message: str) -> tuple[int, str] | None:
+  marker = " HTTP "
+  if marker not in message:
+    return None
+  prefix, rest = message.rsplit(marker, 1)
+  if not prefix or not rest:
+    return None
+  status_text, _, body_text = rest.partition(":")
+  if not status_text.isdigit():
+    return None
+  body_text = body_text.strip()
+  if not body_text.startswith("{"):
+    return None
+  return int(status_text), body_text
+
+
+def resolve_cli_gateway_error_message(err: BaseException) -> str:
+  """Return a CLI-safe gateway message without raw edge or upstream bodies."""
+  from paybond_kit.harbor import HarborHttpError
+
+  cause = getattr(err, "__cause__", None)
+  for candidate in (err, cause):
+    if isinstance(candidate, HarborHttpError):
+      return format_sdk_http_error_message(
+        str(candidate),
+        candidate.status_code,
+        candidate.body_text,
+      )
+  message = str(err)
+  embedded = _parse_embedded_http_error_body(message)
+  if embedded is not None:
+    status_code, body_text = embedded
+    operation = message.rsplit(" HTTP ", 1)[0].strip() or "Gateway request"
+    return format_sdk_http_error_message(operation, status_code, body_text)
+  return message
