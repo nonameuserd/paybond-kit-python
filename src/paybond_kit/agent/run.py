@@ -23,17 +23,15 @@ from paybond_kit.agent.types import (
     PaybondRunProductionEvidenceCredentials,
     PaybondRunSandboxBinding,
 )
-from paybond_kit.policy.reload import (
-    PaybondPolicyReloadBindConfig,
-    PaybondPolicyReloadOptions,
-    PaybondPolicyReloadResult,
-    reload_policy_on_run,
-)
-from paybond_kit.policy.watcher import PaybondPolicyReloadController
-
 if TYPE_CHECKING:
     from paybond_kit.paybond import Paybond
+    from paybond_kit.policy.reload import (
+        PaybondPolicyReloadBindConfig,
+        PaybondPolicyReloadOptions,
+        PaybondPolicyReloadResult,
+    )
     from paybond_kit.policy.snapshot import PaybondPolicySnapshot
+    from paybond_kit.policy.watcher import PaybondPolicyReloadController
 
 
 class _AgentRunHarborHost(Protocol):
@@ -353,6 +351,8 @@ class PaybondAgentRun:
         self._current_snapshot = snapshot
 
     def start_policy_reload(self, config: PaybondPolicyReloadBindConfig) -> None:
+        from paybond_kit.policy.watcher import PaybondPolicyReloadController
+
         if not self.policy_file_path:
             raise RuntimeError("start_policy_reload requires policy_file_path from bind")
         self.stop_policy_reload()
@@ -366,6 +366,8 @@ class PaybondAgentRun:
         self,
         options: PaybondPolicyReloadOptions | None = None,
     ) -> PaybondPolicyReloadResult:
+        from paybond_kit.policy.reload import reload_policy_on_run
+
         try:
             result = await reload_policy_on_run(self, options)
             if result.applied and result.previous_digest and result.new_digest:

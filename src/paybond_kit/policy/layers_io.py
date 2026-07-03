@@ -13,7 +13,7 @@ LAYERED_POLICY_PRESET_IDS = ("travel", "shopping", "saas", "aws")
 def _preset_layer_candidate_paths(subdir: str, file_name: str) -> list[Path]:
     module_dir = Path(__file__).resolve().parent
     roots = [
-        module_dir / "data" / "policy" / "presets",
+        module_dir.parent / "data" / "policy" / "presets",
         module_dir.parents[3] / "policy" / "presets",
         module_dir.parents[2] / "policy" / "presets",
     ]

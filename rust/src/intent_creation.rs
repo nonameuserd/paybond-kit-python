@@ -284,19 +284,6 @@ pub(crate) struct CompletionContractSigningFields {
     pub canonical_schema_digest: [u8; 32],
 }
 
-fn digest_hex_to_bytes(hex_value: Option<&str>) -> Result<[u8; 32], String> {
-    let Some(hex_value) = hex_value.map(str::trim).filter(|s| !s.is_empty()) else {
-        return Ok([0_u8; 32]);
-    };
-    let hex_value = hex_value.strip_prefix("0x").unwrap_or(hex_value);
-    let bytes = hex::decode(hex_value).map_err(|e| format!("digest hex: {e}"))?;
-    let bytes: [u8; 32] = bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| "digest hex must decode to 32 bytes".to_string())?;
-    Ok(bytes)
-}
-
 fn encode_completion_contract_sign_v1(
     fields: &CompletionContractSigningFields,
 ) -> Result<Vec<u8>, String> {

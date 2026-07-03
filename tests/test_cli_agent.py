@@ -8,7 +8,7 @@ import pytest
 
 from paybond_kit.agent.registry_file import parse_agent_registry_text, validate_agent_registry_document
 from paybond_kit.cli.router import run_cli
-from cli_agent_gateway_mock import (
+from .cli_agent_gateway_mock import (
     ATTACH_INTENT_ID,
     LIVE_RAW_KEY,
     PRODUCTION_ATTACH_SEEDS,

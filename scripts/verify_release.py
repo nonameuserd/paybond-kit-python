@@ -98,6 +98,8 @@ def inspect_wheel(path: Path) -> None:
         raise RuntimeError("wheel must expose paybond console script")
     if "paybond-mcp-server=paybond_kit.mcp_server:main" not in normalized_entry_points:
         raise RuntimeError("wheel must expose paybond-mcp-server console script")
+    if "paybond_kit/data/policy/presets/travel.yaml" not in names:
+        raise RuntimeError("wheel must ship bundled travel policy preset")
 
 
 def assert_contains_all(text: str, fragments: tuple[str, ...], label: str) -> None:
@@ -217,6 +219,9 @@ def smoke_completion_evidence_consumer(wheel: Path) -> None:
                 'preset_id="cost_and_completion", canonical_payload={"status": "completed", "cost_cents": 100}'
                 ")\n"
                 "assert report['canonical_schema_ok'], report\n"
+                "from paybond_kit.policy.presets import resolve_policy_preset_path\n"
+                "travel_path = resolve_policy_preset_path('travel')\n"
+                "assert travel_path.endswith('travel.yaml'), travel_path\n"
                 "from paybond_kit.cli.router import main\n"
                 "print('completion evidence import ok')\n"
             ),

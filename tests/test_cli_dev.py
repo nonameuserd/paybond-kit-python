@@ -9,7 +9,7 @@ import pytest
 from paybond_kit.cli.router import run_cli
 from paybond_kit.dev.trace_buffer import list_dev_trace_events, record_smoke_trace_event
 from paybond_kit.dev.trace_server import start_dev_trace_server
-from cli_agent_gateway_mock import LIVE_RAW_KEY, SANDBOX_RAW_KEY, install_agent_gateway_mock
+from .cli_agent_gateway_mock import LIVE_RAW_KEY, SANDBOX_RAW_KEY, install_agent_gateway_mock
 
 
 @pytest.mark.asyncio

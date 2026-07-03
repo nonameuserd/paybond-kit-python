@@ -19,7 +19,7 @@ def _preset_candidate_paths(preset_id: str) -> list[Path]:
     file_name = f"{preset_id}.yaml"
     module_dir = Path(__file__).resolve().parent
     roots = [
-        module_dir / "data" / "policy" / "presets",
+        module_dir.parent / "data" / "policy" / "presets",
         module_dir.parents[3] / "policy" / "presets",
         module_dir.parents[2] / "policy" / "presets",
     ]
