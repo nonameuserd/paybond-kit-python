@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import random
 from typing import Any, TypedDict
 from urllib.parse import quote
 
 import httpx
 
 from paybond_kit.credentials import normalize_gateway_base_url
+from paybond_kit.gateway_retry import httpx_with_gateway_retries
 
 
 class AgentMandateAuthorization(TypedDict, total=False):
@@ -274,36 +273,15 @@ class GatewayProtocolClient:
         headers = self._headers(content_type="application/json" if json_body is not None else None)
         if extra_headers is not None:
             headers.update(extra_headers)
-        last_exc: BaseException | None = None
-        response: httpx.Response | None = None
-        for attempt in range(self._max_retries):
-            try:
-                response = await self._client.request(
-                    method,
-                    url,
-                    headers=headers,
-                    json=json_body,
-                )
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_exc = exc
-                if attempt + 1 >= self._max_retries:
-                    raise
-                await asyncio.sleep(_backoff_seconds(attempt))
-                continue
-            if response.status_code in (429, 500, 502, 503, 504):
-                if attempt + 1 >= self._max_retries:
-                    break
-                delay = _parse_retry_after(response.headers.get("retry-after"))
-                if delay is None:
-                    delay = _backoff_seconds(attempt)
-                await asyncio.sleep(delay)
-                continue
-            return response
-        if last_exc is not None:
-            raise last_exc
-        if response is None:
-            raise RuntimeError(f"{method} {path} exhausted retries without a response")
-        return response
+        return await httpx_with_gateway_retries(
+            lambda: self._client.request(
+                method,
+                url,
+                headers=headers,
+                json=json_body,
+            ),
+            max_retries=self._max_retries,
+        )
 
     async def import_agent_mandate_v1(
         self,
@@ -511,24 +489,6 @@ class GatewayProtocolClient:
         if not isinstance(payload, dict):
             raise RuntimeError("gateway mutation response was not a JSON object")
         return payload
-
-
-def _parse_retry_after(value: str | None) -> float | None:
-    if not value:
-        return None
-    try:
-        parsed = float(value.strip())
-    except ValueError:
-        return None
-    if parsed < 0:
-        return None
-    return min(parsed, 30.0)
-
-
-def _backoff_seconds(attempt: int) -> float:
-    base = 0.2 * (2**attempt)
-    jitter = random.random() * 0.1
-    return min(base + jitter, 5.0)
 
 
 def _encode_recognition_proof_header(proof: dict[str, Any]) -> str:

@@ -12,6 +12,7 @@ from paybond_kit.cli.core import (
     CliContext,
     CliError,
     default_globals,
+    exit_code_for_http_status,
     failure_envelope,
     output_format_from_argv,
     parse_cli_argv,
@@ -19,6 +20,11 @@ from paybond_kit.cli.core import (
     success_envelope,
     write_success_output,
 )
+from paybond_kit.cli.http_error_message import (
+    format_sdk_http_error_message,
+    summarize_gateway_http_error,
+)
+from paybond_kit.harbor import HarborHttpError
 from paybond_kit.cli.automation import deprecated_alias_warning
 from paybond_kit.cli.help_text import help_for_command
 from paybond_kit.cli.policy import (
@@ -142,6 +148,19 @@ async def _dispatch(ctx: CliContext, command: list[str]) -> tuple[str, dict[str,
     raise CliError(format_unknown_command_message(" ".join(command)), code="cli.usage.unknown_command")
 
 
+def _cli_error_from_harbor_http_error(err: HarborHttpError) -> CliError:
+    exit_code, category = exit_code_for_http_status(err.status_code)
+    _, details = summarize_gateway_http_error(err.status_code, err.body_text)
+    gateway_code = details.get("gateway_code")
+    return CliError(
+        format_sdk_http_error_message(str(err), err.status_code, err.body_text),
+        category=category,
+        code=str(gateway_code or f"cli.gateway.http_{err.status_code}"),
+        exit_code=exit_code,
+        details=details,
+    )
+
+
 async def run_cli(argv: list[str] | None = None, *, stdout: Any = None, stderr: Any = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     stdout = stdout or sys.stdout
@@ -185,6 +204,13 @@ async def run_cli(argv: list[str] | None = None, *, stdout: Any = None, stderr: 
         else:
             ctx.stderr.write(f"{exc.message}\n")
         return exc.exit_code
+    except HarborHttpError as exc:
+        cli_exc = _cli_error_from_harbor_http_error(exc)
+        if globals_.format == "json":
+            ctx.stdout.write(f"{json.dumps(failure_envelope(canonical, globals_, cli_exc), indent=2)}\n")
+        else:
+            ctx.stderr.write(f"{cli_exc.message}\n")
+        return cli_exc.exit_code
 
 
 def main(argv: list[str] | None = None) -> int:

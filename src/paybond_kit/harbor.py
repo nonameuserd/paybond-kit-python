@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
-import random
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
@@ -23,6 +21,7 @@ from uuid import UUID
 import httpx
 
 from paybond_kit.credentials import normalize_gateway_base_url
+from paybond_kit.gateway_retry import httpx_with_gateway_retries
 
 SettlementRail: TypeAlias = Literal["stripe_connect", "stripe_ach_debit", "x402_usdc_base"]
 _SETTLEMENT_RAIL_VALUES = frozenset({"stripe_connect", "stripe_ach_debit", "x402_usdc_base"})
@@ -317,32 +316,10 @@ class HarborClient:
             **auth_hdr,
             **headers,
         }
-        last_exc: BaseException | None = None
-        response: httpx.Response | None = None
-        for attempt in range(self._max_retries):
-            try:
-                response = await self._client.post(url, headers=merged, json=payload)
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_exc = exc
-                if attempt + 1 >= self._max_retries:
-                    raise
-                await asyncio.sleep(_backoff_seconds(attempt))
-                continue
-            if response.status_code in (429, 500, 502, 503, 504):
-                if attempt + 1 >= self._max_retries:
-                    break
-                ra = response.headers.get("retry-after")
-                delay = _parse_retry_after(ra)
-                if delay is None:
-                    delay = _backoff_seconds(attempt)
-                await asyncio.sleep(delay)
-                continue
-            return response
-        if last_exc is not None:
-            raise last_exc
-        if response is None:
-            raise RuntimeError("POST request exhausted retries without a response")
-        return response
+        return await httpx_with_gateway_retries(
+            lambda: self._client.post(url, headers=merged, json=payload),
+            max_retries=self._max_retries,
+        )
 
     async def _get_json_with_retries(self, path: str) -> httpx.Response:
         """GET with the same retry policy as :meth:`_post_json_with_retries`."""
@@ -353,32 +330,10 @@ class HarborClient:
             "x-tenant-id": self._tenant,
             **auth_hdr,
         }
-        last_exc: BaseException | None = None
-        response: httpx.Response | None = None
-        for attempt in range(self._max_retries):
-            try:
-                response = await self._client.get(url, headers=merged)
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_exc = exc
-                if attempt + 1 >= self._max_retries:
-                    raise
-                await asyncio.sleep(_backoff_seconds(attempt))
-                continue
-            if response.status_code in (429, 500, 502, 503, 504):
-                if attempt + 1 >= self._max_retries:
-                    break
-                ra = response.headers.get("retry-after")
-                delay = _parse_retry_after(ra)
-                if delay is None:
-                    delay = _backoff_seconds(attempt)
-                await asyncio.sleep(delay)
-                continue
-            return response
-        if last_exc is not None:
-            raise last_exc
-        if response is None:
-            raise RuntimeError("GET request exhausted retries without a response")
-        return response
+        return await httpx_with_gateway_retries(
+            lambda: self._client.get(url, headers=merged),
+            max_retries=self._max_retries,
+        )
 
     def _assert_ledger_tenant(self, body: dict[str, Any], *, url: str) -> None:
         """Harbor ledger JSON always echoes ``tenant_id``; reject confused-deputy mismatches."""
@@ -501,44 +456,18 @@ class HarborClient:
             **auth_hdr,
             **extra,
         }
-        last_exc: BaseException | None = None
-        response: httpx.Response | None = None
-        for attempt in range(self._max_retries):
-            try:
-                response = await self._client.post(url, headers=merged, json=body)
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_exc = exc
-                if attempt + 1 >= self._max_retries:
-                    raise
-                await asyncio.sleep(_backoff_seconds(attempt))
-                continue
-            if response.status_code in (429, 500, 502, 503, 504):
-                if attempt + 1 >= self._max_retries:
-                    break
-                ra = response.headers.get("retry-after")
-                delay = _parse_retry_after(ra)
-                if delay is None:
-                    delay = _backoff_seconds(attempt)
-                await asyncio.sleep(delay)
-                continue
-            if response.status_code >= 400:
-                raise HarborHttpError(
-                    f"Harbor create intent HTTP {response.status_code}: {response.text}",
-                    status_code=response.status_code,
-                    url=url,
-                    body_text=response.text,
-                )
-            return response.json()
-        if last_exc is not None:
-            raise last_exc
-        if response is None:
-            raise RuntimeError("Harbor create intent request exhausted retries without a response")
-        raise HarborHttpError(
-            f"Harbor create intent HTTP {response.status_code}: {response.text}",
-            status_code=response.status_code,
-            url=url,
-            body_text=response.text,
+        response = await httpx_with_gateway_retries(
+            lambda: self._client.post(url, headers=merged, json=body),
+            max_retries=self._max_retries,
         )
+        if response.status_code >= 400:
+            raise HarborHttpError(
+                f"Harbor create intent HTTP {response.status_code}: {response.text}",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        return response.json()
 
     async def fund_intent(
         self,
@@ -693,46 +622,18 @@ class HarborClient:
             **auth_hdr,
             **extra,
         }
-        last_exc: BaseException | None = None
-        response: httpx.Response | None = None
-        for attempt in range(self._max_retries):
-            try:
-                response = await self._client.post(
-                    url, headers=merged, json=evidence_body
-                )
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_exc = exc
-                if attempt + 1 >= self._max_retries:
-                    raise
-                await asyncio.sleep(_backoff_seconds(attempt))
-                continue
-            if response.status_code in (429, 500, 502, 503, 504):
-                if attempt + 1 >= self._max_retries:
-                    break
-                ra = response.headers.get("retry-after")
-                delay = _parse_retry_after(ra)
-                if delay is None:
-                    delay = _backoff_seconds(attempt)
-                await asyncio.sleep(delay)
-                continue
-            if response.status_code >= 400:
-                raise HarborHttpError(
-                    f"Harbor evidence HTTP {response.status_code}: {response.text}",
-                    status_code=response.status_code,
-                    url=url,
-                    body_text=response.text,
-                )
-            return response.json()
-        if last_exc is not None:
-            raise last_exc
-        if response is None:
-            raise RuntimeError("Harbor evidence request exhausted retries without a response")
-        raise HarborHttpError(
-            f"Harbor evidence HTTP {response.status_code}: {response.text}",
-            status_code=response.status_code,
-            url=url,
-            body_text=response.text,
+        response = await httpx_with_gateway_retries(
+            lambda: self._client.post(url, headers=merged, json=evidence_body),
+            max_retries=self._max_retries,
         )
+        if response.status_code >= 400:
+            raise HarborHttpError(
+                f"Harbor evidence HTTP {response.status_code}: {response.text}",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        return response.json()
 
     async def get_ledger_tip(self) -> dict[str, Any]:
         """
@@ -906,31 +807,10 @@ class GatewayHarborClient:
         headers = self._headers(content_type="application/json")
         if extra_headers:
             headers.update(extra_headers)
-        last_exc: BaseException | None = None
-        response: httpx.Response | None = None
-        for attempt in range(self._max_retries):
-            try:
-                response = await self._client.post(url, headers=headers, json=payload)
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_exc = exc
-                if attempt + 1 >= self._max_retries:
-                    raise
-                await asyncio.sleep(_backoff_seconds(attempt))
-                continue
-            if response.status_code in (429, 500, 502, 503, 504):
-                if attempt + 1 >= self._max_retries:
-                    break
-                delay = _parse_retry_after(response.headers.get("retry-after"))
-                if delay is None:
-                    delay = _backoff_seconds(attempt)
-                await asyncio.sleep(delay)
-                continue
-            return response
-        if last_exc is not None:
-            raise last_exc
-        if response is None:
-            raise RuntimeError("POST request exhausted retries without a response")
-        return response
+        return await httpx_with_gateway_retries(
+            lambda: self._client.post(url, headers=headers, json=payload),
+            max_retries=self._max_retries,
+        )
 
     async def _put_json_with_retries(
         self,
@@ -943,31 +823,10 @@ class GatewayHarborClient:
         headers = self._headers(content_type="application/json")
         if extra_headers:
             headers.update(extra_headers)
-        last_exc: BaseException | None = None
-        response: httpx.Response | None = None
-        for attempt in range(self._max_retries):
-            try:
-                response = await self._client.put(url, headers=headers, json=payload)
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_exc = exc
-                if attempt + 1 >= self._max_retries:
-                    raise
-                await asyncio.sleep(_backoff_seconds(attempt))
-                continue
-            if response.status_code in (429, 500, 502, 503, 504):
-                if attempt + 1 >= self._max_retries:
-                    break
-                delay = _parse_retry_after(response.headers.get("retry-after"))
-                if delay is None:
-                    delay = _backoff_seconds(attempt)
-                await asyncio.sleep(delay)
-                continue
-            return response
-        if last_exc is not None:
-            raise last_exc
-        if response is None:
-            raise RuntimeError("PUT request exhausted retries without a response")
-        return response
+        return await httpx_with_gateway_retries(
+            lambda: self._client.put(url, headers=headers, json=payload),
+            max_retries=self._max_retries,
+        )
 
     def create_agent_run_trace_reporter(self, run_id: str) -> GatewayAgentRunTraceReporter:
         """Gateway-backed middleware trace reporter for tenant console agent-runs view."""
@@ -1000,28 +859,10 @@ class GatewayHarborClient:
     async def _get_json_with_retries(self, path: str) -> httpx.Response:
         url = f"{self._base}{path.lstrip('/')}"
         headers = self._headers()
-        last_exc: BaseException | None = None
-        for attempt in range(self._max_retries):
-            try:
-                response = await self._client.get(url, headers=headers)
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_exc = exc
-                if attempt + 1 >= self._max_retries:
-                    raise
-                await asyncio.sleep(_backoff_seconds(attempt))
-                continue
-            if response.status_code in (429, 500, 502, 503, 504):
-                if attempt + 1 >= self._max_retries:
-                    return response
-                delay = _parse_retry_after(response.headers.get("retry-after"))
-                if delay is None:
-                    delay = _backoff_seconds(attempt)
-                await asyncio.sleep(delay)
-                continue
-            return response
-        if last_exc is not None:
-            raise last_exc
-        raise RuntimeError("GET request exhausted retries without a response")
+        return await httpx_with_gateway_retries(
+            lambda: self._client.get(url, headers=headers),
+            max_retries=self._max_retries,
+        )
 
     async def get_intent(self, intent_id: UUID) -> dict[str, Any]:
         """Tenant-scoped Harbor operator intent detail (for attach run binding)."""
@@ -1546,24 +1387,6 @@ def _parse_intent_funding_result(value: dict[str, Any]) -> IntentFundingResult:
         refund_expires_at=_optional_nonempty_string(value.get("refund_expires_at")),
         onchain_transaction_hashes=onchain,
     )
-
-
-def _backoff_seconds(attempt: int) -> float:
-    base = 0.2 * (2**attempt)
-    jitter = random.uniform(0.0, 0.1)
-    return min(base + jitter, 5.0)
-
-
-def _parse_retry_after(header_val: str | None) -> float | None:
-    if header_val is None:
-        return None
-    s = header_val.strip()
-    if not s:
-        return None
-    try:
-        return min(float(s), 30.0)
-    except ValueError:
-        return None
 
 
 def _encode_recognition_proof_header(proof: dict[str, Any]) -> str:

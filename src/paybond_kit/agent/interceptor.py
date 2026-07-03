@@ -526,6 +526,12 @@ class PaybondToolInterceptor:
         spend_cents = requested_spend_cents
         if spend_cents is None:
             spend_cents = self._binding.registry.resolve_spend_cents(tool_name, arguments)
+        if self._binding.sandbox is not None:
+            sandbox_spend = self._binding.sandbox.requested_spend_cents
+            if spend_cents is None:
+                spend_cents = sandbox_spend
+            else:
+                spend_cents = min(spend_cents, sandbox_spend)
 
         return {
             "operation": resolved_operation,

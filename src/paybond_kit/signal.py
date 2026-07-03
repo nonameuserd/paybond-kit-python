@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import random
 from dataclasses import dataclass
 from typing import Any, TypedDict
 from urllib.parse import quote
@@ -18,6 +16,7 @@ from paybond_kit.credentials import (
     _normalize_expected_environment,
     normalize_gateway_base_url,
 )
+from paybond_kit.gateway_retry import httpx_with_gateway_retries
 
 _DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal"
 
@@ -183,37 +182,16 @@ class GatewaySignalClient:
 
     async def _get_json_with_retries(self, path: str) -> httpx.Response:
         url = f"{self._base}{path.lstrip('/')}"
-        last_exc: BaseException | None = None
-        response: httpx.Response | None = None
-        for attempt in range(self._max_retries):
-            try:
-                response = await self._client.get(
-                    url,
-                    headers={
-                        "accept": "application/json",
-                        "authorization": f"Bearer {self._bearer}",
-                    },
-                )
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_exc = exc
-                if attempt + 1 >= self._max_retries:
-                    raise
-                await asyncio.sleep(_backoff_seconds(attempt))
-                continue
-            if response.status_code in (429, 500, 502, 503, 504):
-                if attempt + 1 >= self._max_retries:
-                    break
-                delay = _parse_retry_after(response.headers.get("retry-after"))
-                if delay is None:
-                    delay = _backoff_seconds(attempt)
-                await asyncio.sleep(delay)
-                continue
-            return response
-        if last_exc is not None:
-            raise last_exc
-        if response is None:
-            raise RuntimeError(f"GET {path} exhausted retries without a response")
-        return response
+        return await httpx_with_gateway_retries(
+            lambda: self._client.get(
+                url,
+                headers={
+                    "accept": "application/json",
+                    "authorization": f"Bearer {self._bearer}",
+                },
+            ),
+            max_retries=self._max_retries,
+        )
 
     def _assert_tenant(self, body: dict[str, Any], *, url: str) -> None:
         tenant = str(body.get("tenant_id", ""))
@@ -398,74 +376,40 @@ async def _resolve_gateway_tenant_id(
     try:
         path = principal_path if principal_path.startswith("/") else f"/{principal_path}"
         url = normalize_gateway_base_url(gateway_base_url) + path
-        last_exc: BaseException | None = None
-        for attempt in range(retries):
-            try:
-                response = await client.get(
-                    url,
-                    headers={
-                        "accept": "application/json",
-                        "authorization": f"Bearer {api_key.strip()}",
-                    },
-                )
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_exc = exc
-                if attempt + 1 >= retries:
-                    raise
-                await asyncio.sleep(_backoff_seconds(attempt))
-                continue
-            if response.status_code >= 400:
-                if (
-                    response.status_code in (429, 500, 502, 503, 504)
-                    and attempt + 1 < retries
-                ):
-                    delay = _parse_retry_after(response.headers.get("retry-after"))
-                    if delay is None:
-                        delay = _backoff_seconds(attempt)
-                    await asyncio.sleep(delay)
-                    continue
-                raise GatewayAuthError(
-                    f"gateway principal HTTP {response.status_code}",
-                    status_code=response.status_code,
-                    body_text=response.text,
-                )
-            body = response.json()
-            if not isinstance(body, dict):
-                raise GatewayAuthError(
-                    "gateway principal response was not a JSON object",
-                    body_text=response.text,
-                )
-            tenant = str(body.get("tenant_id", "")).strip()
-            if not tenant:
-                raise GatewayAuthError(
-                    "gateway principal JSON missing tenant_id",
-                    body_text=response.text,
-                )
-            _assert_expected_environment(
-                source="gateway principal",
-                body=body,
-                expected_environment=expected_environment,
+        response = await httpx_with_gateway_retries(
+            lambda: client.get(
+                url,
+                headers={
+                    "accept": "application/json",
+                    "authorization": f"Bearer {api_key.strip()}",
+                },
+            ),
+            max_retries=retries,
+        )
+        if response.status_code >= 400:
+            raise GatewayAuthError(
+                f"gateway principal HTTP {response.status_code}",
+                status_code=response.status_code,
                 body_text=response.text,
             )
-            return tenant
-        raise RuntimeError(str(last_exc))
+        body = response.json()
+        if not isinstance(body, dict):
+            raise GatewayAuthError(
+                "gateway principal response was not a JSON object",
+                body_text=response.text,
+            )
+        tenant = str(body.get("tenant_id", "")).strip()
+        if not tenant:
+            raise GatewayAuthError(
+                "gateway principal JSON missing tenant_id",
+                body_text=response.text,
+            )
+        _assert_expected_environment(
+            source="gateway principal",
+            body=body,
+            expected_environment=expected_environment,
+            body_text=response.text,
+        )
+        return tenant
     finally:
         await client.aclose()
-
-
-def _parse_retry_after(value: str | None) -> float | None:
-    if not value:
-        return None
-    try:
-        parsed = float(value.strip())
-    except ValueError:
-        return None
-    if parsed < 0:
-        return None
-    return min(parsed, 30.0)
-
-
-def _backoff_seconds(attempt: int) -> float:
-    base = 0.2 * (2**attempt)
-    jitter = random.random() * 0.1
-    return min(base + jitter, 5.0)

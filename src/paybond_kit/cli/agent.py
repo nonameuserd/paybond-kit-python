@@ -919,21 +919,25 @@ async def handle_agent_sandbox_smoke(ctx: CliContext, argv: list[str]) -> dict[s
     bind_data = await handle_agent_run_bind(ctx, bind_argv)
     smoke_operation = str(bind_data.get("operation") or resolved_operation or "")
     run_id = str(bind_data["run_id"])
+    stored_for_execute = load_agent_run_context(ctx.cwd, run_id)
+    execute_argv: list[str] = [
+        *(["--production"] if production else []),
+        "--run-id",
+        run_id,
+        "--operation",
+        smoke_operation,
+        "--tool-call-id",
+        "smoke-1",
+        "--result-body",
+        json.dumps(result_body),
+    ]
+    bind_spend = stored_for_execute.get("requested_spend_cents")
+    if bind_spend is not None:
+        execute_argv.extend(["--requested-spend-cents", str(bind_spend)])
+    elif resolved_spend:
+        execute_argv.extend(["--requested-spend-cents", resolved_spend])
     try:
-        execute_data = await handle_agent_tool_execute(
-            ctx,
-            [
-                *(["--production"] if production else []),
-                "--run-id",
-                run_id,
-                "--operation",
-                smoke_operation,
-                "--tool-call-id",
-                "smoke-1",
-                "--result-body",
-                json.dumps(result_body),
-            ],
-        )
+        execute_data = await handle_agent_tool_execute(ctx, execute_argv)
     except CliError as exc:
         details = dict(exc.details or {})
         details["bind"] = bind_data

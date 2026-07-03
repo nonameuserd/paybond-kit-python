@@ -16,6 +16,7 @@ from uuid import UUID
 import httpx
 
 from paybond_kit.credentials import DEFAULT_PAYBOND_GATEWAY_BASE_URL, normalize_gateway_base_url
+from paybond_kit.gateway_retry import httpx_with_gateway_retries
 from paybond_kit.mcp_capability_token_cache import (
     McpCapabilityTokenCache,
     McpCapabilityTokenCacheConfig,
@@ -257,37 +258,15 @@ class GatewayAPIClient:
         if payload is not None:
             headers["content-type"] = "application/json"
 
-        last_exc: BaseException | None = None
-        response: httpx.Response | None = None
-        for attempt in range(self._max_retries):
-            try:
-                response = await self._client.request(
-                    method,
-                    url,
-                    headers=headers,
-                    json=payload,
-                )
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_exc = exc
-                if attempt + 1 >= self._max_retries:
-                    raise
-                await asyncio.sleep(_backoff_seconds(attempt))
-                continue
-
-            if response.status_code in (429, 500, 502, 503, 504):
-                if attempt + 1 >= self._max_retries:
-                    break
-                delay = _parse_retry_after(response.headers.get("retry-after"))
-                if delay is None:
-                    delay = _backoff_seconds(attempt)
-                await asyncio.sleep(delay)
-                continue
-            break
-
-        if response is None:
-            if last_exc is not None:
-                raise last_exc
-            raise RuntimeError("gateway request failed without a response")
+        response = await httpx_with_gateway_retries(
+            lambda: self._client.request(
+                method,
+                url,
+                headers=headers,
+                json=payload,
+            ),
+            max_retries=self._max_retries,
+        )
         if response.status_code >= 400:
             error_code, error_message = _parse_gateway_error_envelope(response.text)
             raise GatewayHTTPError(
@@ -1720,23 +1699,6 @@ def main(argv: list[str] | None = None) -> int:
     from paybond_kit.cli.router import main as cli_main
 
     return cli_main(["mcp", "serve", *(argv if argv is not None else sys.argv[1:])])
-
-
-def _parse_retry_after(value: str | None) -> float | None:
-    if not value:
-        return None
-    try:
-        parsed = float(value.strip())
-    except ValueError:
-        return None
-    if parsed < 0:
-        return None
-    return min(parsed, 30.0)
-
-
-def _backoff_seconds(attempt: int) -> float:
-    base = 0.2 * (2**attempt)
-    return min(base + 0.1, 5.0)
 
 
 def _jsonable(value: Any) -> Any:

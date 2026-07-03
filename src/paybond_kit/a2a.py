@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
-import random
 from typing import Any
 from urllib.parse import quote
 
 import httpx
 
 from paybond_kit.credentials import normalize_gateway_base_url
+from paybond_kit.gateway_retry import httpx_with_gateway_retries
 
 
 class A2AHttpError(RuntimeError):
@@ -61,28 +60,10 @@ class GatewayA2AClient:
         if self._bearer is not None:
             headers["authorization"] = f"Bearer {self._bearer}"
 
-        last_exc: BaseException | None = None
-        for attempt in range(self._max_retries):
-            try:
-                response = await self._client.get(url, headers=headers)
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_exc = exc
-                if attempt + 1 >= self._max_retries:
-                    raise
-                await asyncio.sleep(_backoff_seconds(attempt))
-                continue
-            if response.status_code in (429, 500, 502, 503, 504):
-                if attempt + 1 >= self._max_retries:
-                    break
-                delay = _parse_retry_after(response.headers.get("retry-after"))
-                if delay is None:
-                    delay = _backoff_seconds(attempt)
-                await asyncio.sleep(delay)
-                continue
-            return response
-        if last_exc is not None:
-            raise last_exc
-        return response
+        return await httpx_with_gateway_retries(
+            lambda: self._client.get(url, headers=headers),
+            max_retries=self._max_retries,
+        )
 
     async def get_agent_card(self) -> dict[str, Any]:
         path = ".well-known/agent-card.json"
@@ -131,21 +112,3 @@ class GatewayA2AClient:
         if not isinstance(body, dict):
             raise RuntimeError("A2A task contract response was not a JSON object")
         return body
-
-
-def _parse_retry_after(value: str | None) -> float | None:
-    if not value:
-        return None
-    try:
-        parsed = float(value.strip())
-    except ValueError:
-        return None
-    if parsed < 0:
-        return None
-    return min(parsed, 30.0)
-
-
-def _backoff_seconds(attempt: int) -> float:
-    base = 0.2 * (2**attempt)
-    jitter = random.random() * 0.1
-    return min(base + jitter, 5.0)

@@ -87,14 +87,16 @@ class _FakeHarbor:
 @dataclass
 class _FakeGuardrails:
     intent_id: UUID | None = None
+    last_operation: str = "travel.book_hotel"
 
     async def bootstrap_sandbox(self, **kwargs: Any) -> SandboxGuardrailBootstrapResult:
         self.intent_id = uuid4()
+        self.last_operation = str(kwargs["operation"])
         return SandboxGuardrailBootstrapResult(
             tenant_id="tenant-a",
             intent_id=self.intent_id,
             capability_token="cap-sandbox",
-            operation=str(kwargs["operation"]),
+            operation=self.last_operation,
             requested_spend_cents=int(kwargs["requested_spend_cents"]),
             sandbox_lifecycle_status="funded",
         )
@@ -185,6 +187,57 @@ async def test_interceptor_authorizes_executes_and_submits_evidence() -> None:
     call_kwargs = paybond.guardrails.submit_sandbox_evidence.await_args.kwargs
     assert call_kwargs["payload"] == {"status": "completed", "cost_cents": 18_700}
     assert call_kwargs["idempotency_key"] == f"evidence:{run.intent_id}:call-1"
+
+
+@pytest.mark.asyncio
+async def test_interceptor_prefers_sandbox_bind_spend_over_policy_max() -> None:
+    """Capability max matches bind spend, not policy max_spend_cents on the tool."""
+    captured: dict[str, Any] = {}
+
+    @dataclass
+    class _SpendCapturingHarbor(_FakeHarbor):
+        async def verify_capability(self, **kwargs: Any) -> VerifyCapabilityResult:
+            captured.update(kwargs)
+            return await super().verify_capability(**kwargs)
+
+        async def get_intent(self, intent_id: UUID) -> dict[str, str | list[str]]:
+            return {
+                "tenant_id": self.tenant_id,
+                "allowed_tools": ["saas.provision_seat"],
+            }
+
+    registry = create_paybond_tool_registry(
+        {
+            "default_deny": True,
+            "side_effecting": {
+                "saas.provision_seat": {
+                    "spend_cents": 5_000,
+                    "evidence_preset": "cost_and_completion",
+                },
+            },
+        }
+    )
+    paybond = _FakePaybond(harbor=_SpendCapturingHarbor(), guardrails=_FakeGuardrails())
+    run = await PaybondAgentRun.bind(
+        paybond,
+        {
+            "bootstrap": {
+                "kind": "sandbox",
+                "operation": "saas.provision_seat",
+                "requested_spend_cents": 2_900,
+            },
+            "registry": registry,
+        },
+    )
+
+    await run.interceptor.wrap_execute(
+        tool_name="saas.provision_seat",
+        tool_call_id="smoke-1",
+        arguments={},
+        execute=lambda: {"status": "completed", "cost_cents": 2_900},
+    )
+
+    assert captured["requested_spend_cents"] == 2_900
 
 
 @pytest.mark.asyncio

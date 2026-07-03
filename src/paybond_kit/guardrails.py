@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -11,12 +10,8 @@ from uuid import UUID
 import httpx
 
 from paybond_kit.credentials import normalize_gateway_base_url
-from paybond_kit.harbor import (
-    HarborHttpError,
-    TenantBindingError,
-    _backoff_seconds,
-    _parse_retry_after,
-)
+from paybond_kit.gateway_retry import httpx_with_gateway_retries
+from paybond_kit.harbor import HarborHttpError, TenantBindingError
 
 
 @dataclass(frozen=True)
@@ -111,28 +106,10 @@ class GatewaySandboxGuardrailsClient:
     ) -> httpx.Response:
         url = f"{self._base}{path.lstrip('/')}"
         headers = self._headers(idempotency_key=idempotency_key)
-        last_exc: BaseException | None = None
-        for attempt in range(self._max_retries):
-            try:
-                response = await self._client.post(url, headers=headers, json=payload)
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_exc = exc
-                if attempt + 1 >= self._max_retries:
-                    raise
-                await asyncio.sleep(_backoff_seconds(attempt))
-                continue
-            if response.status_code in (429, 500, 502, 503, 504):
-                if attempt + 1 >= self._max_retries:
-                    return response
-                delay = _parse_retry_after(response.headers.get("retry-after"))
-                if delay is None:
-                    delay = _backoff_seconds(attempt)
-                await asyncio.sleep(delay)
-                continue
-            return response
-        if last_exc is not None:
-            raise last_exc
-        raise RuntimeError("sandbox guardrail POST exhausted retries without a response")
+        return await httpx_with_gateway_retries(
+            lambda: self._client.post(url, headers=headers, json=payload),
+            max_retries=self._max_retries,
+        )
 
     async def bootstrap_sandbox(
         self,
