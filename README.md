@@ -14,15 +14,22 @@ Core SDK:
 pip install paybond-kit
 ```
 
-Optional integrations:
+Optional integrations — install only the extras your runtime needs:
 
 ```bash
 pip install "paybond-kit[langgraph]"
+pip install "paybond-kit[claude-agents]"
 pip install "paybond-kit[mcp]"
 pip install "paybond-kit[langgraph,mcp]"
 ```
 
-Install only the extras your runtime needs. The `langgraph` extra enables the LangGraph tool wrapper, and `mcp` enables the `paybond-mcp-server` CLI. Runtime-neutral guard helpers are included in the core package.
+| Extra | Enables |
+| --- | --- |
+| `langgraph` | LangGraph tool wrapper and `agent demo langgraph smoke` |
+| `claude-agents` | Claude Agent SDK in-process MCP helpers and `agent demo claude-agents smoke` |
+| `mcp` | `paybond-mcp-server` CLI |
+
+Runtime-neutral guard helpers, policy files, and `paybond agent sandbox smoke` are included in the core package. Vercel AI and OpenAI Agents sandbox demos are TypeScript-only today.
 
 ## Open source
 
@@ -44,9 +51,39 @@ paybond-kit-login
 
 `paybond-kit-login` writes a sandbox `PAYBOND_API_KEY` to `.env.local` with file mode `0600`, adds the default `.env.local` target to `.gitignore` when needed, and refuses to overwrite an existing key unless `--force` is passed. Custom env-file paths inside a git repo must already be ignored. Live production keys are created by tenant admins in Console and stored in deployment secret managers.
 
+## CLI
+
+The package ships the `paybond` CLI (`paybond`, `paybond-kit-init`, `paybond-kit-login`, `paybond-mcp-server`).
+
+Scaffold a starter project from bundled templates:
+
+```bash
+paybond init --template invoice-agent
+pip install -r requirements.txt
+paybond agent sandbox smoke --policy-file paybond.policy.yaml \
+  --operation saas.provision_seat \
+  --requested-spend-cents 2900 \
+  --evidence-preset cost_and_completion \
+  --result-body '{"status":"completed","cost_cents":2900}' \
+  --format json
+```
+
+End-to-end sandbox smoke (bind + execute + evidence) with no app code:
+
+```bash
+paybond agent sandbox smoke \
+  --operation paid-tool \
+  --requested-spend-cents 100 \
+  --evidence-preset cost_and_completion \
+  --result-body '{"status":"ok","cost_cents":100}' \
+  --format json
+```
+
+`agent sandbox smoke` only requires `paybond-kit`. Framework demo commands load their optional extras on demand.
+
 ## First guardrail scaffold
 
-Use this first when you have a paid tool and want Paybond guardrails in the sandbox:
+Use this when you have a paid tool and want Paybond guardrails in the sandbox:
 
 ```bash
 paybond-kit-init \
@@ -100,46 +137,44 @@ asyncio.run(main())
 Use Paybond Kit when an agent workflow needs delegated spend guardrails, tool-call budget checks, paid API or vendor action approval, evidence, release/refund logic, disputes, or audit-ready receipts.
 
 ```python
+import asyncio
 import os
 
 from paybond_kit import Paybond
 
 
-paybond = await Paybond.open(
-    api_key=os.environ["PAYBOND_API_KEY"],
-    expected_environment="sandbox",
-)
+async def main() -> None:
+    paybond = await Paybond.open(
+        api_key=os.environ["PAYBOND_API_KEY"],
+        expected_environment="sandbox",
+    )
+    try:
+        guardrail = await paybond.guardrails.bootstrap_sandbox(
+            operation="travel.book_hotel",
+            requested_spend_cents=20_000,
+            currency="usd",
+        )
 
-guardrail = await paybond.guardrails.bootstrap_sandbox(
-    operation="travel.book_hotel",
-    requested_spend_cents=20_000,
-    currency="usd",
-)
+        guard = paybond.spend_guard(guardrail.intent_id, guardrail.capability_token)
+        guarded_tool = guard.guard_tool(
+            operation=guardrail.operation,
+            requested_spend_cents=guardrail.requested_spend_cents,
+            handler=book_hotel,
+        )
 
-guard = paybond.spend_guard(guardrail.intent_id, guardrail.capability_token)
-guarded_tool = guard.guard_tool(
-    operation=guardrail.operation,
-    requested_spend_cents=guardrail.requested_spend_cents,
-    handler=book_hotel,
-)
+        result = await guarded_tool({"hotel_id": "hotel_123", "max_price_cents": 20_000})
+        await paybond.guardrails.submit_sandbox_evidence(
+            guardrail.intent_id,
+            {"result": result, "sandbox": True},
+        )
+    finally:
+        await paybond.aclose()
 
-result = await guarded_tool({"hotel_id": "hotel_123", "max_price_cents": 20_000})
-await paybond.guardrails.submit_sandbox_evidence(
-    guardrail.intent_id,
-    {"result": result, "sandbox": True},
-)
+
+asyncio.run(main())
 ```
 
 The `paybond.harbor` and `paybond.guardrails` clients are created by `Paybond.open(...)` and bound to the tenant resolved from the service-account API key. Production integrations read `capability_token` from `paybond.intents.create(...)`, or from `paybond.intents.fund(...)` after an `x402_usdc_base` payment challenge is satisfied.
-
-Scaffold a guardrail integration:
-
-```bash
-paybond-kit-init \
-  --preset paid-tool-guard \
-  --framework provider-agnostic \
-  --out paybond_paid_tool_guard.py
-```
 
 ## What the package includes
 
@@ -153,16 +188,17 @@ Core SDK:
 - Runtime-neutral and framework aliases: `paybond_agent_tool_spend_guard`, `paybond_runtime_neutral_tool_spend_guard`, `paybond_langgraph_tool_spend_guard`, and `paybond_mcp_tool_spend_guard`
 - `paybond_runtime_tool_call_adapter` for agent SDKs and custom runtimes that expose a tool-call object plus an application-owned executor
 
+Agent middleware and CLI:
+
+- `PaybondAgentRun`, tool registry, interceptor, and policy-file binding
+- `paybond init`, `paybond agent run bind`, `paybond agent tool execute`, and `paybond agent sandbox smoke`
+- Optional LangGraph, Claude Agents, and MCP integrations via extras (see table above)
+
 Gateway and trust helpers:
 
 - `GatewaySignalClient` and `ServiceAccountSignalSession` for tenant-scoped Signal reads and signed portfolio artifacts
 - `GatewayFraudClient` and `ServiceAccountFraudSession` for tenant-scoped fraud assessments, review queues, review events, metrics, and release-gate config
 - Protocol-v2 helpers for mandate verification, replay-safe recognition proof verification, receipt reads, and A2A discovery
-
-Optional integrations:
-
-- Optional extra for `langgraph`
-- Optional extra for `mcp` with the tenant-bound `paybond-mcp-server` CLI
 - `paybond-kit-login` for sandbox device approval and local `.env.local` API-key setup
 - `paybond-kit-init` for generating a Paybond guardrail integration helper
 
@@ -179,6 +215,7 @@ Gateway-backed protocol helpers raise `ProtocolHttpError` with parsed `error_cod
 ## What it does not include
 
 - No operator-tier settlement or console workflows
+- No bundled LLM or model runtime — bring your own agent framework and install optional extras when needed
 - No model-provider-specific MCP wrapper; the MCP server is host-agnostic and works with any MCP-compatible runtime
 
 ## Source build
@@ -197,12 +234,14 @@ Use this path when you are editing the package itself or rebuilding the bundled 
 ## Docs
 
 - Long-form docs: https://paybond.ai/docs/kit
+- Agent quickstart: https://paybond.ai/docs/kit/quickstart-agent
 - One-command guardrails: https://paybond.ai/docs/kit/one-command-guardrails
 - Python quickstart: https://paybond.ai/docs/kit/quickstart-python
 - Python SDK reference: https://paybond.ai/docs/kit/sdk-reference-python
 - Agent integrations: https://paybond.ai/docs/kit/agent-integrations
 - MCP server guide: https://paybond.ai/docs/kit/mcp-server
 - Agent runtime tutorial: https://paybond.ai/docs/kit/agent-runtime-tutorial-python
+- Python example projects: https://paybond.ai/docs/kit/examples-python
 - LangGraph patterns: https://paybond.ai/docs/kit/quickstart-python#agent-framework-integrations
 
 ## Release verification
