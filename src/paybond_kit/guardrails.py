@@ -153,7 +153,7 @@ class GatewaySandboxGuardrailsClient:
         }
         if currency is not None:
             payload["currency"] = currency
-        if evidence_schema is not None:
+        if evidence_schema is not None and completion_preset is None:
             payload["evidence_schema"] = dict(evidence_schema)
         if metadata is not None:
             payload["metadata"] = dict(metadata)

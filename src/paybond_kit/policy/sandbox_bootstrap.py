@@ -100,7 +100,7 @@ def policy_sandbox_bootstrap(
         currency = document.intent.budget.get("currency")
 
     evidence_schema = opts.evidence_schema
-    if evidence_schema is None:
+    if evidence_schema is None and not evidence_preset.strip():
         evidence_schema = preset["evidence_schema"]
 
     bootstrap: PaybondRunBindingSandboxBootstrapInput = {
@@ -111,9 +111,14 @@ def policy_sandbox_bootstrap(
         "template_id": preset["harbor_template_id"],
         "parameters": dict(preset["parameters"]),
     }
-    if currency is not None:
+    if (currency is not None):
         bootstrap["currency"] = currency
-    if evidence_schema is not None:
+    if evidence_preset.strip():
+        if opts.evidence_schema is not None:
+            raise PaybondPolicySandboxBootstrapError(
+                "completion_preset and evidence_schema are mutually exclusive for sandbox bootstrap"
+            )
+    elif evidence_schema is not None:
         bootstrap["evidence_schema"] = dict(evidence_schema)
     if opts.metadata is not None:
         bootstrap["metadata"] = dict(opts.metadata)

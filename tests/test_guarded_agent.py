@@ -49,7 +49,7 @@ def test_policy_sandbox_bootstrap_defaults_to_first_side_effecting_tool() -> Non
     assert bootstrap["requested_spend_cents"] == 20000
     assert bootstrap.get("currency") == "usd"
     assert bootstrap.get("completion_preset") == "cost_and_completion"
-    assert bootstrap.get("evidence_schema") == preset["evidence_schema"]
+    assert "evidence_schema" not in bootstrap
     assert bootstrap.get("template_id") == preset["harbor_template_id"]
 
 
