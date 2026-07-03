@@ -189,6 +189,44 @@ async def test_agent_sandbox_smoke_cli(monkeypatch: pytest.MonkeyPatch, tmp_path
 
 
 @pytest.mark.asyncio
+async def test_agent_sandbox_smoke_rejects_policy_file_with_evidence_preset(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    policy_path = tmp_path / "paybond.policy.yaml"
+    policy_path.write_text(
+        "version: 1\nname: travel-agent-v1\ndefault_deny: true\n"
+        "tools:\n  travel.book_hotel:\n    side_effecting: true\n"
+        "    max_spend_cents: 100\n    evidence_preset: cost_and_completion\n",
+        encoding="utf-8",
+    )
+
+    stdout = io.StringIO()
+    code = await run_cli(
+        [
+            "--format",
+            "json",
+            "agent",
+            "sandbox",
+            "smoke",
+            "--policy-file",
+            "paybond.policy.yaml",
+            "--evidence-preset",
+            "cost_and_completion",
+            "--result-body",
+            '{"status":"ok","cost_cents":100}',
+        ],
+        stdout=stdout,
+    )
+    payload = json.loads(stdout.getvalue())
+    assert code == 1
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "cli.usage.conflicting_args"
+    assert "--policy-file or --evidence-preset, not both" in payload["error"]["message"]
+
+
+@pytest.mark.asyncio
 async def test_agent_run_bind_status_execute_validate_flow(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

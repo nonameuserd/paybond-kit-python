@@ -11,7 +11,6 @@ from paybond_kit.agent.guarded_agent import (
     create_guarded_agent,
     create_guarded_agent_runner,
 )
-from paybond_kit.completion_catalog import get_completion_preset
 from paybond_kit.policy import (
     PaybondPolicy,
     PaybondPolicySandboxBootstrapError,
@@ -41,7 +40,6 @@ TRAVEL_POLICY = {
 
 def test_policy_sandbox_bootstrap_defaults_to_first_side_effecting_tool() -> None:
     policy = PaybondPolicy.load(TRAVEL_POLICY)
-    preset = get_completion_preset("cost_and_completion")
     bootstrap = policy.sandbox_bootstrap()
 
     assert bootstrap["kind"] == "sandbox"
@@ -50,7 +48,8 @@ def test_policy_sandbox_bootstrap_defaults_to_first_side_effecting_tool() -> Non
     assert bootstrap.get("currency") == "usd"
     assert bootstrap.get("completion_preset") == "cost_and_completion"
     assert "evidence_schema" not in bootstrap
-    assert bootstrap.get("template_id") == preset["harbor_template_id"]
+    assert "template_id" not in bootstrap
+    assert "parameters" not in bootstrap
 
 
 def test_policy_sandbox_bootstrap_rejects_read_only_policy() -> None:

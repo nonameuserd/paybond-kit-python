@@ -108,11 +108,11 @@ def policy_sandbox_bootstrap(
         "operation": operation,
         "requested_spend_cents": int(requested_spend_cents),
         "completion_preset": evidence_preset,
-        "template_id": preset["harbor_template_id"],
-        "parameters": dict(preset["parameters"]),
     }
     if (currency is not None):
         bootstrap["currency"] = currency
+    # Gateway resolves harbor template + parameters from completion_preset.
+    # completion_preset and template_id are mutually exclusive on bootstrap.
     if evidence_preset.strip():
         if opts.evidence_schema is not None:
             raise PaybondPolicySandboxBootstrapError(
@@ -120,6 +120,8 @@ def policy_sandbox_bootstrap(
             )
     elif evidence_schema is not None:
         bootstrap["evidence_schema"] = dict(evidence_schema)
+        bootstrap["template_id"] = preset["harbor_template_id"]
+        bootstrap["parameters"] = dict(preset["parameters"])
     if opts.metadata is not None:
         bootstrap["metadata"] = dict(opts.metadata)
     if opts.idempotency_key is not None:

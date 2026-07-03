@@ -159,10 +159,10 @@ class GatewaySandboxGuardrailsClient:
             payload["metadata"] = dict(metadata)
         if completion_preset is not None:
             payload["completion_preset"] = completion_preset
-        if template_id is not None:
+        elif template_id is not None:
             payload["template_id"] = template_id
-        if parameters is not None:
-            payload["parameters"] = dict(parameters)
+            if parameters is not None:
+                payload["parameters"] = dict(parameters)
         path = "v1/sandbox/guardrails/bootstrap"
         url = f"{self._base}{path}"
         response = await self._post_json_with_retries(

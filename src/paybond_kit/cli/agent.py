@@ -860,6 +860,14 @@ async def handle_agent_sandbox_smoke(ctx: CliContext, argv: list[str]) -> dict[s
                 category="validation",
             ) from exc
 
+    if resolved_policy_file and (evidence_preset or "").strip():
+        raise _agent_cli_error(
+            "agent sandbox smoke accepts --policy-file or --evidence-preset, not both; "
+            "completion_preset is derived from tool evidence_preset in the policy file",
+            code="cli.usage.conflicting_args",
+            category="usage",
+        )
+
     resolved_operation = (operation or "").strip() or (
         str(solution_smoke_defaults["operation"]) if solution_smoke_defaults else ""
     )
@@ -897,8 +905,6 @@ async def handle_agent_sandbox_smoke(ctx: CliContext, argv: list[str]) -> dict[s
             bind_argv.extend(["--operation", resolved_operation])
         if resolved_spend:
             bind_argv.extend(["--requested-spend-cents", resolved_spend])
-        if resolved_evidence_preset:
-            bind_argv.extend(["--completion-preset", resolved_evidence_preset])
     else:
         bind_argv.extend(
             [

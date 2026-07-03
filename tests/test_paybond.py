@@ -180,6 +180,58 @@ async def test_paybond_guardrails_bootstrap_and_evidence_derive_tenant_from_bear
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_paybond_guardrails_omits_template_id_when_completion_preset_set() -> None:
+    api_key = "paybond_sk_" + "a" * 32 + "_" + "b" * 64
+    intent_id = uuid.uuid4()
+    captured: list[dict[str, object]] = []
+
+    respx.get("https://api.paybond.ai/v1/auth/principal").mock(
+        return_value=httpx.Response(
+            200,
+            json={"tenant_id": "realm-z", "environment": "sandbox"},
+        )
+    )
+
+    def handle_bootstrap(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode())
+        captured.append(body)
+        return httpx.Response(
+            201,
+            json={
+                "tenant_id": "realm-z",
+                "intent_id": str(intent_id),
+                "capability_token": "sandbox-cap-token",
+                "operation": "saas.provision_seat",
+                "requested_spend_cents": 2900,
+                "sandbox_lifecycle_status": "funded",
+            },
+        )
+
+    respx.post("https://api.paybond.ai/v1/sandbox/guardrails/bootstrap").mock(
+        side_effect=handle_bootstrap
+    )
+
+    paybond = await Paybond.open(api_key=api_key, expected_environment="sandbox")
+    try:
+        await paybond.guardrails.bootstrap_sandbox(
+            operation="saas.provision_seat",
+            requested_spend_cents=2900,
+            completion_preset="cost_and_completion",
+            template_id="completion_budget_v1",
+            parameters={"max_spend_cents": 2900},
+        )
+        assert len(captured) == 1
+        payload = captured[0]
+        assert payload.get("completion_preset") == "cost_and_completion"
+        assert "template_id" not in payload
+        assert "parameters" not in payload
+        assert "evidence_schema" not in payload
+    finally:
+        await paybond.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_paybond_guardrails_rejects_tenant_drift() -> None:
     api_key = "paybond_sk_" + "a" * 32 + "_" + "b" * 64
     respx.get("https://api.paybond.ai/v1/auth/principal").mock(

@@ -72,12 +72,12 @@ End-to-end sandbox smoke (bind + execute + evidence) with no app code:
 
 ```bash
 paybond agent sandbox smoke \
-  --operation paid-tool \
-  --requested-spend-cents 100 \
-  --evidence-preset cost_and_completion \
-  --result-body '{"status":"ok","cost_cents":100}' \
+  --policy-file paybond.policy.yaml \
+  --result-body '{"status":"completed","cost_cents":2900}' \
   --format json
 ```
+
+Policy-file bootstrap maps `evidence_preset` to Gateway `completion_preset` only — do not also send `evidence_schema` (`paybond-kit` 0.11.4+). See [Agent policy](https://docs.paybond.ai/kit/agent-policy#sandbox-bootstrap-completion_preset-vs-evidence_schema).
 
 `agent sandbox smoke` only requires `paybond-kit`. Framework demo commands load their optional extras on demand.
 
