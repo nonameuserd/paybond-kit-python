@@ -204,7 +204,6 @@ def run_agent_mcp_checks(
         process.stdin.write(encode_mcp_message(initialize))
         process.stdin.flush()
         init_response = _read_mcp_message(process.stdout, deadline=deadline, raw_buffer=raw_stdout)
-        raw_stdout.extend(process.stdout.read() or b"")
         if init_response.get("error"):
             checks.append(
                 DoctorCheck(
@@ -254,7 +253,6 @@ def run_agent_mcp_checks(
         process.stdin.write(encode_mcp_message(tools_list))
         process.stdin.flush()
         tools_response = _read_mcp_message(process.stdout, deadline=deadline, raw_buffer=raw_stdout)
-        raw_stdout.extend(process.stdout.read() or b"")
         if tools_response.get("error"):
             checks.append(
                 DoctorCheck(

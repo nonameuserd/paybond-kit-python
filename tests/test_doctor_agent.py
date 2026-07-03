@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import io
 import json
+import time
 from pathlib import Path
 
 import pytest
 
+from paybond_kit.cli.doctor_agent import run_agent_mcp_checks
 from paybond_kit.cli.router import run_cli
 
 RAW_KEY = (
@@ -96,3 +98,28 @@ async def test_doctor_agent_runs_mcp_checks(tmp_path: Path, monkeypatch: pytest.
     assert "mcp_tools_list" in names
     assert "mcp_tool_schemas" in names
     assert "mcp_stdout_purity" in names
+
+
+def test_run_agent_mcp_checks_does_not_block_on_open_stdout(tmp_path: Path) -> None:
+    """Regression: blocking stdout.read() hung doctor after MCP initialize succeeded."""
+
+    env_path = tmp_path / ".env.local"
+    env_path.write_text(f"PAYBOND_API_KEY={RAW_KEY}\n", encoding="utf-8")
+
+    start = time.monotonic()
+    checks = run_agent_mcp_checks(
+        env_file=".env.local",
+        cwd=tmp_path,
+        timeout_seconds=15.0,
+    )
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 20.0
+    names = {check.name for check in checks}
+    assert names >= {
+        "mcp_launch",
+        "mcp_initialize",
+        "mcp_tools_list",
+        "mcp_tool_schemas",
+        "mcp_stdout_purity",
+    }
