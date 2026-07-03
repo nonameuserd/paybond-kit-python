@@ -84,6 +84,8 @@ def inspect_wheel(path: Path) -> None:
     if {"langgraph", "mcp"} - extras:
         raise RuntimeError(f"missing extras metadata: expected langgraph/mcp, got {sorted(extras)}")
     requires = metadata.get_all("Requires-Dist", [])
+    if not any(req.startswith("jsonschema") for req in requires):
+        raise RuntimeError("wheel must declare jsonschema runtime dependency")
     for expected in ("langgraph", "langchain-core", "mcp"):
         if not any(req.startswith(expected) for req in requires):
             raise RuntimeError(f"missing wheel dependency metadata for {expected}")
@@ -177,6 +179,53 @@ def smoke_scaffold(python: Path, env: dict[str, str], scratch: Path) -> None:
     )
 
 
+def smoke_completion_evidence_consumer(wheel: Path) -> None:
+    scratch_parent = Path("/private/tmp") if Path("/private/tmp").is_dir() and os.access("/private/tmp", os.W_OK) else None
+    scratch = Path(tempfile.mkdtemp(prefix="paybond-kit-py-consumer-", dir=scratch_parent))
+    try:
+        python = release_python()
+        uv = find_tool("uv")
+        if uv:
+            run(
+                uv,
+                "pip",
+                "install",
+                "--python",
+                str(python),
+                "--target",
+                str(scratch / "site"),
+                str(wheel),
+            )
+        else:
+            run(
+                str(python),
+                "-m",
+                "pip",
+                "install",
+                "--target",
+                str(scratch / "site"),
+                str(wheel),
+            )
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(scratch / "site")
+        run(
+            str(python),
+            "-c",
+            (
+                "from paybond_kit.completion_validate_evidence import validate_completion_evidence\n"
+                "report = validate_completion_evidence("
+                'preset_id="cost_and_completion", canonical_payload={"status": "completed", "cost_cents": 100}'
+                ")\n"
+                "assert report['canonical_schema_ok'], report\n"
+                "from paybond_kit.cli.router import main\n"
+                "print('completion evidence import ok')\n"
+            ),
+            env=env,
+        )
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def smoke_install(wheel: Path) -> None:
     scratch_parent = Path("/private/tmp") if Path("/private/tmp").is_dir() and os.access("/private/tmp", os.W_OK) else None
     scratch = Path(tempfile.mkdtemp(prefix="paybond-kit-py-", dir=scratch_parent))
@@ -240,6 +289,7 @@ def main() -> None:
     inspect_wheel(wheel)
     inspect_sdist(sdist)
     maybe_twine_check(artifacts)
+    smoke_completion_evidence_consumer(wheel)
     smoke_install(wheel)
 
 
