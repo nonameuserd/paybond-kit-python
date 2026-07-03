@@ -24,12 +24,15 @@ def _api_key() -> str:
 
 def test_mcp_settings_loads_local_env_file(tmp_path) -> None:
     env_file = tmp_path / ".env.local"
-    env_file.write_text(f"PAYBOND_API_KEY={_api_key()}\n", encoding="utf-8")
+    env_file.write_text(
+        f"PAYBOND_API_KEY={_api_key()}\nPAYBOND_GATEWAY_BASE_URL=https://gateway.from-file.test\n",
+        encoding="utf-8",
+    )
 
     settings = PaybondMCPSettings.from_env({"PAYBOND_ENV_FILE": str(env_file)})
 
     assert settings.api_key == _api_key()
-    assert settings.gateway_base_url == "https://api.paybond.ai"
+    assert settings.gateway_base_url == "https://gateway.from-file.test"
 
 
 def test_mcp_settings_accepts_registry_gateway_url_alias() -> None:
@@ -954,7 +957,7 @@ def test_mcp_stdio_stdout_contract_is_mcp_pure(tmp_path) -> None:
         }
         process.stdin.write(encode_mcp_message(initialize))
         process.stdin.flush()
-        stdout = process.stdout.read(4096)
+        stdout = process.stdout.readline()
         assert _stdout_is_mcp_pure(stdout)
     finally:
         process.terminate()

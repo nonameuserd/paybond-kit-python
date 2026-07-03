@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
+import logging
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, is_dataclass
 from functools import wraps
@@ -60,6 +62,8 @@ if TYPE_CHECKING:
 DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal"
 DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway"
 DEFAULT_ENV_FILE = ".env.local"
+
+logger = logging.getLogger(__name__)
 
 
 def _read_env_file_value(env_file: str, key: str) -> str:
@@ -164,6 +168,8 @@ class PaybondMCPSettings:
         gateway_base_url = normalize_gateway_base_url(
             values.get("PAYBOND_GATEWAY_URL", "").strip()
             or values.get("PAYBOND_GATEWAY_BASE_URL", "").strip()
+            or _read_env_file_value(env_file, "PAYBOND_GATEWAY_URL")
+            or _read_env_file_value(env_file, "PAYBOND_GATEWAY_BASE_URL")
             or DEFAULT_PAYBOND_GATEWAY_BASE_URL
         )
         principal_path = values.get("PAYBOND_PRINCIPAL_PATH", "").strip() or DEFAULT_PRINCIPAL_PATH
@@ -1178,10 +1184,19 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
 
     @asynccontextmanager
     async def lifespan(_: Any) -> AsyncIterator[None]:
-        await runtime.preload_principal()
+        async def warm_principal() -> None:
+            try:
+                await runtime.preload_principal()
+            except Exception as exc:  # noqa: BLE001 - preload is best-effort during startup
+                logger.warning("Paybond MCP principal preload failed: %s", exc)
+
+        preload_task = asyncio.create_task(warm_principal(), name="paybond-mcp-preload-principal")
         try:
             yield
         finally:
+            preload_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await preload_task
             await runtime.aclose()
 
     server = FastMCP(

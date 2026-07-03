@@ -123,3 +123,54 @@ def test_run_agent_mcp_checks_does_not_block_on_open_stdout(tmp_path: Path) -> N
         "mcp_tool_schemas",
         "mcp_stdout_purity",
     }
+
+
+def test_run_agent_mcp_checks_initialize_succeeds_with_mock_gateway(tmp_path: Path) -> None:
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class PrincipalHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            if self.path == "/v1/auth/principal":
+                body = json.dumps({"tenant_id": "tenant-a", "roles": ["operator"]}).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            self.send_response(404)
+            self.end_headers()
+
+        def log_message(self, *_args: object) -> None:
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), PrincipalHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        env_path = tmp_path / ".env.local"
+        env_path.write_text(
+            "\n".join(
+                [
+                    f"PAYBOND_API_KEY={RAW_KEY}",
+                    f"PAYBOND_GATEWAY_BASE_URL=http://127.0.0.1:{port}",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        checks = run_agent_mcp_checks(
+            env_file=".env.local",
+            cwd=tmp_path,
+            timeout_seconds=10.0,
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+    by_name = {check.name: check for check in checks}
+    assert by_name["mcp_initialize"].ok is True, by_name["mcp_initialize"].message
+    assert by_name["mcp_tools_list"].ok is True, by_name["mcp_tools_list"].message
+    assert by_name["mcp_stdout_purity"].ok is True, by_name["mcp_stdout_purity"].message

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import select
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
@@ -34,39 +36,46 @@ def package_version() -> str:
 
 
 def encode_mcp_message(payload: dict[str, Any]) -> bytes:
-    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    return f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
+    """Encode a JSON-RPC payload for MCP stdio (NDJSON line)."""
+
+    body = json.dumps(payload, separators=(",", ":"))
+    return f"{body}\n".encode("utf-8")
 
 
 def _consume_mcp_messages(raw: bytes) -> tuple[list[dict[str, Any]], bytes]:
     messages: list[dict[str, Any]] = []
     offset = 0
-    while True:
-        header_end = raw.find(b"\r\n\r\n", offset)
-        if header_end < 0:
+    while offset < len(raw):
+        line_end = raw.find(b"\n", offset)
+        if line_end < 0:
             return messages, raw[offset:]
-        header_text = raw[offset:header_end].decode("ascii", errors="replace")
-        content_length = 0
-        for line in header_text.split("\r\n"):
-            if line.lower().startswith("content-length:"):
-                content_length = int(line.split(":", 1)[1].strip())
-        if content_length <= 0:
-            raise RuntimeError("MCP response missing Content-Length")
-        body_start = header_end + 4
-        body_end = body_start + content_length
-        if len(raw) < body_end:
-            return messages, raw[offset:]
-        body = raw[body_start:body_end]
-        parsed = json.loads(body.decode("utf-8"))
+        line = raw[offset:line_end].strip()
+        offset = line_end + 1
+        if not line:
+            continue
+        parsed = json.loads(line.decode("utf-8"))
         if not isinstance(parsed, dict):
             raise RuntimeError("MCP response was not a JSON object")
         messages.append(parsed)
-        offset = body_end
-        if offset >= len(raw):
-            return messages, b""
+    return messages, b""
+
+
+def _drain_stderr_pipe(stream: Any, sink: bytearray, stop: threading.Event) -> None:
+    """Background drain so MCP server stderr cannot deadlock stdio probes."""
+
+    fd = stream.fileno()
+    while not stop.is_set():
+        readable, _, _ = select.select([fd], [], [], 0.2)
+        if not readable:
+            continue
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            break
+        sink.extend(chunk)
 
 
 def _read_mcp_message(stream, *, deadline: float, raw_buffer: bytearray) -> dict[str, Any]:
+    fd = stream.fileno()
     while True:
         messages, remainder = _consume_mcp_messages(bytes(raw_buffer))
         raw_buffer[:] = remainder
@@ -74,7 +83,11 @@ def _read_mcp_message(stream, *, deadline: float, raw_buffer: bytearray) -> dict
             return messages[0]
         if time.monotonic() > deadline:
             raise TimeoutError("timed out waiting for MCP response")
-        chunk = stream.read(1)
+        wait_seconds = max(0.0, min(0.2, deadline - time.monotonic()))
+        readable, _, _ = select.select([fd], [], [], wait_seconds)
+        if not readable:
+            continue
+        chunk = os.read(fd, 4096)
         if not chunk:
             raise RuntimeError("MCP server closed stdout before responding")
         raw_buffer.extend(chunk)
@@ -83,7 +96,7 @@ def _read_mcp_message(stream, *, deadline: float, raw_buffer: bytearray) -> dict
 
 
 def _stdout_is_mcp_pure(raw_stdout: bytes) -> bool:
-    if not raw_stdout:
+    if not raw_stdout.strip():
         return True
     try:
         messages, remainder = _consume_mcp_messages(raw_stdout)
@@ -170,6 +183,7 @@ def run_agent_mcp_checks(
             stderr=subprocess.PIPE,
             cwd=str(cwd),
             env=env,
+            bufsize=0,
         )
         launch_ok = True
         launch_message = f"launched {' '.join(command)}"
@@ -190,6 +204,17 @@ def run_agent_mcp_checks(
     assert process.stdout is not None
     deadline = time.monotonic() + timeout_seconds
     raw_stdout = bytearray()
+    stderr_buffer = bytearray()
+    stderr_stop = threading.Event()
+    stderr_thread: threading.Thread | None = None
+    if process.stderr is not None:
+        stderr_thread = threading.Thread(
+            target=_drain_stderr_pipe,
+            args=(process.stderr, stderr_buffer, stderr_stop),
+            name="paybond-doctor-mcp-stderr",
+            daemon=True,
+        )
+        stderr_thread.start()
     try:
         initialize = {
             "jsonrpc": "2.0",
@@ -305,11 +330,7 @@ def run_agent_mcp_checks(
         )
         return checks
     except Exception as exc:  # noqa: BLE001
-        stderr = ""
-        if process.stderr is not None:
-            readable, _, _ = select.select([process.stderr], [], [], 0)
-            if readable:
-                stderr = process.stderr.read().decode("utf-8", errors="replace").strip()
+        stderr = bytes(stderr_buffer).decode("utf-8", errors="replace").strip()
         detail = f": {stderr}" if stderr else ""
         checks.append(DoctorCheck(name="mcp_initialize", ok=False, message=f"MCP stdio probe failed: {exc}{detail}"))
         checks.extend(
@@ -321,6 +342,9 @@ def run_agent_mcp_checks(
         )
         return checks
     finally:
+        stderr_stop.set()
+        if stderr_thread is not None:
+            stderr_thread.join(timeout=1)
         process.terminate()
         try:
             process.wait(timeout=2)
