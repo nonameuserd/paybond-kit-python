@@ -33,8 +33,14 @@ class _DevTraceHandler(BaseHTTPRequestHandler):
         cwd = getattr(self.server, "cwd", None)
         events = list_dev_trace_events(cwd)
         if parsed_path == "/api/events":
+            has_credentials = getattr(self.server, "has_credentials", None)
+            if has_credentials is None:
+                has_credentials = dev_trace_has_credentials(
+                    cwd=getattr(self.server, "cwd", None),
+                    env_file=getattr(self.server, "env_file", None),
+                )
             payload = json.dumps(
-                {"events": events, "has_credentials": dev_trace_has_credentials()},
+                {"events": events, "has_credentials": has_credentials},
                 indent=2,
             ).encode("utf-8")
             self.send_response(200)
@@ -62,7 +68,16 @@ def start_dev_trace_server(
     port: int = DEV_TRACE_DEFAULT_PORT,
     host: str = "127.0.0.1",
     cwd: str | Path | None = None,
+    env_file: str | None = None,
+    has_credentials: bool | None = None,
 ) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer((host, port), _DevTraceHandler)
-    server.cwd = str(cwd or Path.cwd())
+    resolved_cwd = str(cwd or Path.cwd())
+    server.cwd = resolved_cwd
+    server.env_file = env_file
+    server.has_credentials = (
+        has_credentials
+        if has_credentials is not None
+        else dev_trace_has_credentials(cwd=resolved_cwd, env_file=env_file)
+    )
     return server

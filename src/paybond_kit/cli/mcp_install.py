@@ -36,12 +36,29 @@ class McpInstallPlan:
     tool_policy: McpToolPolicyConfig | None = None
 
 
+def mcp_runtime_available() -> bool:
+    """Return True when the optional MCP SDK dependency is importable in this environment."""
+
+    try:
+        import mcp.server.fastmcp  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def _resolve_colocated_paybond_executable() -> str | None:
+    candidate = Path(sys.executable).resolve().parent / "paybond"
+    if candidate.is_file():
+        return str(candidate)
+    return shutil.which("paybond")
+
+
 def resolve_package_local_mcp_server_command() -> list[str]:
     """Return the installed package's canonical stdio MCP server launch command."""
 
-    entry = shutil.which("paybond-mcp-server")
-    if entry:
-        return [entry]
+    paybond = _resolve_colocated_paybond_executable()
+    if paybond:
+        return [paybond, "mcp", "serve"]
     return [sys.executable, "-m", "paybond_kit.mcp_server"]
 
 

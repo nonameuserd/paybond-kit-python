@@ -5,6 +5,51 @@ from __future__ import annotations
 import json
 from typing import Any
 
+_HARBOR_REJECT_PREFIX = "sandbox guardrail Harbor "
+_HARBOR_GATEWAY_CODES = frozenset({"harbor_evidence_failed", "harbor_create_failed"})
+
+
+def _sandbox_guardrail_phase_from_operation(operation: str) -> str | None:
+  lowered = operation.lower()
+  if "sandbox guardrail evidence" in lowered:
+    return "evidence"
+  if "sandbox guardrail bootstrap" in lowered:
+    return "bootstrap"
+  return None
+
+
+def _sandbox_guardrail_harbor_cloudflare_fallback(operation: str) -> str:
+  phase = _sandbox_guardrail_phase_from_operation(operation) or "request"
+  if phase == "evidence":
+    hint = "check --result-body includes top-level status and cost_cents"
+  else:
+    hint = "check sandbox guardrail bootstrap inputs"
+  return f"sandbox guardrail Harbor {phase} rejected (gateway unavailable; {hint})"
+
+
+def _cloudflare_edge_summary_message(
+    status_code: int,
+    retry_after: int | None,
+) -> str:
+  message = (
+      f"gateway edge error (HTTP {status_code}); "
+      "upstream response was masked by the edge proxy"
+  )
+  if retry_after is not None:
+    message += f". Retry after {retry_after} seconds"
+  return message
+
+
+def _format_cloudflare_cli_message(
+    operation: str,
+    status_code: int,
+    retry_after: int | None,
+) -> str:
+  phase = _sandbox_guardrail_phase_from_operation(operation)
+  if phase is not None:
+    return _sandbox_guardrail_harbor_cloudflare_fallback(operation)
+  return f"{operation}: {_cloudflare_edge_summary_message(status_code, retry_after)}"
+
 
 def summarize_gateway_http_error(
     status_code: int,
@@ -25,24 +70,30 @@ def summarize_gateway_http_error(
 
   if body.get("cloudflare_error") is True:
     retry_after = body.get("retry_after")
-    title = str(body.get("title") or "service temporarily unavailable")
-    if title.lower().startswith("error "):
-      title = title.split(":", 1)[-1].strip() or title
-    message = f"Gateway unavailable (HTTP {status_code}): {title}"
-    details: dict[str, Any] = {"gateway_status": status_code}
-    if isinstance(retry_after, int):
-      message += f". Retry after {retry_after} seconds."
-      details["retry_after"] = retry_after
+    parsed_retry_after = retry_after if isinstance(retry_after, int) else None
+    message = _cloudflare_edge_summary_message(status_code, parsed_retry_after)
+    details: dict[str, Any] = {"gateway_status": status_code, "cloudflare_error": True}
+    if parsed_retry_after is not None:
+      details["retry_after"] = parsed_retry_after
     return message, details
 
   nested = body.get("error")
   if isinstance(nested, dict):
     gateway_code = str(nested.get("code") or "")
     gateway_message = str(nested.get("message") or "")
+    harbor_code = nested.get("harbor_code")
     if gateway_message:
       details = {"gateway_status": status_code}
       if gateway_code:
         details["gateway_code"] = gateway_code
+      if isinstance(harbor_code, str) and harbor_code:
+        details["harbor_code"] = harbor_code
+      if (
+          gateway_message.startswith(_HARBOR_REJECT_PREFIX)
+          or (isinstance(harbor_code, str) and harbor_code)
+          or gateway_code in _HARBOR_GATEWAY_CODES
+      ):
+        details["harbor_rejection"] = True
       return gateway_message, details
 
   flat_message = body.get("message")
@@ -70,11 +121,15 @@ def format_sdk_http_error_message(
     body_text: str,
 ) -> str:
   operation = raw_message.split(" HTTP ", 1)[0].strip() or "Gateway request"
-  summary_message, _ = summarize_gateway_http_error(status_code, body_text)
+  summary_message, details = summarize_gateway_http_error(status_code, body_text)
+  if details.get("harbor_rejection"):
+    return summary_message
+  if details.get("cloudflare_error"):
+    retry_after = details.get("retry_after")
+    parsed_retry_after = retry_after if isinstance(retry_after, int) else None
+    return _format_cloudflare_cli_message(operation, status_code, parsed_retry_after)
   if summary_message == f"Gateway HTTP {status_code}":
     return f"{operation} HTTP {status_code}"
-  if summary_message.startswith("Gateway unavailable"):
-    return f"{operation}: {summary_message}"
   return f"{operation} HTTP {status_code}: {summary_message}"
 
 

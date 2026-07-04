@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+import signal
+import threading
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any
@@ -177,16 +180,48 @@ async def handle_dev_trace(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
             "No PAYBOND_API_KEY configured. Run paybond dev smoke --offline or paybond login, then paybond dev smoke.\n"
         )
 
-    server = start_dev_trace_server(port=port, cwd=ctx.cwd)
+    server = start_dev_trace_server(
+        port=port,
+        cwd=ctx.cwd,
+        env_file=ctx.globals.env_file,
+        has_credentials=credentials["source"] != "missing",
+    )
     trace_url = dev_trace_url(port)
     ctx.stderr.write(f"Paybond dev trace dashboard listening on {trace_url}\n")
     ctx.stderr.write("Press Ctrl+C to stop.\n")
+
+    loop = asyncio.get_running_loop()
+    shutdown_started = False
+
+    def _shutdown_server() -> None:
+        nonlocal shutdown_started
+        if shutdown_started:
+            return
+        shutdown_started = True
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    registered: list[signal.Signals] = []
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _shutdown_server)
+            registered.append(sig)
+        except (NotImplementedError, ValueError, RuntimeError):
+            signal.signal(sig, lambda *_args, _sig=sig: _shutdown_server())
+
     try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
+        await loop.run_in_executor(None, server.serve_forever)
+    except asyncio.CancelledError:
+        _shutdown_server()
+        raise
     finally:
+        for sig in registered:
+            try:
+                loop.remove_signal_handler(sig)
+            except (NotImplementedError, ValueError, RuntimeError):
+                pass
         server.server_close()
+
+    ctx.stderr.write("Trace dashboard stopped.\n")
     return {"trace_url": trace_url, "port": str(port), "events": []}
 
 

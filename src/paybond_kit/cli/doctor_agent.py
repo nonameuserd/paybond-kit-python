@@ -14,6 +14,7 @@ from typing import Any
 from paybond_kit.cli.mcp_install import (
     default_mcp_install_format,
     default_mcp_server_command,
+    mcp_runtime_available,
     parse_mcp_install_host,
 )
 from paybond_kit.mcp_policy import validate_mcp_tool_schema
@@ -164,6 +165,22 @@ def run_agent_mcp_checks(
                 DoctorCheck(name="mcp_tools_list", ok=False, message="skipped (env file missing)"),
                 DoctorCheck(name="mcp_tool_schemas", ok=False, message="skipped (env file missing)"),
                 DoctorCheck(name="mcp_stdout_purity", ok=False, message="skipped (env file missing)"),
+            ]
+        )
+        return checks
+
+    if not mcp_runtime_available():
+        missing_mcp = (
+            'optional MCP dependency missing; install with pip install "paybond-kit[mcp]" '
+            "or pipx install 'paybond-kit[mcp]'"
+        )
+        checks.extend(
+            [
+                DoctorCheck(name="mcp_launch", ok=False, message=missing_mcp),
+                DoctorCheck(name="mcp_initialize", ok=False, message="skipped (MCP dependency missing)"),
+                DoctorCheck(name="mcp_tools_list", ok=False, message="skipped (MCP dependency missing)"),
+                DoctorCheck(name="mcp_tool_schemas", ok=False, message="skipped (MCP dependency missing)"),
+                DoctorCheck(name="mcp_stdout_purity", ok=False, message="skipped (MCP dependency missing)"),
             ]
         )
         return checks

@@ -70,16 +70,45 @@ async def test_httpx_with_gateway_retries_eventually_succeeds(monkeypatch: pytes
 
 
 @pytest.mark.asyncio
-async def test_httpx_with_gateway_retries_skips_cloudflare_edge(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_httpx_with_gateway_retries_retries_cloudflare_edge_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"count": 0}
+
+    async def fake_request() -> httpx.Response:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return httpx.Response(502, text=CLOUDFLARE_502)
+        return httpx.Response(200, text=json.dumps({"ok": True}))
+
+    monkeypatch.setattr(
+        "paybond_kit.gateway_retry.gateway_retry_delay_seconds",
+        lambda _attempt, _header: 0,
+    )
+    monkeypatch.setattr(
+        "paybond_kit.gateway_retry.parse_cloudflare_retry_after_seconds",
+        lambda _body: 0,
+    )
+    response = await httpx_with_gateway_retries(fake_request, max_retries=3)
+    assert response.status_code == 200
+    assert calls["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_httpx_with_gateway_retries_skips_cloudflare_edge_after_one_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = {"count": 0}
 
     async def fake_request() -> httpx.Response:
         calls["count"] += 1
         return httpx.Response(502, text=CLOUDFLARE_502)
 
+    monkeypatch.setattr(
+        "paybond_kit.gateway_retry.parse_cloudflare_retry_after_seconds",
+        lambda _body: 0,
+    )
     response = await httpx_with_gateway_retries(fake_request, max_retries=3)
     assert response.status_code == 502
-    assert calls["count"] == 1
+    assert calls["count"] == 2
 
 
 @pytest.mark.asyncio

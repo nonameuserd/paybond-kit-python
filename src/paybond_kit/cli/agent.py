@@ -1211,6 +1211,17 @@ async def handle_agent_demo_langgraph_smoke(ctx: CliContext, argv: list[str]) ->
         field="--requested-spend-cents",
     )
 
+    from paybond_kit.langgraph_hooks import langgraph_runtime_available
+
+    if not langgraph_runtime_available():
+        raise _agent_cli_error(
+            'agent demo langgraph smoke requires the optional langgraph extra; '
+            'install with pip install "paybond-kit[langgraph]" '
+            "or pipx run 'paybond-kit[langgraph]' agent demo langgraph smoke ...",
+            code="cli.usage.missing_extra",
+            category="usage",
+        )
+
     async def _run(paybond: Paybond, _warnings: list[str]) -> dict[str, Any]:
         from paybond_kit.langgraph_sandbox_demo import run_langgraph_sandbox_demo
 

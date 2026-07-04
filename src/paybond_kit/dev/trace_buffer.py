@@ -112,8 +112,23 @@ def build_dev_startup_banner_lines(port: int = DEV_TRACE_DEFAULT_PORT) -> list[s
     ]
 
 
-def dev_trace_has_credentials() -> bool:
-    return bool((os.environ.get("PAYBOND_API_KEY") or "").strip())
+def dev_trace_has_credentials(
+    *,
+    cwd: str | Path | None = None,
+    env_file: str | None = None,
+) -> bool:
+    if (os.environ.get("PAYBOND_API_KEY") or "").strip():
+        return True
+    from paybond_kit.cli.core import DEFAULT_ENV_FILE, read_env_file_value
+
+    resolved_env_file = (env_file or os.environ.get("PAYBOND_ENV_FILE") or DEFAULT_ENV_FILE).strip()
+    base = Path(cwd) if cwd is not None else Path.cwd()
+    env_path = Path(resolved_env_file) if Path(resolved_env_file).is_absolute() else base / resolved_env_file
+    try:
+        body = env_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return bool(read_env_file_value(body, "PAYBOND_API_KEY"))
 
 
 def append_dev_audit_log(cwd: Path, entry: dict[str, Any]) -> str:

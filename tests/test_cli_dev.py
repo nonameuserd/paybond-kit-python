@@ -4,6 +4,8 @@ import io
 import json
 from pathlib import Path
 
+from typing import Any
+
 import pytest
 
 from paybond_kit.cli.router import run_cli
@@ -152,6 +154,42 @@ async def test_dev_smoke_offline_rejects_production_api_key_from_env_file(
     payload = json.loads(stdout.getvalue())
     assert payload["ok"] is False
     assert payload["error"]["code"] == "cli.dev.offline_production_key"
+
+
+@pytest.mark.asyncio
+async def test_dev_trace_shuts_down_cleanly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    from paybond_kit.cli.core import CliContext, GlobalOptions
+    from paybond_kit.cli import dev as dev_module
+
+    stderr = io.StringIO()
+    ctx = CliContext(
+        globals=GlobalOptions(format="table", env_file=".env.local"),
+        cwd=tmp_path,
+        stdout=io.StringIO(),
+        stderr=stderr,
+    )
+    captured: list[Any] = []
+
+    def _start_ephemeral_server(*, port: int, cwd: str | Path | None = None):
+        server = start_dev_trace_server(port=0, cwd=cwd)
+        captured.append(server)
+        return server
+
+    monkeypatch.setattr(dev_module, "start_dev_trace_server", _start_ephemeral_server)
+
+    task = asyncio.create_task(dev_module.handle_dev_trace(ctx, []))
+    for _ in range(100):
+        if captured:
+            break
+        await asyncio.sleep(0.02)
+    assert captured, "expected dev trace server to start"
+    captured[0].shutdown()
+    result = await task
+
+    assert result["events"] == []
+    assert "Trace dashboard stopped." in stderr.getvalue()
 
 
 def test_dev_trace_server_serves_buffered_events() -> None:

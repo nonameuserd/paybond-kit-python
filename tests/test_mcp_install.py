@@ -27,14 +27,17 @@ def test_json_payload_references_env_file_not_raw_key() -> None:
     assert "PAYBOND_API_KEY" not in server["env"]
 
 
-def test_package_local_server_command_uses_installed_entry_or_module() -> None:
+def test_package_local_server_command_uses_colocated_paybond_or_module() -> None:
     command = resolve_package_local_mcp_server_command()
     assert command
-    if command[0].endswith("paybond-mcp-server"):
-        assert len(command) == 1
-    else:
-        assert command[0] == sys.executable
+    paybond = Path(sys.executable).resolve().parent / "paybond"
+    if paybond.is_file():
+        assert command == [str(paybond), "mcp", "serve"]
+    elif command[0] == sys.executable:
         assert command[1:] == ["-m", "paybond_kit.mcp_server"]
+    else:
+        assert command[-2:] == ["mcp", "serve"]
+        assert command[0].endswith("paybond")
 
 
 def test_codex_defaults_to_toml_format() -> None:

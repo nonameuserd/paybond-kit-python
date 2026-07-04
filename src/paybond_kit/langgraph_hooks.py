@@ -24,6 +24,17 @@ from paybond_kit.spend_guard import (
 SpendResolver = int | Callable[[Any], int]
 
 
+def langgraph_runtime_available() -> bool:
+    """Return True when optional LangGraph dependencies are importable."""
+
+    try:
+        import langchain_core.messages  # noqa: F401
+        import langgraph  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 def _require_tool_message() -> type[Any]:
     try:
         from langchain_core.messages import ToolMessage

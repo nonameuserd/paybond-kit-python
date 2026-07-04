@@ -18,6 +18,7 @@ from paybond_kit.login import mask_api_key
 from paybond_kit.cli.redact import redact_config_value
 
 EXIT_SUCCESS = 0
+EXIT_INTERRUPT = 130
 EXIT_FAILURE = 1
 EXIT_AUTH = 2
 EXIT_FORBIDDEN = 3

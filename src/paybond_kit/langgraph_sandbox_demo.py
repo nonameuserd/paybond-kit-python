@@ -5,12 +5,21 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-from langchain_core.messages import ToolMessage
-from langchain_core.tools import StructuredTool
-
 from paybond_kit import Paybond
 from paybond_kit.agent.registry import create_paybond_tool_registry
-from paybond_kit.langgraph_hooks import paybond_awrap_tool_call
+from paybond_kit.langgraph_hooks import langgraph_runtime_available, paybond_awrap_tool_call
+
+
+def _require_langgraph_demo_deps() -> tuple[type[Any], Any]:
+    if not langgraph_runtime_available():
+        raise ImportError(
+            "langgraph and langchain-core are required for paybond_kit.langgraph_sandbox_demo. "
+            'Install with `pip install "paybond-kit[langgraph]"`.'
+        )
+    from langchain_core.messages import ToolMessage
+    from langchain_core.tools import StructuredTool
+
+    return ToolMessage, StructuredTool
 
 
 def _execute_paid_tool(estimated_price_cents: int) -> dict[str, Any]:
@@ -25,6 +34,7 @@ async def run_langgraph_sandbox_demo(
     evidence_preset: str = "cost_and_completion",
     tool_call_id: str = "langgraph-demo-1",
 ) -> dict[str, Any]:
+    ToolMessage, StructuredTool = _require_langgraph_demo_deps()
     operation = operation.strip()
     evidence_preset = evidence_preset.strip()
     tool_call_id = tool_call_id.strip()

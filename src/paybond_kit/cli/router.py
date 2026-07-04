@@ -9,6 +9,7 @@ from typing import Any
 from paybond_kit.cli import commands
 from paybond_kit.cli.core import (
     EXIT_SUCCESS,
+    EXIT_INTERRUPT,
     CliContext,
     CliError,
     default_globals,
@@ -220,4 +221,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write(f"{alias_warning}\n")
     if commands.mcp_serve_argv_matches(argv):
         return commands.run_mcp_serve_command_sync(argv, stdout=sys.stdout, stderr=sys.stderr)
-    return asyncio.run(run_cli(argv))
+    try:
+        return asyncio.run(run_cli(argv))
+    except KeyboardInterrupt:
+        return EXIT_INTERRUPT

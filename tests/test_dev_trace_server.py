@@ -4,7 +4,7 @@ import json
 import threading
 import urllib.request
 
-from paybond_kit.dev.trace_buffer import record_smoke_trace_event
+from paybond_kit.dev.trace_buffer import dev_trace_has_credentials, record_smoke_trace_event
 from paybond_kit.dev.trace_security_headers import DEV_TRACE_SECURITY_HEADERS
 from paybond_kit.dev.trace_server import start_dev_trace_server
 from paybond_kit.dev.trace_ui import load_dev_trace_dashboard_html
@@ -55,6 +55,34 @@ def test_dev_trace_server_serves_dashboard_and_events() -> None:
         assert payload["events"][-1]["operation"] == "travel.book_hotel"
         assert any(step["phase"] == "authorize" for step in payload["events"][-1]["steps"])
         assert "has_credentials" in payload
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_dev_trace_has_credentials_reads_env_file(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("PAYBOND_API_KEY", raising=False)
+    env_path = tmp_path / ".env.local"
+    env_path.write_text("PAYBOND_API_KEY=sk_test_from_file\n", encoding="utf-8")
+    assert dev_trace_has_credentials(cwd=tmp_path, env_file=".env.local") is True
+
+
+def test_dev_trace_server_reports_env_file_credentials(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("PAYBOND_API_KEY", raising=False)
+    env_path = tmp_path / ".env.local"
+    env_path.write_text("PAYBOND_API_KEY=sk_test_from_file\n", encoding="utf-8")
+
+    server = start_dev_trace_server(port=0, cwd=tmp_path, env_file=".env.local")
+    host, port, *_ = server.server_address
+    assert isinstance(port, int)
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}/api/events", timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        assert payload["has_credentials"] is True
     finally:
         server.shutdown()
         server.server_close()

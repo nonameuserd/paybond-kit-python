@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 
 RETRYABLE_HTTP_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+CLOUDFLARE_EDGE_MAX_RETRY_DELAY_SECONDS = 8.0
 
 
 def is_cloudflare_edge_error_body(body_text: str) -> bool:
@@ -23,6 +24,25 @@ def is_cloudflare_edge_error_body(body_text: str) -> bool:
     except json.JSONDecodeError:
         return False
     return isinstance(body, dict) and body.get("cloudflare_error") is True
+
+
+def parse_cloudflare_retry_after_seconds(body_text: str) -> float | None:
+    """Read retry_after from a Cloudflare edge JSON body, capped for CLI responsiveness."""
+    if not is_cloudflare_edge_error_body(body_text):
+        return None
+    try:
+        body = json.loads(body_text.strip())
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(body, dict):
+        return None
+    raw = body.get("retry_after")
+    if isinstance(raw, bool) or raw is None:
+        return None
+    try:
+        return min(float(raw), CLOUDFLARE_EDGE_MAX_RETRY_DELAY_SECONDS)
+    except (TypeError, ValueError):
+        return None
 
 
 def should_retry_gateway_http_status(status: int, body_text: str) -> bool:
@@ -79,6 +99,7 @@ async def httpx_with_gateway_retries(
     otherwise re-raises the last transport error.
     """
     last_exc: BaseException | None = None
+    cloudflare_retries = 0
     for attempt in range(max_retries):
         try:
             response = await request()
@@ -90,6 +111,15 @@ async def httpx_with_gateway_retries(
             continue
 
         if response.status_code in RETRYABLE_HTTP_STATUS_CODES and attempt + 1 < max_retries:
+            if is_cloudflare_edge_error_body(response.text):
+                if cloudflare_retries >= 1:
+                    return response
+                cloudflare_retries += 1
+                await asyncio.sleep(
+                    parse_cloudflare_retry_after_seconds(response.text)
+                    or gateway_retry_delay_seconds(attempt, response.headers.get("retry-after"))
+                )
+                continue
             if not should_retry_gateway_response(response):
                 return response
             await asyncio.sleep(
