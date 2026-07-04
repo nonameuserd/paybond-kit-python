@@ -172,7 +172,14 @@ async def test_dev_trace_shuts_down_cleanly(tmp_path: Path, monkeypatch: pytest.
     )
     captured: list[Any] = []
 
-    def _start_ephemeral_server(*, port: int, cwd: str | Path | None = None):
+    def _start_ephemeral_server(
+        *,
+        port: int,
+        cwd: str | Path | None = None,
+        env_file: str | None = None,
+        has_credentials: bool = False,
+    ):
+        del env_file, has_credentials
         server = start_dev_trace_server(port=0, cwd=cwd)
         captured.append(server)
         return server
