@@ -11,6 +11,7 @@ from typing import Any, Callable, Literal, TypedDict
 
 TemplateId = Literal[
     "travel-agent",
+    "mastra-travel-agent",
     "vercel-shopping-agent",
     "openai-agents-demo",
     "openai-shopping-agent",
@@ -18,12 +19,15 @@ TemplateId = Literal[
     "mcp-coding-agent",
     "procurement-agent",
     "invoice-agent",
+    "crewai-procurement-agent",
     "aws-operator",
 ]
 
 TEMPLATE_ALIASES: dict[str, TemplateId] = {
     "travel-agent": "travel-agent",
     "paybond-travel-agent": "travel-agent",
+    "mastra-travel-agent": "mastra-travel-agent",
+    "paybond-mastra-travel-agent": "mastra-travel-agent",
     "vercel-shopping-agent": "vercel-shopping-agent",
     "paybond-vercel-shopping-agent": "vercel-shopping-agent",
     "openai-agents-demo": "openai-agents-demo",
@@ -37,6 +41,8 @@ TEMPLATE_ALIASES: dict[str, TemplateId] = {
     "paybond-procurement-agent": "procurement-agent",
     "invoice-agent": "invoice-agent",
     "paybond-invoice-agent": "invoice-agent",
+    "crewai-procurement-agent": "crewai-procurement-agent",
+    "paybond-crewai-procurement-agent": "crewai-procurement-agent",
     "aws-operator": "aws-operator",
     "paybond-aws-operator": "aws-operator",
 }
@@ -70,6 +76,7 @@ TEMPLATE_FRAMEWORK_ALIASES = {
     "claude": "claude-agents",
     "claude-agents": "claude-agents",
     "mcp": "mcp",
+    "mastra": "mastra",
 }
 
 
@@ -221,8 +228,8 @@ def template_init_usage() -> str:
             "       paybond init [--solution ...] [--framework ...]  (wizard scaffold)",
             "",
             "Templates:",
-            "  travel-agent, vercel-shopping-agent, openai-agents-demo, openai-shopping-agent,",
-            "  claude-agents-demo, mcp-coding-agent, procurement-agent, invoice-agent, aws-operator",
+            "  travel-agent, mastra-travel-agent, vercel-shopping-agent, openai-agents-demo, openai-shopping-agent,",
+            "  claude-agents-demo, mcp-coding-agent, procurement-agent, invoice-agent, crewai-procurement-agent, aws-operator",
             "",
             "Examples:",
             "  paybond init --template travel-agent --framework langgraph",

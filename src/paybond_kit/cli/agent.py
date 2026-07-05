@@ -7,6 +7,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from paybond_kit.agent.interceptor import PaybondAutoEvidenceSubmitError
 from paybond_kit.agent.registry import create_paybond_tool_registry
@@ -63,6 +64,7 @@ from paybond_kit.cli.core import (
     consume_flag,
     parse_optional_non_negative_int,
     parse_required_non_negative_int,
+    resolve_api_key,
 )
 from paybond_kit.spend_guard import PaybondSpendApprovalRequiredError, PaybondSpendDeniedError
 
@@ -418,7 +420,7 @@ async def handle_agent_run_bind(ctx: CliContext, argv: list[str]) -> dict[str, A
             registry = build_smoke_registry(operation, preset)
             default_deny = True
         elif (operation or "").strip() and not registry_file:
-            resolved_operation = operation.strip()
+            resolved_operation = (operation or "").strip()
             attach_smoke_completion_preset = (completion_preset or "cost_and_completion").strip()
             registry = build_smoke_registry(resolved_operation, attach_smoke_completion_preset)
             default_deny = True
@@ -1017,6 +1019,14 @@ async def handle_agent_harbor_evidence_smoke(ctx: CliContext, argv: list[str]) -
             code="cli.usage.missing_args",
             category="usage",
         )
+    try:
+        resolved_intent_uuid = UUID(resolved_intent_id)
+    except ValueError as exc:
+        raise _agent_cli_error(
+            "agent harbor evidence smoke requires --intent-id to be a valid UUID",
+            code="cli.usage.invalid_args",
+            category="usage",
+        ) from exc
 
     payload, _ = _parse_inline_json(argv, "--result-body", "--result-file")
     if not payload:
@@ -1039,22 +1049,22 @@ async def handle_agent_harbor_evidence_smoke(ctx: CliContext, argv: list[str]) -
         submitted_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         wire = sign_payee_evidence_binding(
             tenant_id=tenant_id,
-            intent_id=resolved_intent_id,
-            payee_did=production_evidence.payee_did,
+            intent_id=resolved_intent_uuid,
+            payee_did=production_evidence["payee_did"],
             payload=dict(payload),
             artifacts_blake3_hex=[],
             submitted_at_rfc3339=submitted_at,
-            payee_signing_seed=production_evidence.payee_signing_seed,
+            payee_signing_seed=production_evidence["payee_signing_seed"],
         )
         recognition_proof = sign_harbor_evidence_submit_recognition_proof(
             tenant_id=tenant_id,
             intent_id=resolved_intent_id,
             evidence_body=wire,
-            key_id=production_evidence.agent_recognition_key_id,
-            signing_seed=production_evidence.agent_recognition_signing_seed,
+            key_id=production_evidence["agent_recognition_key_id"],
+            signing_seed=production_evidence["agent_recognition_signing_seed"],
         )
         evidence = await paybond.harbor.submit_evidence(
-            resolved_intent_id,
+            resolved_intent_uuid,
             wire,
             recognition_proof=recognition_proof,
             idempotency_key=(idempotency_key or "").strip() or None,
@@ -1120,6 +1130,13 @@ async def handle_agent_production_attach_smoke(ctx: CliContext, argv: list[str])
             category="usage",
         )
 
+    stripped_spend_raw = (spend_raw or "").strip()
+    stripped_policy_file = (policy_file or "").strip()
+    stripped_payee_did = (payee_did or "").strip()
+    stripped_payee_seed = (payee_seed or "").strip()
+    stripped_recognition_key_id = (recognition_key_id or "").strip()
+    stripped_recognition_seed = (recognition_seed or "").strip()
+
     bind_argv = [
         "--production",
         "--attach-intent-id",
@@ -1129,18 +1146,18 @@ async def handle_agent_production_attach_smoke(ctx: CliContext, argv: list[str])
         "--operation",
         resolved_operation,
     ]
-    if (spend_raw or "").strip():
-        bind_argv.extend(["--requested-spend-cents", spend_raw.strip()])
-    if (policy_file or "").strip():
-        bind_argv.extend(["--policy-file", policy_file.strip()])
-    if (payee_did or "").strip():
-        bind_argv.extend(["--payee-did", payee_did.strip()])
-    if (payee_seed or "").strip():
-        bind_argv.extend(["--payee-signing-seed-hex", payee_seed.strip()])
-    if (recognition_key_id or "").strip():
-        bind_argv.extend(["--agent-recognition-key-id", recognition_key_id.strip()])
-    if (recognition_seed or "").strip():
-        bind_argv.extend(["--agent-recognition-signing-seed-hex", recognition_seed.strip()])
+    if stripped_spend_raw:
+        bind_argv.extend(["--requested-spend-cents", stripped_spend_raw])
+    if stripped_policy_file:
+        bind_argv.extend(["--policy-file", stripped_policy_file])
+    if stripped_payee_did:
+        bind_argv.extend(["--payee-did", stripped_payee_did])
+    if stripped_payee_seed:
+        bind_argv.extend(["--payee-signing-seed-hex", stripped_payee_seed])
+    if stripped_recognition_key_id:
+        bind_argv.extend(["--agent-recognition-key-id", stripped_recognition_key_id])
+    if stripped_recognition_seed:
+        bind_argv.extend(["--agent-recognition-signing-seed-hex", stripped_recognition_seed])
 
     bind_data = await handle_agent_run_bind(ctx, bind_argv)
     run_id = str(bind_data["run_id"])
@@ -1159,12 +1176,12 @@ async def handle_agent_production_attach_smoke(ctx: CliContext, argv: list[str])
     bind_spend = stored_for_execute.get("requested_spend_cents")
     if bind_spend is not None:
         execute_argv.extend(["--requested-spend-cents", str(bind_spend)])
-    elif (spend_raw or "").strip():
-        execute_argv.extend(["--requested-spend-cents", spend_raw.strip()])
-    if (payee_seed or "").strip():
-        execute_argv.extend(["--payee-signing-seed-hex", payee_seed.strip()])
-    if (recognition_seed or "").strip():
-        execute_argv.extend(["--agent-recognition-signing-seed-hex", recognition_seed.strip()])
+    elif stripped_spend_raw:
+        execute_argv.extend(["--requested-spend-cents", stripped_spend_raw])
+    if stripped_payee_seed:
+        execute_argv.extend(["--payee-signing-seed-hex", stripped_payee_seed])
+    if stripped_recognition_seed:
+        execute_argv.extend(["--agent-recognition-signing-seed-hex", stripped_recognition_seed])
 
     try:
         execute_data = await handle_agent_tool_execute(ctx, execute_argv)
@@ -1211,13 +1228,16 @@ async def handle_agent_demo_langgraph_smoke(ctx: CliContext, argv: list[str]) ->
         field="--requested-spend-cents",
     )
 
+    from paybond_kit.cli.install_hints import format_missing_extra_message
     from paybond_kit.langgraph_hooks import langgraph_runtime_available
 
     if not langgraph_runtime_available():
         raise _agent_cli_error(
-            'agent demo langgraph smoke requires the optional langgraph extra; '
-            'install with pip install "paybond-kit[langgraph]" '
-            "or pipx run 'paybond-kit[langgraph]' agent demo langgraph smoke ...",
+            format_missing_extra_message(
+                command="agent demo langgraph smoke",
+                extra_id="langgraph",
+                inject_packages=("langgraph", "langchain-core"),
+            ),
             code="cli.usage.missing_extra",
             category="usage",
         )
@@ -1338,6 +1358,20 @@ async def handle_agent_demo_claude_agents_smoke(ctx: CliContext, argv: list[str]
         field="--requested-spend-cents",
     )
 
+    from paybond_kit.claude_agents.config import claude_agents_runtime_available
+    from paybond_kit.cli.install_hints import format_missing_extra_message
+
+    if not claude_agents_runtime_available():
+        raise _agent_cli_error(
+            format_missing_extra_message(
+                command="agent demo claude-agents smoke",
+                extra_id="claude-agents",
+                inject_packages=("claude-agent-sdk",),
+            ),
+            code="cli.usage.missing_extra",
+            category="usage",
+        )
+
     async def _run(paybond: Paybond, _warnings: list[str]) -> dict[str, Any]:
         from paybond_kit.claude_agents_sandbox_demo import run_claude_agents_sandbox_demo
 
@@ -1362,6 +1396,220 @@ async def handle_agent_demo_claude_agents_smoke(ctx: CliContext, argv: list[str]
                 "Claude Agents sandbox demo did not produce a paid tool result",
                 code="cli.agent.tool_execute_failed",
                 details={"allowed_tools": demo.get("allowed_tools")},
+            )
+
+        return demo
+
+    return await with_paybond_agent_cli(ctx, production, _run)
+
+
+async def handle_agent_demo_crewai_smoke(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+    production, argv = consume_boolean_flag(argv, "--production")
+    _, runtime_flag, argv = consume_flag(argv, "--runtime")
+    _, operation_flag, argv = consume_flag(argv, "--operation")
+    _, spend_flag, argv = consume_flag(argv, "--requested-spend-cents")
+    _, preset_flag, _ = consume_flag(argv, "--evidence-preset")
+    if not operation_flag or not spend_flag or not preset_flag:
+        raise _agent_cli_error(
+            "agent demo crewai smoke requires --operation, --requested-spend-cents, and --evidence-preset",
+            code="cli.usage.missing_args",
+            category="usage",
+        )
+
+    runtime = (runtime_flag or "python").strip().lower()
+    if runtime != "python":
+        raise _agent_cli_error(
+            f"agent demo crewai smoke --runtime {runtime} is not supported in the Python CLI; CrewAI is Python-only",
+            code="cli.usage.unsupported_runtime",
+            category="usage",
+        )
+
+    requested_spend_cents = parse_required_non_negative_int(
+        spend_flag,
+        field="--requested-spend-cents",
+    )
+
+    from paybond_kit.cli.install_hints import format_missing_extra_message
+    from paybond_kit.crewai._peer import crewai_runtime_available
+
+    if not crewai_runtime_available():
+        raise _agent_cli_error(
+            format_missing_extra_message(
+                command="agent demo crewai smoke",
+                extra_id="crewai",
+                inject_packages=("crewai",),
+            ),
+            code="cli.usage.missing_extra",
+            category="usage",
+        )
+
+    async def _run(paybond: Paybond, _warnings: list[str]) -> dict[str, Any]:
+        from paybond_kit.crewai.sandbox_demo import run_crewai_sandbox_demo
+
+        demo = await run_crewai_sandbox_demo(
+            paybond,
+            operation=operation_flag,
+            requested_spend_cents=requested_spend_cents,
+            evidence_preset=preset_flag,
+        )
+
+        if not demo.get("evidence", {}).get("submitted"):
+            raise _agent_cli_error(
+                "CrewAI sandbox demo did not submit evidence",
+                code="cli.agent.evidence_failed",
+                exit_code=5,
+                category="gateway",
+                details={"tool_result": demo.get("tool_result")},
+            )
+
+        if not demo.get("authorization", {}).get("allow"):
+            raise _agent_cli_error(
+                "CrewAI sandbox demo authorization was denied",
+                code="cli.agent.authorization_denied",
+                details={"tool_result": demo.get("tool_result")},
+            )
+
+        return demo
+
+    return await with_paybond_agent_cli(ctx, production, _run)
+
+
+async def handle_agent_demo_openai_agents_smoke(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+    production, argv = consume_boolean_flag(argv, "--production")
+    _, runtime_flag, argv = consume_flag(argv, "--runtime")
+    _, operation_flag, argv = consume_flag(argv, "--operation")
+    _, spend_flag, argv = consume_flag(argv, "--requested-spend-cents")
+    _, preset_flag, _ = consume_flag(argv, "--evidence-preset")
+    if not operation_flag or not spend_flag or not preset_flag:
+        raise _agent_cli_error(
+            "agent demo openai-agents smoke requires --operation, --requested-spend-cents, and --evidence-preset",
+            code="cli.usage.missing_args",
+            category="usage",
+        )
+
+    runtime = (runtime_flag or "python").strip().lower()
+    if runtime not in ("python", ""):
+        raise _agent_cli_error(
+            f"agent demo openai-agents smoke --runtime {runtime} is not supported in the Python CLI; use @paybond/kit TypeScript CLI",
+            code="cli.usage.unsupported_runtime",
+            category="usage",
+        )
+
+    requested_spend_cents = parse_required_non_negative_int(
+        spend_flag,
+        field="--requested-spend-cents",
+    )
+
+    from paybond_kit.cli.install_hints import format_missing_extra_message
+    from paybond_kit.openai_agents._peer import openai_agents_runtime_available
+
+    if not openai_agents_runtime_available():
+        raise _agent_cli_error(
+            format_missing_extra_message(
+                command="agent demo openai-agents smoke",
+                extra_id="openai-agents",
+                inject_packages=("openai-agents",),
+            ),
+            code="cli.usage.missing_extra",
+            category="usage",
+        )
+
+    async def _run(paybond: Paybond, _warnings: list[str]) -> dict[str, Any]:
+        from paybond_kit.openai_agents.sandbox_demo import run_openai_agents_sandbox_demo
+
+        demo = await run_openai_agents_sandbox_demo(
+            paybond,
+            operation=operation_flag,
+            requested_spend_cents=requested_spend_cents,
+            evidence_preset=preset_flag,
+        )
+
+        execute = demo.get("execute") or {}
+        evidence = execute.get("evidence") or {}
+        if not evidence.get("submitted"):
+            raise _agent_cli_error(
+                "OpenAI Agents sandbox demo did not submit evidence",
+                code="cli.agent.evidence_failed",
+                exit_code=5,
+                category="gateway",
+                details={"tool_result": execute.get("tool_result")},
+            )
+
+        tool_result = execute.get("tool_result")
+        if not tool_result:
+            raise _agent_cli_error(
+                "OpenAI Agents sandbox demo did not produce a paid tool result",
+                code="cli.agent.tool_failed",
+                details={"guardrail": demo.get("guardrail")},
+            )
+
+        return demo
+
+    return await with_paybond_agent_cli(ctx, production, _run)
+
+
+async def handle_agent_demo_mcp_smoke(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+    production, argv = consume_boolean_flag(argv, "--production")
+    _, operation_flag, argv = consume_flag(argv, "--operation")
+    _, spend_flag, argv = consume_flag(argv, "--requested-spend-cents")
+    _, preset_flag, _ = consume_flag(argv, "--evidence-preset")
+    if not operation_flag or not spend_flag or not preset_flag:
+        raise _agent_cli_error(
+            "agent demo mcp smoke requires --operation, --requested-spend-cents, and --evidence-preset",
+            code="cli.usage.missing_args",
+            category="usage",
+        )
+
+    requested_spend_cents = parse_required_non_negative_int(
+        spend_flag,
+        field="--requested-spend-cents",
+    )
+
+    from paybond_kit.cli.install_hints import format_missing_extra_message
+    from paybond_kit.cli.mcp_install import mcp_runtime_available
+
+    if not mcp_runtime_available():
+        raise _agent_cli_error(
+            format_missing_extra_message(
+                command="agent demo mcp smoke",
+                extra_id="mcp",
+                inject_packages=("mcp",),
+            ),
+            code="cli.usage.missing_extra",
+            category="usage",
+        )
+
+    api_key = resolve_api_key(ctx.globals, ctx.cwd)
+    gateway_base_url = ctx.globals.gateway
+
+    async def _run(paybond: Paybond, _warnings: list[str]) -> dict[str, Any]:
+        from paybond_kit.mcp_sandbox_demo import run_mcp_sandbox_demo
+
+        demo = await run_mcp_sandbox_demo(
+            paybond,
+            api_key=api_key,
+            gateway_base_url=gateway_base_url,
+            operation=operation_flag,
+            requested_spend_cents=requested_spend_cents,
+            evidence_preset=preset_flag,
+        )
+
+        if not demo.get("authorization", {}).get("allow"):
+            raise _agent_cli_error(
+                "MCP sandbox demo authorization did not pass",
+                code="cli.agent.authorization_denied",
+                exit_code=3,
+                category="forbidden",
+                details={"authorization": demo.get("authorization")},
+            )
+
+        if not demo.get("evidence", {}).get("submitted"):
+            raise _agent_cli_error(
+                "MCP sandbox demo did not submit evidence",
+                code="cli.agent.evidence_failed",
+                exit_code=5,
+                category="gateway",
+                details={"tool_result": demo.get("tool_result")},
             )
 
         return demo
@@ -1426,6 +1674,30 @@ async def handle_agent(ctx: CliContext, group: str, subcommand: str, argv: list[
                 category="usage",
             )
         return await handle_agent_demo_claude_agents_smoke(ctx, argv[1:])
+    if group == "demo" and subcommand == "crewai":
+        if not argv or argv[0] != "smoke":
+            raise _agent_cli_error(
+                "agent demo crewai requires smoke subcommand",
+                code="cli.usage.unknown_command",
+                category="usage",
+            )
+        return await handle_agent_demo_crewai_smoke(ctx, argv[1:])
+    if group == "demo" and subcommand == "openai-agents":
+        if not argv or argv[0] != "smoke":
+            raise _agent_cli_error(
+                "agent demo openai-agents requires smoke subcommand",
+                code="cli.usage.unknown_command",
+                category="usage",
+            )
+        return await handle_agent_demo_openai_agents_smoke(ctx, argv[1:])
+    if group == "demo" and subcommand == "mcp":
+        if not argv or argv[0] != "smoke":
+            raise _agent_cli_error(
+                "agent demo mcp requires smoke subcommand",
+                code="cli.usage.unknown_command",
+                category="usage",
+            )
+        return await handle_agent_demo_mcp_smoke(ctx, argv[1:])
     raise _agent_cli_error(
         f"unknown agent subcommand: agent {group} {subcommand}",
         code="cli.usage.unknown_command",

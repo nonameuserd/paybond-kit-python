@@ -23,6 +23,16 @@ class ClaudeAgentsConfig:
     agent_tools: list[Any]
 
 
+def claude_agents_runtime_available() -> bool:
+    """Return True when the optional Claude Agent SDK dependency is importable."""
+
+    try:
+        importlib.import_module("claude_agent_sdk")
+    except ImportError:
+        return False
+    return True
+
+
 def _require_claude_agent_sdk() -> Any:
     try:
         return importlib.import_module("claude_agent_sdk")

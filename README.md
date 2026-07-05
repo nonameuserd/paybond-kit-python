@@ -19,6 +19,8 @@ Optional integrations — install only the extras your runtime needs:
 ```bash
 pip install "paybond-kit[langgraph]"
 pip install "paybond-kit[claude-agents]"
+pip install "paybond-kit[openai-agents]"
+pip install "paybond-kit[crewai]"
 pip install "paybond-kit[mcp]"
 pip install "paybond-kit[langgraph,mcp]"
 ```
@@ -27,9 +29,13 @@ pip install "paybond-kit[langgraph,mcp]"
 | --- | --- |
 | `langgraph` | LangGraph tool wrapper and `agent demo langgraph smoke` |
 | `claude-agents` | Claude Agent SDK in-process MCP helpers and `agent demo claude-agents smoke` |
-| `mcp` | `paybond-mcp-server` CLI |
+| `openai-agents` | OpenAI Agents SDK input guardrails and `agent demo openai-agents smoke` |
+| `crewai` | CrewAI `@tool` / `BaseTool` guards and `agent demo crewai smoke` |
+| `mcp` | `paybond-mcp-server` CLI and `paybond agent demo mcp smoke` |
 
-Runtime-neutral guard helpers, policy files, and `paybond agent sandbox smoke` are included in the core package. Vercel AI and OpenAI Agents sandbox demos are TypeScript-only today.
+**pipx:** quote extras on zsh. Install with `pipx install 'paybond-kit[langgraph]'`. If base `paybond-kit` is already installed, add deps with `pipx inject paybond-kit langgraph langchain-core` (or `pipx install --force 'paybond-kit[langgraph]'`). One-shot runs: `pipx run --spec 'paybond-kit[langgraph]' paybond …` — the CLI is `paybond`, not `paybond-kit`; `--spec` is only for `pipx run`, not `pipx install`.
+
+Runtime-neutral guard helpers, policy files, and `paybond agent sandbox smoke` are included in the core package. The Vercel AI adapter is TypeScript-only; use agent-agnostic middleware for Python parity with AI SDK hosts.
 
 ## Open source
 
@@ -183,7 +189,7 @@ Core SDK:
 - `Paybond.open(...)` for API-key-only, tenant-derived hosted sessions
 - `HarborClient` for capability verification, intent creation, x402 funding, evidence submission, and ledger reads
 - `paybond.signal` and `paybond.fraud` on `Paybond` sessions opened from one service-account API key
-- `PaybondIntents` helpers for principal-side signing, x402 funding, and payee-side signing flows
+- `PaybondIntents` helpers for principal-side signing, x402 funding, payee-side signing flows, and settlement confirmation
 - `PaybondSpendGuard`, `authorize_spend`, and `guard_tool` for spend-named wrappers around capability verification
 - Runtime-neutral and framework aliases: `paybond_agent_tool_spend_guard`, `paybond_runtime_neutral_tool_spend_guard`, `paybond_langgraph_tool_spend_guard`, and `paybond_mcp_tool_spend_guard`
 - `paybond_runtime_tool_call_adapter` for agent SDKs and custom runtimes that expose a tool-call object plus an application-owned executor

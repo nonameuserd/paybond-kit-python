@@ -40,6 +40,42 @@ async def test_paybond_intents_create_rejects_unknown_settlement_rail() -> None:
 
 
 @pytest.mark.asyncio
+async def test_paybond_intents_confirm_settlement_delegates_to_harbor() -> None:
+    intent_id = uuid.uuid4()
+
+    class _ConfirmHarbor:
+        calls: list[tuple[UUID, dict[str, object], dict[str, object]]] = []
+
+        async def confirm_settlement(
+            self,
+            called_intent_id: UUID,
+            body: dict[str, object],
+            *,
+            recognition_proof: dict[str, object],
+            idempotency_key: str | None = None,
+        ) -> dict[str, object]:
+            _ConfirmHarbor.calls.append(
+                (called_intent_id, body, {"recognition_proof": recognition_proof, "idempotency_key": idempotency_key})
+            )
+            return {"intent_id": str(called_intent_id), "state": "released"}
+
+    harbor = cast(HarborClient, _ConfirmHarbor())
+    intents = PaybondIntents(harbor, "tenant-a")
+    result = await intents.confirm_settlement(
+        intent_id,
+        recognition_proof={"version": 1},
+        idempotency_key="settle-key-1",
+    )
+    assert result == {"intent_id": str(intent_id), "state": "released"}
+    assert len(_ConfirmHarbor.calls) == 1
+    called_intent_id, body, options = _ConfirmHarbor.calls[0]
+    assert called_intent_id == intent_id
+    assert body == {}
+    assert options["recognition_proof"] == {"version": 1}
+    assert options["idempotency_key"] == "settle-key-1"
+
+
+@pytest.mark.asyncio
 @respx.mock
 async def test_paybond_open_defaults_to_hosted_gateway_with_api_key_only() -> None:
     intent_id = uuid.uuid4()

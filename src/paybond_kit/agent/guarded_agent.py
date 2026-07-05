@@ -18,6 +18,7 @@ GuardedAgentFramework = Literal[
     "generic",
     "langgraph",
     "claude-agents",
+    "crewai",
     "vercel-ai",
     "openai-agents",
 ]
@@ -47,6 +48,7 @@ class CreateGuardedAgentResult:
     openai_agents_adapter: Any | None = None
     run_config: Mapping[str, Any] | None = None
     claude_agents_config: Any | None = None
+    crewai_config: Any | None = None
 
 
 async def _resolve_policy(source: PaybondPolicyLoadSource | PaybondPolicy) -> PaybondPolicy:
@@ -95,7 +97,7 @@ async def create_guarded_agent(
 ) -> CreateGuardedAgentResult:
     """Load policy, bind a run, and wire framework tools through agent middleware."""
     framework = input_.framework or "generic"
-    if framework in ("vercel-ai", "openai-agents"):
+    if framework == "vercel-ai":
         raise_typescript_only_framework_error(framework)
 
     policy = await _resolve_policy(input_.policy)
@@ -139,6 +141,34 @@ async def create_guarded_agent(
             framework="claude-agents",
             agent_tools=claude_agents_config.agent_tools,
             claude_agents_config=claude_agents_config,
+        )
+
+    if framework == "crewai":
+        from paybond_kit.crewai import create_paybond_crewai_config
+
+        crewai_config = create_paybond_crewai_config(run, input_.tools)
+        return CreateGuardedAgentResult(
+            run=run,
+            policy=policy,
+            registry=registry,
+            framework="crewai",
+            agent_tools=crewai_config.tools,
+            crewai_config=crewai_config,
+        )
+
+    if framework == "openai-agents":
+        from paybond_kit.openai_agents import create_openai_agents_adapter, create_paybond_openai_agents_config
+
+        openai_config = create_paybond_openai_agents_config(run, input_.tools)
+        openai_adapter = create_openai_agents_adapter(run)
+        return CreateGuardedAgentResult(
+            run=run,
+            policy=policy,
+            registry=registry,
+            framework="openai-agents",
+            agent_tools=openai_config.tools,
+            openai_agents_adapter=openai_adapter,
+            run_config=openai_config.run_config,
         )
 
     raise ValueError(f"unsupported guarded agent framework: {framework}")

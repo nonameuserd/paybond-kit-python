@@ -107,7 +107,7 @@ async def _dispatch(ctx: CliContext, command: list[str]) -> tuple[str, dict[str,
     if head == "keys" and second:
         return f"keys {second}", commands.handle_keys(ctx, second, command[2:])
     if head == "intents" and second:
-        return f"intents {second}", commands.handle_intents(ctx, second, command[2:])
+        return f"intents {second}", await commands.handle_intents(ctx, second, command[2:])
     if head == "guardrails" and second:
         return f"guardrails {second}", commands.handle_guardrails(ctx, second, command[2:])
     if head == "spend" and second == "authorize":

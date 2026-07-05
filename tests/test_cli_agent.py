@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -596,4 +597,112 @@ async def test_agent_demo_claude_agents_smoke_cli(
     assert code == 0
     assert payload["data"]["evidence"]["submitted"] is True
     assert payload["data"]["tool_result"] is not None
+    assert payload["data"]["bind"]["intent_id"] == SMOKE_INTENT_ID
+
+
+@pytest.mark.asyncio
+async def test_agent_demo_crewai_smoke_cli_missing_extra(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PAYBOND_API_KEY", SANDBOX_RAW_KEY)
+    install_agent_gateway_mock(monkeypatch)
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with patch("paybond_kit.crewai._peer.crewai_runtime_available", return_value=False):
+        code = await run_cli(
+            [
+                "--format",
+                "json",
+                "agent",
+                "demo",
+                "crewai",
+                "smoke",
+                "--operation",
+                "procurement.submit_po",
+                "--requested-spend-cents",
+                "12000",
+                "--evidence-preset",
+                "cost_and_completion",
+            ],
+            stdout=stdout,
+            stderr=stderr,
+        )
+    assert code != 0
+    output = stdout.getvalue() + stderr.getvalue()
+    assert "crewai" in output
+    assert "paybond-kit[crewai]" in output
+
+
+@pytest.mark.asyncio
+async def test_agent_demo_crewai_smoke_cli(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("crewai")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PAYBOND_API_KEY", SANDBOX_RAW_KEY)
+    install_agent_gateway_mock(monkeypatch)
+
+    stdout = io.StringIO()
+    code = await run_cli(
+        [
+            "--format",
+            "json",
+            "agent",
+            "demo",
+            "crewai",
+            "smoke",
+            "--operation",
+            "procurement.submit_po",
+            "--requested-spend-cents",
+            "12000",
+            "--evidence-preset",
+            "cost_and_completion",
+        ],
+        stdout=stdout,
+    )
+    payload = json.loads(stdout.getvalue())
+    assert code == 0
+    assert payload["data"]["evidence"]["submitted"] is True
+    assert payload["data"]["authorization"]["allow"] is True
+    assert payload["data"]["tool_result"]["cost_cents"] == 12000
+    assert payload["data"]["bind"]["intent_id"] == SMOKE_INTENT_ID
+
+
+@pytest.mark.asyncio
+async def test_agent_demo_mcp_smoke_cli(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("mcp")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PAYBOND_API_KEY", SANDBOX_RAW_KEY)
+    install_agent_gateway_mock(monkeypatch)
+
+    stdout = io.StringIO()
+    code = await run_cli(
+        [
+            "--format",
+            "json",
+            "agent",
+            "demo",
+            "mcp",
+            "smoke",
+            "--operation",
+            "paid-tool",
+            "--requested-spend-cents",
+            "100",
+            "--evidence-preset",
+            "cost_and_completion",
+        ],
+        stdout=stdout,
+    )
+    payload = json.loads(stdout.getvalue())
+    assert code == 0
+    assert payload["data"]["authorization"]["allow"] is True
+    assert payload["data"]["evidence"]["submitted"] is True
+    assert payload["data"]["tool_result"] == {"status": "completed", "cost_cents": 100}
     assert payload["data"]["bind"]["intent_id"] == SMOKE_INTENT_ID

@@ -6,7 +6,6 @@ from typing import Final
 
 TYPESCRIPT_ONLY_FRAMEWORK_DOCS: Final[dict[str, str]] = {
     "vercel-ai": "https://docs.paybond.ai/kit/vercel-ai",
-    "openai-agents": "https://docs.paybond.ai/kit/openai-agents",
 }
 
 

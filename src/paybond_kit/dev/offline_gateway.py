@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
+
+from paybond_kit.dev.x402_fund_mock import X402FundStateMachine
+
+_HARBOR_FUND_PATH = re.compile(r"^/harbor/intents/([^/]+)/fund$")
 
 OFFLINE_DEV_INTENT_ID = "00000000-0000-4000-8000-000000000001"
 OFFLINE_DEV_TENANT_ID = "tenant-dev-offline"
@@ -35,6 +40,16 @@ class _FakeResponse:
         return self._payload
 
 
+def _parse_harbor_fund_intent_id(url: str) -> str | None:
+    try:
+        from urllib.parse import urlparse
+
+        match = _HARBOR_FUND_PATH.match(urlparse(url).path)
+        return match.group(1) if match else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def create_offline_dev_gateway_transport(
     *,
     allow_verify: bool = True,
@@ -44,12 +59,27 @@ def create_offline_dev_gateway_transport(
 
     import httpx
 
+    x402_fund_state = X402FundStateMachine()
+
     class OfflineDevTransport(httpx.AsyncBaseTransport):
         async def handle_async_request(self, request: httpx.Request) -> httpx.Response:  # noqa: N802
             url = str(request.url)
             body: dict[str, Any] = {}
             if request.content:
                 body = json.loads(request.content.decode("utf-8"))
+
+            if request.method.upper() == "POST":
+                harbor_fund_intent_id = _parse_harbor_fund_intent_id(url)
+                if harbor_fund_intent_id is not None:
+                    payment_signature = request.headers.get("payment-signature")
+                    mock = x402_fund_state.next(
+                        harbor_fund_intent_id,
+                        OFFLINE_DEV_TENANT_ID,
+                        payment_signature,
+                    )
+                    if mock is not None:
+                        return httpx.Response(mock.status, json=mock.body, headers=mock.headers)
+                    return httpx.Response(404, json={})
 
             if url.endswith("/v1/auth/principal"):
                 payload = {
@@ -137,10 +167,25 @@ def offline_dev_http_context() -> Any:
 
     import httpx
 
+    x402_fund_state = X402FundStateMachine()
+
     @contextmanager
     def _context() -> Any:
         async def fake_request(self: Any, method: str, url: str, **kwargs: Any) -> _FakeResponse:  # noqa: ARG001
             body: dict[str, Any] = kwargs.get("json") or {}
+            headers: dict[str, str] = kwargs.get("headers") or {}
+            if method.upper() == "POST":
+                harbor_fund_intent_id = _parse_harbor_fund_intent_id(url)
+                if harbor_fund_intent_id is not None:
+                    payment_signature = headers.get("payment-signature")
+                    mock = x402_fund_state.next(
+                        harbor_fund_intent_id,
+                        OFFLINE_DEV_TENANT_ID,
+                        payment_signature,
+                    )
+                    if mock is not None:
+                        return _FakeResponse(mock.body, status_code=mock.status)
+                    return _FakeResponse({}, status_code=404)
             if url.endswith("/v1/auth/principal"):
                 payload = {
                     "tenant_id": OFFLINE_DEV_TENANT_ID,

@@ -82,21 +82,160 @@ async def test_config_list_json_redacts_sensitive_values(tmp_path: Path, monkeyp
 async def test_intents_fund_json_redacts_capability_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PAYBOND_API_KEY", RAW_KEY)
+    monkeypatch.setenv("APP_AGENT_RECOGNITION_KEY_ID", "kid-1")
+    monkeypatch.setenv("APP_AGENT_RECOGNITION_SEED_HEX", "02" * 32)
 
-    def fake_gateway_request(ctx, method, path, payload=None):  # type: ignore[no-untyped-def]
-        assert method == "POST"
-        assert path == "/harbor/intents/intent-1/fund"
-        return {"intent_id": "intent-1", "capability_token": "cap-secret", "state": "funded"}
+    fund_calls: dict[str, object] = {}
 
-    monkeypatch.setattr("paybond_kit.cli.commands.gateway_request", fake_gateway_request)
+    async def fake_with_paybond_cli(ctx, handler):  # type: ignore[no-untyped-def]
+        class FakeHarbor:
+            tenant_id = "tenant-sandbox"
+
+            async def fund_intent(self, intent_id, *, recognition_proof, payment_signature=None, idempotency_key=None):  # type: ignore[no-untyped-def]
+                fund_calls["intent_id"] = intent_id
+                fund_calls["recognition_proof"] = recognition_proof
+                fund_calls["payment_signature"] = payment_signature
+                from paybond_kit.harbor import FundIntentResult
+
+                return FundIntentResult(
+                    status_code=200,
+                    payment_required=None,
+                    payment_response=None,
+                    intent_id=intent_id,
+                    tenant="tenant-sandbox",
+                    state="funded",
+                    settlement_rail="x402_usdc_base",
+                    currency="USD",
+                    amount_cents=100,
+                    funded=True,
+                    capability_token="cap-secret",
+                    funding=None,
+                )
+
+        class FakePaybond:
+            harbor = FakeHarbor()
+
+        return await handler(FakePaybond(), [])
+
+    monkeypatch.setattr("paybond_kit.cli.agent_paybond.with_paybond_cli", fake_with_paybond_cli)
 
     stdout = io.StringIO()
-    code = await run_cli(["--format", "json", "intents", "fund", "intent-1"], stdout=stdout)
+    code = await run_cli(["--format", "json", "intents", "fund", "12345678-1234-5678-1234-567812345678"], stdout=stdout)
     assert code == 0
+    assert fund_calls["recognition_proof"]
     output = stdout.getvalue()
     payload = json.loads(output)
     assert payload["data"]["capability_token"] == "[redacted]"
     assert "cap-secret" not in output
+
+
+@pytest.mark.asyncio
+async def test_intents_fund_body_shim_maps_payment_signature_and_warns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PAYBOND_API_KEY", RAW_KEY)
+    monkeypatch.setenv("APP_AGENT_RECOGNITION_KEY_ID", "kid-1")
+    monkeypatch.setenv("APP_AGENT_RECOGNITION_SEED_HEX", "02" * 32)
+    body_path = tmp_path / "fund.json"
+    body_path.write_text(json.dumps({"payment_signature": "sig-from-body"}), encoding="utf-8")
+
+    fund_calls: dict[str, object] = {}
+
+    async def fake_with_paybond_cli(ctx, handler):  # type: ignore[no-untyped-def]
+        class FakeHarbor:
+            tenant_id = "tenant-sandbox"
+
+            async def fund_intent(self, intent_id, *, recognition_proof, payment_signature=None, idempotency_key=None):  # type: ignore[no-untyped-def]
+                fund_calls["payment_signature"] = payment_signature
+                from paybond_kit.harbor import FundIntentResult
+
+                return FundIntentResult(
+                    status_code=200,
+                    payment_required=None,
+                    payment_response=None,
+                    intent_id=intent_id,
+                    tenant="tenant-sandbox",
+                    state="funded",
+                    settlement_rail="x402_usdc_base",
+                    currency="USD",
+                    amount_cents=100,
+                    funded=True,
+                    capability_token=None,
+                    funding=None,
+                )
+
+        class FakePaybond:
+            harbor = FakeHarbor()
+
+        return await handler(FakePaybond(), [])
+
+    monkeypatch.setattr("paybond_kit.cli.agent_paybond.with_paybond_cli", fake_with_paybond_cli)
+
+    stderr = io.StringIO()
+    stdout = io.StringIO()
+    code = await run_cli(
+        ["--format", "json", "intents", "fund", "12345678-1234-5678-1234-567812345678", "--body", str(body_path)],
+        stdout=stdout,
+        stderr=stderr,
+    )
+    assert code == 0
+    assert fund_calls["payment_signature"] == "sig-from-body"
+    assert "deprecated: intents fund --body; use --payment-signature" in stderr.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_intents_evidence_sends_recognition_proof_via_sdk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PAYBOND_API_KEY", RAW_KEY)
+    monkeypatch.setenv("APP_AGENT_RECOGNITION_KEY_ID", "kid-1")
+    monkeypatch.setenv("APP_AGENT_RECOGNITION_SEED_HEX", "02" * 32)
+    body_path = tmp_path / "evidence.json"
+    body_path.write_text(json.dumps({"status": "ok"}), encoding="utf-8")
+
+    evidence_calls: dict[str, object] = {}
+
+    async def fake_with_paybond_cli(ctx, handler):  # type: ignore[no-untyped-def]
+        class FakeHarbor:
+            tenant_id = "tenant-sandbox"
+
+            async def submit_evidence(self, intent_id, evidence_body, *, recognition_proof, idempotency_key=None):  # type: ignore[no-untyped-def]
+                evidence_calls["intent_id"] = intent_id
+                evidence_calls["evidence_body"] = evidence_body
+                evidence_calls["recognition_proof"] = recognition_proof
+                return {
+                    "intent_id": str(intent_id),
+                    "tenant": "tenant-sandbox",
+                    "state": "evidence_submitted",
+                }
+
+        class FakePaybond:
+            harbor = FakeHarbor()
+
+        return await handler(FakePaybond(), [])
+
+    monkeypatch.setattr("paybond_kit.cli.agent_paybond.with_paybond_cli", fake_with_paybond_cli)
+
+    stdout = io.StringIO()
+    code = await run_cli(
+        [
+            "--format",
+            "json",
+            "intents",
+            "evidence",
+            "12345678-1234-5678-1234-567812345678",
+            "--body",
+            str(body_path),
+        ],
+        stdout=stdout,
+    )
+    assert code == 0
+    assert evidence_calls["recognition_proof"]
+    assert evidence_calls["evidence_body"] == {"status": "ok"}
+    payload = json.loads(stdout.getvalue())
+    assert payload["data"]["state"] == "evidence_submitted"
 
 
 @pytest.mark.asyncio

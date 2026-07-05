@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -227,23 +228,125 @@ async def test_create_guarded_agent_claude_agents_wraps_sdk_tools() -> None:
     bootstrap.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_create_guarded_agent_crewai_wraps_tools() -> None:
+    bootstrap = AsyncMock(
+        return_value=SimpleNamespace(
+            tenant_id="tenant-a",
+            intent_id="intent-sandbox",
+            capability_token="cap-sandbox",
+            operation="procurement.submit_po",
+            requested_spend_cents=12000,
+            sandbox_lifecycle_status="funded",
+        )
+    )
+    host = _make_host(bootstrap=bootstrap)
+
+    @dataclass
+    class MockCrewTool:
+        name: str
+        description: str
+        func: Any
+
+    def submit_po(vendor_id: str, amount_cents: int) -> str:
+        return f'{{"status": "completed", "cost_cents": {amount_cents}}}'
+
+    tools = [
+        MockCrewTool(
+            name="procurement.submit_po",
+            description="Submit PO",
+            func=submit_po,
+        )
+    ]
+
+    with patch("paybond_kit.crewai.config._require_crewai_tools", return_value=MagicMock()):
+        with patch("paybond_kit.crewai.config.is_crewai_base_tool", return_value=False):
+            result = await create_guarded_agent(
+                host,  # type: ignore[arg-type]
+                CreateGuardedAgentInput(
+                    policy={
+                        "version": 1,
+                        "name": "procurement-agent-v1",
+                        "default_deny": True,
+                        "tools": {
+                            "procurement.submit_po": {
+                                "side_effecting": True,
+                                "evidence_preset": "cost_and_completion",
+                            }
+                        },
+                    },
+                    framework="crewai",
+                    tools=tools,
+                ),
+            )
+
+    assert result.framework == "crewai"
+    assert result.crewai_config is not None
+    assert result.agent_tools is result.crewai_config.tools
+    bootstrap.assert_awaited_once()
+
+
 def test_create_guarded_agent_runner_is_alias() -> None:
     assert create_guarded_agent_runner is create_guarded_agent
 
 
 @pytest.mark.asyncio
-async def test_create_guarded_agent_rejects_openai_framework() -> None:
-    host = _make_host()
-
-    with pytest.raises(ValueError, match="https://docs.paybond.ai/kit/openai-agents"):
-        await create_guarded_agent(
-            host,  # type: ignore[arg-type]
-            CreateGuardedAgentInput(
-                policy=TRAVEL_POLICY,
-                framework="openai-agents",
-                tools=[],
-            ),
+async def test_create_guarded_agent_openai_agents_framework() -> None:
+    bootstrap = AsyncMock(
+        return_value=SimpleNamespace(
+            tenant_id="tenant-a",
+            intent_id="intent-sandbox",
+            capability_token="cap-sandbox",
+            operation="travel.book_hotel",
+            requested_spend_cents=20_000,
+            sandbox_lifecycle_status="funded",
         )
+    )
+    host = _make_host(bootstrap=bootstrap)
+
+    @dataclass
+    class MockOpenAITool:
+        name: str
+        description: str
+        params_json_schema: dict[str, Any]
+        on_invoke_tool: Any
+        tool_input_guardrails: list[Any] | None = None
+        needs_approval: bool = False
+
+    async def book_hotel(_ctx: Any, _input_json: str) -> str:
+        return '{"status":"completed","cost_cents":20000}'
+
+    tools = [
+        MockOpenAITool(
+            name="travel.book_hotel",
+            description="Book hotel",
+            params_json_schema={"type": "object", "properties": {}},
+            on_invoke_tool=book_hotel,
+        )
+    ]
+
+    agents = MagicMock()
+    agents.ToolInputGuardrail = MagicMock
+    agents.ToolGuardrailFunctionOutput = MagicMock()
+    agents.RunConfig = MagicMock(side_effect=lambda **kwargs: kwargs)
+    agents.ToolExecutionConfig = MagicMock(side_effect=lambda **kwargs: kwargs)
+
+    with patch("paybond_kit.openai_agents.config._require_openai_agents", return_value=agents):
+        with patch("paybond_kit.openai_agents.config.is_openai_function_tool", return_value=True):
+            result = await create_guarded_agent(
+                host,  # type: ignore[arg-type]
+                CreateGuardedAgentInput(
+                    policy=TRAVEL_POLICY,
+                    framework="openai-agents",
+                    tools=tools,
+                ),
+            )
+
+    assert result.framework == "openai-agents"
+    assert result.openai_agents_adapter is not None
+    assert result.run_config is not None
+    assert result.agent_tools
+    bootstrap.assert_awaited_once()
 
 
 @pytest.mark.asyncio

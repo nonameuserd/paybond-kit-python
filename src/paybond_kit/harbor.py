@@ -635,6 +635,53 @@ class HarborClient:
             )
         return response.json()
 
+    async def confirm_settlement(
+        self,
+        intent_id: UUID,
+        body: dict[str, Any] | None = None,
+        *,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Call ``POST /intents/{intent_id}/settlement/confirm``.
+
+        Confirms the settlement action implied by stored evidence evaluation; does not choose
+        release vs refund.
+        """
+        path = f"intents/{intent_id}/settlement/confirm"
+        url = f"{self._base}{path}"
+        extra: dict[str, str] = {}
+        if idempotency_key is not None and idempotency_key.strip() != "":
+            extra["idempotency-key"] = idempotency_key.strip()
+        auth_hdr = await self._authorization_header()
+        merged = {
+            "content-type": "application/json",
+            "x-tenant-id": self._tenant,
+            **auth_hdr,
+            **extra,
+        }
+        payload = dict(body or {})
+        response = await httpx_with_gateway_retries(
+            lambda: self._client.post(url, headers=merged, json=payload),
+            max_retries=self._max_retries,
+        )
+        if response.status_code >= 400:
+            raise HarborHttpError(
+                f"Harbor settlement confirm HTTP {response.status_code}: {response.text}",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        result = response.json()
+        if not isinstance(result, dict):
+            raise HarborHttpError(
+                "Harbor settlement confirm response was not a JSON object",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        return result
+
     async def get_ledger_tip(self) -> dict[str, Any]:
         """
         Call ``GET /ledger/v1/tip`` for the bound tenant (PAYBOND-007 provenance read contract).
@@ -1187,6 +1234,43 @@ class GatewayHarborClient:
         if not isinstance(payload, dict):
             raise HarborHttpError(
                 "Gateway Harbor evidence response was not a JSON object",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        return payload
+
+    async def confirm_settlement(
+        self,
+        intent_id: UUID,
+        body: dict[str, Any],
+        *,
+        recognition_proof: Mapping[str, Any],
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Recognition-gated Gateway Harbor settlement confirmation."""
+        path = f"harbor/intents/{intent_id}/settlement/confirm"
+        url = f"{self._base}{path}"
+        response = await self._post_json_with_retries(
+            path,
+            body,
+            extra_headers=self._mutation_headers(
+                "confirm_settlement",
+                recognition_proof,
+                idempotency_key=idempotency_key,
+            ),
+        )
+        if response.status_code >= 400:
+            raise HarborHttpError(
+                f"Gateway Harbor settlement confirm HTTP {response.status_code}: {response.text}",
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+            )
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise HarborHttpError(
+                "Gateway Harbor settlement confirm response was not a JSON object",
                 status_code=response.status_code,
                 url=url,
                 body_text=response.text,

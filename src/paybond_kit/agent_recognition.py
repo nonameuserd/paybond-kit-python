@@ -16,7 +16,10 @@ AGENT_RECOGNITION_PROOF_SCHEMA_VERSION = 1
 AGENT_RECOGNITION_PROOF_KIND_V1 = "paybond.agent_recognition_proof_v1"
 AGENT_RECOGNITION_SIGNATURE_ALGORITHM_ED25519 = "ed25519-sha256-json-v1"
 AGENT_RECOGNITION_GATEWAY_VERIFIER_ID = "paybond-gateway"
+AGENT_RECOGNITION_PURPOSE_CREATE = "harbor.intent.create"
+AGENT_RECOGNITION_PURPOSE_FUND = "harbor.intent.fund"
 AGENT_RECOGNITION_PURPOSE_EVIDENCE_SUBMIT = "harbor.intent.evidence.submit"
+AGENT_RECOGNITION_PURPOSE_SETTLEMENT_CONFIRM = "harbor.intent.settlement.confirm"
 AGENT_RECOGNITION_MAX_FRESHNESS = timedelta(minutes=10)
 
 _SCOPE_TOKEN_RE = re.compile(r"^[a-z0-9][a-z0-9._:/-]{0,127}$")
@@ -152,6 +155,44 @@ def sign_agent_recognition_proof_v1(
     }
 
 
+def sign_harbor_create_recognition_proof(
+    *,
+    tenant_id: str,
+    intent_body: Mapping[str, Any],
+    key_id: str,
+    signing_seed: bytes,
+) -> dict[str, Any]:
+    """Build a recognition proof for Gateway ``POST /harbor/intents``."""
+    return sign_agent_recognition_proof_v1(
+        signing_seed,
+        key_id=key_id,
+        purpose=AGENT_RECOGNITION_PURPOSE_CREATE,
+        tenant_id=tenant_id,
+        method="POST",
+        path="/harbor/intents",
+        body=intent_body,
+    )
+
+
+def sign_harbor_fund_recognition_proof(
+    *,
+    tenant_id: str,
+    intent_id: str,
+    key_id: str,
+    signing_seed: bytes,
+) -> dict[str, Any]:
+    """Build a recognition proof for Gateway ``POST /harbor/intents/{intent_id}/fund``."""
+    return sign_agent_recognition_proof_v1(
+        signing_seed,
+        key_id=key_id,
+        purpose=AGENT_RECOGNITION_PURPOSE_FUND,
+        tenant_id=tenant_id,
+        method="POST",
+        path=f"/harbor/intents/{intent_id}/fund",
+        body={},
+    )
+
+
 def sign_harbor_evidence_submit_recognition_proof(
     *,
     tenant_id: str,
@@ -169,4 +210,24 @@ def sign_harbor_evidence_submit_recognition_proof(
         method="POST",
         path=f"/harbor/intents/{intent_id}/evidence",
         body=evidence_body,
+    )
+
+
+def sign_harbor_settlement_confirm_recognition_proof(
+    *,
+    tenant_id: str,
+    intent_id: str,
+    body: Mapping[str, Any] | None = None,
+    key_id: str,
+    signing_seed: bytes,
+) -> dict[str, Any]:
+    """Build a recognition proof for Gateway ``POST /harbor/intents/{intent_id}/settlement/confirm``."""
+    return sign_agent_recognition_proof_v1(
+        signing_seed,
+        key_id=key_id,
+        purpose=AGENT_RECOGNITION_PURPOSE_SETTLEMENT_CONFIRM,
+        tenant_id=tenant_id,
+        method="POST",
+        path=f"/harbor/intents/{intent_id}/settlement/confirm",
+        body=dict(body or {}),
     )

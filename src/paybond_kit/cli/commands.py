@@ -18,7 +18,8 @@ from paybond_kit.cli.automation import (
     partial_results_warning,
     write_atomic_file,
 )
-from paybond_kit.cli.audit_export import audit_verify_result
+from paybond_kit.audit.exports import PaybondAuditExports
+from paybond_kit.audit.verify import verify_audit_bundle_local
 from paybond_kit.cli.core import (
     CliContext,
     CliError,
@@ -42,6 +43,7 @@ from paybond_kit.cli.body import resolve_json_body
 from paybond_kit.cli.redact import redact_config_value, redact_sensitive_fields
 from paybond_kit.cli.doctor_agent import package_version, run_agent_mcp_checks
 from paybond_kit.cli.doctor_agent_middleware import run_agent_middleware_doctor_check
+from paybond_kit.cli.install_hints import run_install_context_doctor_checks
 from paybond_kit.doctor_completion import run_completion_catalog_doctor_checks
 from paybond_kit.cli.support_diagnostics import build_support_diagnostics, format_support_diagnostics_table
 from paybond_kit.init import run_init_guardrail
@@ -442,6 +444,11 @@ async def handle_doctor(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
             checks.append({"name": "principal", "ok": False, "message": exc.message})
 
     if agent:
+        for item in run_install_context_doctor_checks():
+            entry = {"name": item.name, "ok": item.ok, "message": item.message}
+            if item.details:
+                entry["details"] = item.details
+            checks.append(entry)
         if not api_key:
             for name, message in (
                 ("mcp_host_config", "skipped MCP probe (missing API key)"),
@@ -631,7 +638,189 @@ def _redact_intent_response(body: dict[str, Any]) -> dict[str, Any]:
     return redacted if isinstance(redacted, dict) else body
 
 
-def handle_intents(ctx: CliContext, subcommand: str, argv: list[str]) -> dict[str, Any]:
+async def _handle_intents_create(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+    from paybond_kit.agent_recognition import sign_harbor_create_recognition_proof
+    from paybond_kit.cli.agent_paybond import with_paybond_cli
+    from paybond_kit.cli.intents_harbor_mutation import parse_harbor_mutation_flags, resolve_harbor_recognition
+
+    flags = parse_harbor_mutation_flags(argv)
+    payload, _ = resolve_json_body(
+        flags.rest_argv,
+        stdin=ctx.stdin,
+        missing_message="intents create requires --body <json-file> or --stdin",
+    )
+    body = dict(payload or {})
+
+    async def _run(paybond, _warnings: list[str]) -> dict[str, Any]:
+        recognition = resolve_harbor_recognition(
+            ctx,
+            recognition_key_id=flags.recognition_key_id,
+            recognition_seed_hex=flags.recognition_seed_hex,
+        )
+        tenant_id = paybond.harbor.tenant_id
+        recognition_proof = sign_harbor_create_recognition_proof(
+            tenant_id=tenant_id,
+            intent_body=body,
+            key_id=recognition["agent_recognition_key_id"],
+            signing_seed=recognition["agent_recognition_signing_seed"],
+        )
+        result = await paybond.harbor.create_intent(
+            body,
+            recognition_proof=recognition_proof,
+            idempotency_key=(flags.idempotency_key or "").strip() or None,
+        )
+        return _redact_intent_response(result)
+
+    return await with_paybond_cli(ctx, _run)
+
+
+async def _handle_intents_fund(
+    ctx: CliContext,
+    intent_id: str,
+    argv: list[str],
+) -> dict[str, Any]:
+    from uuid import UUID
+
+    from paybond_kit.agent_recognition import sign_harbor_fund_recognition_proof
+    from paybond_kit.cli.agent_paybond import with_paybond_cli
+    from paybond_kit.cli.intents_harbor_mutation import (
+        DEPRECATED_INTENTS_FUND_BODY_WARNING,
+        fund_body_shim_used,
+        parse_harbor_mutation_flags,
+        resolve_fund_payment_signature_from_body,
+        resolve_harbor_recognition,
+    )
+
+    flags = parse_harbor_mutation_flags(argv)
+    _, payment_signature, rest = consume_flag(flags.rest_argv, "--payment-signature")
+    payment_signature = payment_signature.strip() if payment_signature else None
+    body_shim_used = fund_body_shim_used(rest)
+    payload, _ = resolve_json_body(rest, stdin=ctx.stdin, required=False)
+    if body_shim_used:
+        ctx.stderr.write(f"{DEPRECATED_INTENTS_FUND_BODY_WARNING}\n")
+        if not payment_signature:
+            payment_signature = resolve_fund_payment_signature_from_body(payload or {})
+
+    async def _run(paybond, _warnings: list[str]) -> dict[str, Any]:
+        recognition = resolve_harbor_recognition(
+            ctx,
+            recognition_key_id=flags.recognition_key_id,
+            recognition_seed_hex=flags.recognition_seed_hex,
+        )
+        tenant_id = paybond.harbor.tenant_id
+        recognition_proof = sign_harbor_fund_recognition_proof(
+            tenant_id=tenant_id,
+            intent_id=intent_id,
+            key_id=recognition["agent_recognition_key_id"],
+            signing_seed=recognition["agent_recognition_signing_seed"],
+        )
+        result = await paybond.harbor.fund_intent(
+            UUID(intent_id),
+            recognition_proof=recognition_proof,
+            payment_signature=payment_signature,
+            idempotency_key=(flags.idempotency_key or "").strip() or None,
+        )
+        return _redact_fund_intent_response(result)
+
+    return await with_paybond_cli(ctx, _run)
+
+
+def _redact_fund_intent_response(result: Any) -> dict[str, Any]:
+    from dataclasses import asdict, is_dataclass
+
+    if not is_dataclass(result):
+        redacted = redact_sensitive_fields(result)
+        return redacted if isinstance(redacted, dict) else {"value": redacted}
+    payload = asdict(result)
+    if "intent_id" in payload:
+        payload["intent_id"] = str(payload["intent_id"])
+    redacted = redact_sensitive_fields(payload)
+    return redacted if isinstance(redacted, dict) else payload
+
+
+async def _handle_intents_evidence(
+    ctx: CliContext,
+    intent_id: str,
+    argv: list[str],
+) -> dict[str, Any]:
+    from uuid import UUID
+
+    from paybond_kit.agent_recognition import sign_harbor_evidence_submit_recognition_proof
+    from paybond_kit.cli.agent_paybond import with_paybond_cli
+    from paybond_kit.cli.intents_harbor_mutation import parse_harbor_mutation_flags, resolve_harbor_recognition
+
+    flags = parse_harbor_mutation_flags(argv)
+    payload, _ = resolve_json_body(
+        flags.rest_argv,
+        stdin=ctx.stdin,
+        missing_message="intents evidence requires --body <json-file> or --stdin",
+    )
+    body = dict(payload or {})
+
+    async def _run(paybond, _warnings: list[str]) -> dict[str, Any]:
+        recognition = resolve_harbor_recognition(
+            ctx,
+            recognition_key_id=flags.recognition_key_id,
+            recognition_seed_hex=flags.recognition_seed_hex,
+        )
+        tenant_id = paybond.harbor.tenant_id
+        recognition_proof = sign_harbor_evidence_submit_recognition_proof(
+            tenant_id=tenant_id,
+            intent_id=intent_id,
+            evidence_body=body,
+            key_id=recognition["agent_recognition_key_id"],
+            signing_seed=recognition["agent_recognition_signing_seed"],
+        )
+        result = await paybond.harbor.submit_evidence(
+            UUID(intent_id),
+            body,
+            recognition_proof=recognition_proof,
+            idempotency_key=(flags.idempotency_key or "").strip() or None,
+        )
+        return _redact_intent_response(result)
+
+    return await with_paybond_cli(ctx, _run)
+
+
+async def _handle_intents_settlement_confirm(
+    ctx: CliContext,
+    intent_id: str,
+    argv: list[str],
+) -> dict[str, Any]:
+    from paybond_kit.agent_recognition import sign_harbor_settlement_confirm_recognition_proof
+    from paybond_kit.cli.agent_paybond import with_paybond_cli
+    from paybond_kit.cli.intents_harbor_mutation import parse_harbor_mutation_flags, resolve_harbor_recognition
+
+    flags = parse_harbor_mutation_flags(argv)
+    payload, _ = resolve_json_body(flags.rest_argv, stdin=ctx.stdin, required=False)
+    body = dict(payload or {})
+
+    async def _run(paybond, _warnings: list[str]) -> dict[str, Any]:
+        recognition = resolve_harbor_recognition(
+            ctx,
+            recognition_key_id=flags.recognition_key_id,
+            recognition_seed_hex=flags.recognition_seed_hex,
+        )
+        tenant_id = paybond.harbor.tenant_id
+        recognition_proof = sign_harbor_settlement_confirm_recognition_proof(
+            tenant_id=tenant_id,
+            intent_id=intent_id,
+            body=body,
+            key_id=recognition["agent_recognition_key_id"],
+            signing_seed=recognition["agent_recognition_signing_seed"],
+        )
+        result = await paybond.intents.confirm_settlement(
+            intent_id,
+            body=body,
+            recognition_proof=recognition_proof,
+            idempotency_key=(flags.idempotency_key or "").strip() or None,
+        )
+        return _redact_intent_response(result)
+
+    return await with_paybond_cli(ctx, _run)
+
+
+async def handle_intents(ctx: CliContext, subcommand: str, argv: list[str]) -> dict[str, Any]:
     if subcommand == "list":
         _, status, rest = consume_flag(argv, "--status")
         _, limit, rest = consume_flag(rest, "--limit")
@@ -650,29 +839,15 @@ def handle_intents(ctx: CliContext, subcommand: str, argv: list[str]) -> dict[st
             raise CliError("intents get requires <intent_id>", code="cli.usage.missing_intent_id")
         return _redact_intent_response(gateway_request(ctx, "GET", f"/harbor/operator/v1/intents/{intent_id}"))
     if subcommand == "create":
-        payload, _ = resolve_json_body(
-            argv,
-            stdin=ctx.stdin,
-            missing_message="intents create requires --body <json-file> or --stdin",
-        )
-        return _redact_intent_response(gateway_request(ctx, "POST", "/harbor/intents", payload))
+        return await _handle_intents_create(ctx, argv)
     if not intent_id:
         raise CliError(f"intents {subcommand} requires <intent_id>", code="cli.usage.missing_intent_id")
     if subcommand == "fund":
-        payload, _ = resolve_json_body(argv, stdin=ctx.stdin, required=False)
-        return _redact_intent_response(gateway_request(ctx, "POST", f"/harbor/intents/{intent_id}/fund", payload))
+        return await _handle_intents_fund(ctx, intent_id, argv[1:])
     if subcommand == "evidence":
-        payload, _ = resolve_json_body(
-            argv,
-            stdin=ctx.stdin,
-            missing_message="intents evidence requires --body <json-file> or --stdin",
-        )
-        return _redact_intent_response(gateway_request(ctx, "POST", f"/harbor/intents/{intent_id}/evidence", payload))
+        return await _handle_intents_evidence(ctx, intent_id, argv[1:])
     if subcommand == "settlement-confirm":
-        payload, _ = resolve_json_body(argv, stdin=ctx.stdin, required=False)
-        return _redact_intent_response(
-            gateway_request(ctx, "POST", f"/harbor/intents/{intent_id}/settlement/confirm", payload)
-        )
+        return await _handle_intents_settlement_confirm(ctx, intent_id, argv)
     raise CliError(f"unknown intents subcommand: {subcommand}", code="cli.usage.unknown_command")
 
 
@@ -801,16 +976,15 @@ def handle_a2a(ctx: CliContext, subcommand: str, argv: list[str]) -> dict[str, A
     raise CliError(f"unknown a2a subcommand: {subcommand}", code="cli.usage.unknown_command")
 
 
-def _read_manifest_from_bundle(path: str, cwd: Path) -> str:
-    if path.endswith(".zip"):
-        result = subprocess.run(["unzip", "-p", path, "manifest.json"], cwd=str(cwd), capture_output=True, text=True, check=False)
-        if result.returncode != 0 or not result.stdout.strip():
-            raise CliError(result.stderr.strip() or "unable to read manifest.json from ZIP bundle", category="validation", code="cli.audit.bundle_read_failed")
-        return result.stdout
-    manifest_path = Path(path)
-    if manifest_path.name != "manifest.json":
-        manifest_path = manifest_path / "manifest.json"
-    return manifest_path.read_text(encoding="utf-8")
+def _cli_audit_exports_gateway(ctx: CliContext) -> PaybondAuditExports:
+    class _Gateway:
+        async def get_json(self, path: str) -> dict[str, Any]:
+            return gateway_request(ctx, "GET", path)
+
+        async def delete_json(self, path: str) -> dict[str, Any]:
+            return gateway_request(ctx, "DELETE", path)
+
+    return PaybondAuditExports.from_gateway(_Gateway())
 
 
 def handle_audit_exports(ctx: CliContext, subcommand: str, argv: list[str]) -> dict[str, Any]:
@@ -818,33 +992,35 @@ def handle_audit_exports(ctx: CliContext, subcommand: str, argv: list[str]) -> d
         path = argv[0] if argv else ""
         if not path:
             raise CliError("audit exports verify requires <path>", code="cli.usage.missing_path")
-        manifest_raw = _read_manifest_from_bundle(path, ctx.cwd)
-        manifest = json.loads(manifest_raw)
-        if not isinstance(manifest, dict):
-            raise CliError("manifest.json must be a JSON object", category="validation", code="cli.audit.invalid_manifest")
-        return audit_verify_result(manifest, path=path)
+        try:
+            return verify_audit_bundle_local(path, ctx.cwd)
+        except ValueError as exc:
+            raise CliError(str(exc), category="validation", code="cli.audit.invalid_manifest") from exc
+        except RuntimeError as exc:
+            raise CliError(str(exc), category="validation", code="cli.audit.bundle_read_failed") from exc
+    exports = _cli_audit_exports_gateway(ctx)
     if subcommand == "list":
         _, limit, rest = consume_flag(argv, "--limit")
         _, cursor, _ = consume_flag(rest, "--cursor")
-        params = build_list_query_params(limit, cursor, default_limit="50")
-        body = gateway_request(ctx, "GET", f"/v1/compliance/audit-exports?{params}")
-        exports = body.get("jobs") or body.get("items") or body.get("exports") or []
+        page = asyncio.run(
+            exports.list(
+                limit=int(limit) if limit else None,
+                cursor=cursor,
+            )
+        )
         result: dict[str, Any] = {
             "exports": [
                 {
-                    "job_id": str(item.get("job_id") or item.get("id") or ""),
-                    "status": str(item.get("status", "")),
-                    "created_at": str(item.get("created_at", "")),
-                    "expires_at": item.get("expires_at"),
-                    "scope": item.get("scope"),
+                    "job_id": item.id,
+                    "status": item.status,
+                    "created_at": item.created_at,
+                    "expires_at": item.expires_at,
                 }
-                for item in exports
-                if isinstance(item, dict)
+                for item in page.jobs
             ]
         }
-        next_cursor = extract_next_cursor(body)
-        if next_cursor:
-            result["next_cursor"] = next_cursor
+        if page.next_cursor:
+            result["next_cursor"] = page.next_cursor
         return result
     job_id = argv[0] if argv else ""
     if not job_id:
@@ -852,13 +1028,9 @@ def handle_audit_exports(ctx: CliContext, subcommand: str, argv: list[str]) -> d
     if subcommand == "get":
         issue_download = "--issue-download" in argv
         _, output_path, _ = consume_flag(argv[1:], "--output")
-        query = "?issue_download=1" if issue_download else ""
-        body = gateway_request(ctx, "GET", f"/v1/compliance/audit-exports/{job_id}{query}")
+        body = asyncio.run(exports.get(job_id, issue_download=issue_download))
         if output_path:
-            job = body.get("job", body)
-            if not isinstance(job, dict):
-                raise CliError("audit exports get --output requires a ready export with --issue-download", category="validation", code="cli.audit.missing_download_token")
-            token = str(job.get("download_token", ""))
+            token = str(body.job.download_token or "")
             if not token:
                 raise CliError("audit exports get --output requires a ready export with --issue-download", category="validation", code="cli.audit.missing_download_token")
             url = gateway_url(ctx.globals.gateway, f"/v1/compliance/audit-exports/{job_id}/bundle")
@@ -879,9 +1051,8 @@ def handle_audit_exports(ctx: CliContext, subcommand: str, argv: list[str]) -> d
                 if owns_client:
                     client.close()
             return {"job_id": job_id, "output": output_path, "bytes_written": len(content)}
-        return body
+        return {"job": body.job.__dict__}
     if subcommand == "delete":
         require_confirmation(ctx.globals, "delete audit export job")
-        gateway_request(ctx, "DELETE", f"/v1/compliance/audit-exports/{job_id}")
-        return {"job_id": job_id, "deleted": True}
+        return asyncio.run(exports.delete(job_id))
     raise CliError(f"unknown audit exports subcommand: {subcommand}", code="cli.usage.unknown_command")

@@ -20,6 +20,16 @@ class _Annotations:
 def test_readonly_policy_allows_read_only_tools_only() -> None:
     config = parse_mcp_tool_policy("readonly")
     assert tool_allowed_by_policy("paybond_get_principal", _Annotations(readOnlyHint=True), config)
+    assert tool_allowed_by_policy(
+        "paybond_list_audit_exports",
+        _Annotations(readOnlyHint=True),
+        config,
+    )
+    assert tool_allowed_by_policy(
+        "paybond_get_audit_export",
+        _Annotations(readOnlyHint=True),
+        config,
+    )
     assert not tool_allowed_by_policy(
         "paybond_create_spend_intent",
         _Annotations(readOnlyHint=False, destructiveHint=False),

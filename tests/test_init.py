@@ -38,6 +38,8 @@ def test_init_scaffolds_provider_agnostic_guardrail_integration(tmp_path, capsys
             "paybond.spend_guard(guardrail.intent_id, guardrail.capability_token)",
             "paybond.guardrails.submit_sandbox_evidence",
             "Use the guarded handler with OpenAI, Gemini, Claude/Anthropic, local models, or any custom runtime.",
+            "create_with_policy_binding",
+            "Production (signing v7)",
         ),
     )
     body = out.read_text(encoding="utf-8")
@@ -123,6 +125,8 @@ def test_init_scaffolds_agent_middleware_with_registry(tmp_path, capsys) -> None
             "wrap_agent_tools",
             "travel.book_hotel",
             "cost_and_completion",
+            "create_with_policy_binding",
+            "Production (signing v7)",
         ),
     )
     assert "def wrap_paid_tool" not in out.read_text(encoding="utf-8")
@@ -147,6 +151,33 @@ def test_init_scaffolds_agent_middleware_claude_agents_framework(tmp_path) -> No
     assert "create_claude_agents_guarded_runner" in body
     assert "create_guarded_agent_runner" in body
     assert 'framework="claude-agents"' in body
+
+
+def test_init_scaffolds_agent_middleware_crewai_framework(tmp_path) -> None:
+    out = tmp_path / "paybond_crewai.py"
+
+    assert main(["--preset", "agent-middleware", "--framework", "crewai", "--out", str(out)]) == 0
+
+    body = out.read_text(encoding="utf-8")
+    assert "crewai.tools" in body
+    assert "create_paybond_crewai_config" in body
+    assert 'framework="crewai"' in body
+    assert "agent demo crewai smoke" in body
+    assert "Paybond for paid tools" in body
+    assert "paybond.policy.yaml" in body
+
+
+def test_init_scaffolds_agent_middleware_mcp_framework(tmp_path) -> None:
+    out = tmp_path / "paybond_mcp.py"
+
+    assert main(["--preset", "agent-middleware", "--framework", "mcp", "--out", str(out)]) == 0
+
+    body = out.read_text(encoding="utf-8")
+    assert "create_paybond_mcp_tool_surface" in body
+    assert "create_mcp_tool_surface" in body
+    assert "agent demo mcp smoke" in body
+    assert "Paybond for paid tools" in body
+    assert "paybond.policy.yaml" in body
 
 
 def test_init_scaffolds_agent_middleware_openai_framework(tmp_path) -> None:
@@ -182,4 +213,4 @@ def test_init_scaffolds_agent_middleware_vercel_ai_framework(tmp_path) -> None:
 def test_init_rejects_invalid_framework_for_agent_middleware(tmp_path) -> None:
     out = tmp_path / "paybond_agent_middleware.py"
 
-    assert main(["--preset", "agent-middleware", "--framework", "mcp", "--out", str(out)]) == 1
+    assert main(["--preset", "agent-middleware", "--framework", "claude", "--out", str(out)]) == 1

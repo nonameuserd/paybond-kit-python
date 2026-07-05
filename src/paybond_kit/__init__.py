@@ -41,6 +41,7 @@ from paybond_kit.harbor import (
     TenantBindingError,
     VerifyCapabilityResult,
 )
+from paybond_kit.audit.exports import PaybondAudit, PaybondAuditExports
 from paybond_kit.paybond import Paybond, PaybondIntents
 from paybond_kit.protocol import (
     AgentRecognitionProofV1,
@@ -62,6 +63,14 @@ from paybond_kit.signal import (
     SignalReceiptEnvelope,
     SignalSignedPortfolioArtifact,
     SignalSignedReceipt,
+)
+from paybond_kit.x402_funding import (
+    FundRequestEnvelope,
+    PaybondX402FundingFailedError,
+    PaybondX402FundingPendingError,
+    X402FundPollOptions,
+    build_x402_fund_request_envelope,
+    execute_fund_with_x402,
 )
 from paybond_kit.signing import sign_payee_evidence_binding
 from paybond_kit.spend_guard import (
@@ -95,8 +104,16 @@ __all__ = [
     "is_local_gateway_host",
     "normalize_gateway_base_url",
     "Paybond",
+    "PaybondAudit",
+    "PaybondAuditExports",
     "PaybondCapabilityBinding",
     "PaybondIntents",
+    "PaybondX402FundingFailedError",
+    "PaybondX402FundingPendingError",
+    "FundRequestEnvelope",
+    "X402FundPollOptions",
+    "build_x402_fund_request_envelope",
+    "execute_fund_with_x402",
     "PaybondSpendDeniedError",
     "PaybondSpendApprovalRequiredError",
     "PaybondSpendGuard",

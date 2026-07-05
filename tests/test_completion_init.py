@@ -35,6 +35,8 @@ def test_init_completion_scaffolds_aligned_schema(tmp_path: Path, capsys) -> Non
         "response_digest: str",
         str(preset["sample_evidence"]["http_status"]),
         "policy_binding_stub",
+        "create_with_policy_binding",
+        "signing v7",
         "completion_preset=COMPLETION_PRESET_ID",
         "paybond policy preview",
     ):

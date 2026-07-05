@@ -110,6 +110,48 @@ def resolve_production_evidence_from_cli(
     }
 
 
+def resolve_agent_recognition_from_cli(
+    *,
+    cwd: Path,
+    env_file: str,
+    agent_recognition_key_id: str | None = None,
+    agent_recognition_signing_seed_hex: str | None = None,
+) -> dict[str, Any]:
+    """Resolve agent recognition signing credentials from CLI flags and APP_* env fallbacks."""
+    resolved_key_id = (agent_recognition_key_id or "").strip() or _read_configured_env_value(
+        cwd,
+        env_file,
+        "APP_AGENT_RECOGNITION_KEY_ID",
+    )
+    resolved_agent_seed_hex = (agent_recognition_signing_seed_hex or "").strip() or _read_configured_env_value(
+        cwd,
+        env_file,
+        "APP_AGENT_RECOGNITION_SEED_HEX",
+    )
+
+    if not resolved_key_id:
+        raise CliError(
+            "Harbor intent mutation requires --agent-recognition-key-id or APP_AGENT_RECOGNITION_KEY_ID",
+            category="usage",
+            code="cli.agent.recognition_incomplete",
+        )
+    if not resolved_agent_seed_hex:
+        raise CliError(
+            "Harbor intent mutation requires --agent-recognition-signing-seed-hex or "
+            "APP_AGENT_RECOGNITION_SEED_HEX",
+            category="usage",
+            code="cli.agent.recognition_incomplete",
+        )
+
+    return {
+        "agent_recognition_key_id": resolved_key_id,
+        "agent_recognition_signing_seed": _parse_seed32_hex(
+            resolved_agent_seed_hex,
+            "--agent-recognition-signing-seed-hex",
+        ),
+    }
+
+
 def production_evidence_to_persisted(
     credentials: PaybondRunProductionEvidenceCredentials,
 ) -> PersistedProductionEvidence:

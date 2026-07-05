@@ -519,6 +519,31 @@ class PaybondMCPRuntime:
             extra_headers={"x-tenant-id": await self.tenant_id()},
         )
 
+    async def list_audit_exports(
+        self,
+        *,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, str] = {
+            "limit": str(max(1, min(int(limit), 200))),
+        }
+        if cursor and cursor.strip():
+            params["cursor"] = cursor.strip()
+        query = urlencode(params)
+        return await self._gateway.get_json(f"/v1/compliance/audit-exports?{query}")
+
+    async def get_audit_export(
+        self,
+        job_id: str,
+        *,
+        issue_download: bool = False,
+    ) -> dict[str, Any]:
+        query = "?issue_download=1" if issue_download else ""
+        return await self._gateway.get_json(
+            f"/v1/compliance/audit-exports/{quote(job_id, safe='')}{query}"
+        )
+
     async def get_a2a_agent_card(self) -> dict[str, Any]:
         return await self._gateway.get_json("/.well-known/agent-card.json")
 
@@ -992,6 +1017,14 @@ def _mcp_tool_selection_metadata(tool_annotations_cls: Any) -> dict[str, dict[st
             "title": "Get Harbor Intent",
             "annotations": read_only("Get Harbor Intent"),
         },
+        "paybond_list_audit_exports": {
+            "title": "List Audit Exports",
+            "annotations": read_only("List Audit Exports"),
+        },
+        "paybond_get_audit_export": {
+            "title": "Get Audit Export",
+            "annotations": read_only("Get Audit Export"),
+        },
         "paybond_get_reputation_receipt": {
             "title": "Get Reputation Receipt",
             "annotations": read_only("Get Reputation Receipt"),
@@ -1410,6 +1443,30 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         name="paybond_get_intent",
         description="Fetch one tenant-scoped Harbor intent detail through the gateway operator view.",
     )(_handle_get_intent)
+
+    @paybond_tool(
+        name="paybond_list_audit_exports",
+        description=(
+            "List tenant-scoped compliance audit export jobs through the gateway operator view."
+        ),
+    )
+    async def paybond_list_audit_exports(
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        return await runtime.list_audit_exports(limit=limit, cursor=cursor)
+
+    @paybond_tool(
+        name="paybond_get_audit_export",
+        description=(
+            "Fetch one tenant-scoped compliance audit export job detail through the gateway operator view."
+        ),
+    )
+    async def paybond_get_audit_export(
+        job_id: str,
+        issue_download: bool = False,
+    ) -> dict[str, Any]:
+        return await runtime.get_audit_export(job_id, issue_download=issue_download)
 
     @paybond_tool(
         name="paybond_get_reputation_receipt",

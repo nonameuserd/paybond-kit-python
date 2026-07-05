@@ -77,6 +77,8 @@ async def test_gateway_only_server_exposes_gateway_first_mutation_tools() -> Non
         assert "paybond_get_signed_portfolio_artifact" in names
         assert "paybond_get_fraud_assessment" in names
         assert "paybond_get_fraud_metrics" in names
+        assert "paybond_list_audit_exports" in names
+        assert "paybond_get_audit_export" in names
         assert "paybond_verify_agent_mandate_v1" in names
         assert "paybond_import_agent_mandate_v1" in names
         assert "paybond_get_settlement_receipt_v1" in names
@@ -886,6 +888,8 @@ async def test_readonly_tool_policy_limits_exposed_tools() -> None:
         tools = await server.list_tools()
         names = {tool.name for tool in tools}
         assert "paybond_get_principal" in names
+        assert "paybond_list_audit_exports" in names
+        assert "paybond_get_audit_export" in names
         assert "paybond_create_spend_intent" not in names
     finally:
         await _close_server(server)

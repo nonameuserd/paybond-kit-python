@@ -171,8 +171,8 @@ def run_agent_mcp_checks(
 
     if not mcp_runtime_available():
         missing_mcp = (
-            'optional MCP dependency missing; install with pip install "paybond-kit[mcp]" '
-            "or pipx install 'paybond-kit[mcp]'"
+            'optional MCP dependency missing; install with pip install "paybond-kit[mcp]", '
+            "pipx install 'paybond-kit[mcp]', or pipx inject paybond-kit mcp"
         )
         checks.extend(
             [

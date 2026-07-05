@@ -69,7 +69,7 @@ def _evidence_comments(preset: CompletionPreset) -> str:
     lines.extend(
         [
             "# Sandbox: bootstrap with completion_preset to evaluate a strong Harbor predicate on evidence submit.",
-            "# Production: publish the managed template head, then create intents with policy_binding (signing v5).",
+            "# Production: publish the managed template head, then create intents with policy_binding (signing v7).",
             "#   paybond policy templates",
             f"#   paybond policy preview --template {preset['harbor_template_id']} "
             "--parameters-file parameters.json --evidence-file evidence.json",
@@ -231,11 +231,16 @@ class CompletionEvidence:
 {build_fn}
 
 
-# Production: use paybond.intents.create_with_policy_binding after publishing {preset['harbor_template_id']}.
+# Production (signing v7): publish managed template head for {preset['harbor_template_id']}, then:
+# from paybond_kit.policy import PaybondPolicy
+# policy = await PaybondPolicy.load("./paybond.policy.yaml")
+# created = await paybond.intents.create_with_policy_binding(
+#     **policy.to_intent_create_input(principal_did=..., principal_signing_seed=..., ...).__dict__
+# )
 policy_binding_stub = {{
     "template_id": HARBOR_TEMPLATE_ID,
     "parameters": completion_template_parameters,
-    # "head_seq" and "digest_hex" are assigned after: paybond policy publish ...
+    # version_seq and digest_hex are assigned after publishing the managed template head.
 }}
 
 DEFAULT_OPERATION = "paid_tool.operation"

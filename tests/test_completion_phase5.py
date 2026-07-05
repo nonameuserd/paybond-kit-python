@@ -101,6 +101,36 @@ def test_phase52_vendor_packs_declare_rail_hints_and_forbidden_fields() -> None:
     assert "payment_session_id" in (x402.get("forbidden_evidence_fields") or [])
 
 
+def test_vertical_completion_presets_in_catalog() -> None:
+    catalog = load_completion_catalog()
+    for preset_id in ("x402_saas_api_purchase", "x402_travel_booking", "invoice_payment_confirmed"):
+        preset = next(entry for entry in catalog["presets"] if entry["preset_id"] == preset_id)
+        assert preset.get("kind") == "vendor_pack"
+        assert preset.get("vendor_contract", {}).get("api_version")
+
+
+def test_x402_saas_api_purchase_maps_subscription_id() -> None:
+    resolved = resolve_completion_preset("x402_saas_api_purchase")
+    canonical = map_vendor_evidence_to_canonical(
+        resolved["preset"],
+        {
+            "subscription_id": "sub_abc",
+            "seat_count": 2,
+            "http_status": 200,
+            "response_digest": "blake3:abc",
+        },
+    )
+    assert canonical["vendor_ref_id"] == "sub_abc"
+
+
+def test_invoice_payment_confirmed_uses_invoice_paid_event() -> None:
+    resolved = resolve_completion_preset("invoice_payment_confirmed")
+    assert resolved["parameters"]["expected_event_type"] == "invoice.paid"
+    required = resolved["evidence_schema"].get("required", [])
+    assert "invoice_number" in required
+    assert "payment_reference" in required
+
+
 def test_sep2828_receipt_import_maps_to_artifact_attested() -> None:
     decision, outcome = signed_sep2828_pair()
     evidence = map_sep2828_receipts_to_artifact_attested_evidence(decision, outcome)

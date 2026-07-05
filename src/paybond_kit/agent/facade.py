@@ -96,6 +96,8 @@ def to_paybond_agent_result(result: CreateGuardedAgentResult) -> PaybondAgentRes
             run_config=result.run_config,
             openai_agents_adapter=result.openai_agents_adapter,
         )
+    elif result.framework == "crewai":
+        hooks = PaybondAgentHooks()
     else:
         raise ValueError(f"unsupported guarded agent framework: {result.framework}")
 
@@ -154,8 +156,12 @@ def wrap_paybond_tools(
     framework: GuardedAgentFramework = "generic",
 ) -> Any:
     """Wrap tools for an existing bound run without reloading policy."""
-    if framework in ("vercel-ai", "openai-agents"):
+    if framework == "vercel-ai":
         raise_typescript_only_framework_error(framework)
+    if framework == "openai-agents":
+        from paybond_kit.openai_agents import create_paybond_openai_agents_config
+
+        return create_paybond_openai_agents_config(run, tools).tools
     if framework == "generic":
         return create_paybond_generic_agent_config(run, tools).tools
     if framework == "claude-agents":
@@ -166,4 +172,8 @@ def wrap_paybond_tools(
         raise ValueError(
             'framework "langgraph" does not wrap tools in place; use instrument() or create_paybond_langgraph_hooks(run)'
         )
+    if framework == "crewai":
+        from paybond_kit.crewai import create_paybond_crewai_config
+
+        return create_paybond_crewai_config(run, tools).tools
     raise ValueError(f"unsupported framework for wrap_tools: {framework}")

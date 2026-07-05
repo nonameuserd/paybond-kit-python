@@ -47,6 +47,22 @@ async def with_paybond_agent_cli(
     return await handler(paybond, [])
 
 
+async def with_paybond_cli(
+    ctx: CliContext,
+    handler: Callable[[Paybond, list[str]], Awaitable[T]],
+) -> T:
+    """Open Paybond for general CLI commands that call the hosted SDK surface."""
+    api_key = resolve_api_key(ctx.globals, ctx.cwd)
+    paybond = await Paybond.open(
+        api_key=api_key,
+        gateway_base_url=ctx.globals.gateway,
+    )
+    try:
+        return await handler(paybond, [])
+    finally:
+        await paybond.aclose()
+
+
 async def open_paybond_for_agent_cli(ctx: CliContext, production: bool) -> Paybond:
     """Backward-compatible helper; prefer with_paybond_agent_cli for bind/execute paths."""
 

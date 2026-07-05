@@ -6,10 +6,16 @@ import hashlib
 import json
 
 from paybond_kit.agent_recognition import (
+    AGENT_RECOGNITION_PURPOSE_CREATE,
     AGENT_RECOGNITION_PURPOSE_EVIDENCE_SUBMIT,
+    AGENT_RECOGNITION_PURPOSE_FUND,
+    AGENT_RECOGNITION_PURPOSE_SETTLEMENT_CONFIRM,
     new_agent_recognition_request_envelope,
     sign_agent_recognition_proof_v1,
+    sign_harbor_create_recognition_proof,
+    sign_harbor_fund_recognition_proof,
     sign_harbor_evidence_submit_recognition_proof,
+    sign_harbor_settlement_confirm_recognition_proof,
 )
 
 
@@ -48,6 +54,45 @@ def test_sign_agent_recognition_proof_v1_canonicalizes_fields() -> None:
     assert len(proof["ed25519_signature_hex"]) == 128
 
 
+def test_sign_harbor_create_recognition_proof_binds_body() -> None:
+    signing_seed = _seed("httpserver-agent-recognition")
+    intent_body = {
+        "intent_id": "550e8400-e29b-41d4-a716-446655440000",
+        "max_spend_cents": 500,
+        "currency": "USD",
+    }
+    proof = sign_harbor_create_recognition_proof(
+        tenant_id="tenant-a",
+        intent_body=intent_body,
+        key_id="kid-1",
+        signing_seed=signing_seed,
+    )
+
+    assert proof["purpose"] == AGENT_RECOGNITION_PURPOSE_CREATE
+    assert proof["request_envelope"]["path"] == "/harbor/intents"
+    assert proof["request_envelope"]["body_digest_sha256_hex"] == hashlib.sha256(
+        json.dumps(intent_body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
+def test_sign_harbor_fund_recognition_proof_binds_empty_body() -> None:
+    signing_seed = _seed("httpserver-agent-recognition")
+    proof = sign_harbor_fund_recognition_proof(
+        tenant_id="tenant-a",
+        intent_id="550e8400-e29b-41d4-a716-446655440000",
+        key_id="kid-1",
+        signing_seed=signing_seed,
+    )
+
+    assert proof["purpose"] == AGENT_RECOGNITION_PURPOSE_FUND
+    assert proof["request_envelope"]["path"] == (
+        "/harbor/intents/550e8400-e29b-41d4-a716-446655440000/fund"
+    )
+    assert proof["request_envelope"]["body_digest_sha256_hex"] == hashlib.sha256(
+        json.dumps({}, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
 def test_sign_harbor_evidence_submit_recognition_proof_binds_body() -> None:
     signing_seed = _seed("httpserver-agent-recognition")
     evidence_body = {
@@ -69,6 +114,26 @@ def test_sign_harbor_evidence_submit_recognition_proof_binds_body() -> None:
     )
     assert proof["request_envelope"]["body_digest_sha256_hex"] == hashlib.sha256(
         json.dumps(evidence_body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
+def test_sign_harbor_settlement_confirm_recognition_proof_binds_body() -> None:
+    signing_seed = _seed("httpserver-agent-recognition")
+    body = {"note": "confirm implied action"}
+    proof = sign_harbor_settlement_confirm_recognition_proof(
+        tenant_id="tenant-a",
+        intent_id="550e8400-e29b-41d4-a716-446655440000",
+        body=body,
+        key_id="kid-1",
+        signing_seed=signing_seed,
+    )
+
+    assert proof["purpose"] == AGENT_RECOGNITION_PURPOSE_SETTLEMENT_CONFIRM
+    assert proof["request_envelope"]["path"] == (
+        "/harbor/intents/550e8400-e29b-41d4-a716-446655440000/settlement/confirm"
+    )
+    assert proof["request_envelope"]["body_digest_sha256_hex"] == hashlib.sha256(
+        json.dumps(body, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     ).hexdigest()
 
 

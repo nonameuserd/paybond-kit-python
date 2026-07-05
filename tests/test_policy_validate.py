@@ -91,6 +91,8 @@ def test_scaffold_paybond_policy_writes_valid_file(tmp_path: Path) -> None:
         )
     )
     assert result["name"] == "travel-book-hotel-v1"
+    yaml = out.read_text(encoding="utf-8")
+    assert "create_with_policy_binding" in yaml
     policy = PaybondPolicy.load(out)
     report = policy.validate()
     assert report.valid is True

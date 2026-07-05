@@ -286,7 +286,6 @@ def test_wrap_paybond_tools_rejects_langgraph() -> None:
     ("framework", "docs_path"),
     [
         ("vercel-ai", "https://docs.paybond.ai/kit/vercel-ai"),
-        ("openai-agents", "https://docs.paybond.ai/kit/openai-agents"),
     ],
 )
 def test_wrap_paybond_tools_rejects_typescript_only_frameworks(
@@ -358,6 +357,7 @@ async def test_paybond_instrument_agent_positional() -> None:
         a2a=MagicMock(),
         protocol=MagicMock(),
         intents=MagicMock(),
+        audit=MagicMock(),
     )
     agent = Agent({"travel.book_hotel": AsyncMock(return_value={"ok": True})})
     result = await paybond.instrument(agent)
@@ -379,6 +379,7 @@ async def test_paybond_facade_methods() -> None:
         a2a=MagicMock(),
         protocol=MagicMock(),
         intents=MagicMock(),
+        audit=MagicMock(),
     )
 
     assert create_guarded_agent_runner is not None

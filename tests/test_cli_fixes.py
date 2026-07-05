@@ -167,15 +167,29 @@ async def test_invalid_requested_spend_cents_returns_cli_error(tmp_path: Path, m
 async def test_intents_create_json_redacts_capability_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PAYBOND_API_KEY", RAW_KEY)
+    monkeypatch.setenv("APP_AGENT_RECOGNITION_KEY_ID", "kid-1")
+    monkeypatch.setenv("APP_AGENT_RECOGNITION_SEED_HEX", "02" * 32)
     body_path = tmp_path / "intent.json"
     body_path.write_text("{}", encoding="utf-8")
 
-    def fake_gateway_request(ctx, method, path, payload=None):  # type: ignore[no-untyped-def]
-        assert method == "POST"
-        assert path == "/harbor/intents"
-        return {"intent_id": "intent-1", "capability_token": "cap-secret"}
+    recognition_seen: dict[str, object] = {}
 
-    monkeypatch.setattr("paybond_kit.cli.commands.gateway_request", fake_gateway_request)
+    async def fake_with_paybond_cli(ctx, handler):  # type: ignore[no-untyped-def]
+        class FakeHarbor:
+            tenant_id = "tenant-sandbox"
+
+            async def create_intent(self, body, *, recognition_proof, idempotency_key=None):  # type: ignore[no-untyped-def]
+                recognition_seen["proof"] = recognition_proof
+                recognition_seen["body"] = body
+                recognition_seen["idempotency_key"] = idempotency_key
+                return {"intent_id": "intent-1", "capability_token": "cap-secret"}
+
+        class FakePaybond:
+            harbor = FakeHarbor()
+
+        return await handler(FakePaybond(), [])
+
+    monkeypatch.setattr("paybond_kit.cli.agent_paybond.with_paybond_cli", fake_with_paybond_cli)
 
     stdout = io.StringIO()
     code = await run_cli(
@@ -183,6 +197,8 @@ async def test_intents_create_json_redacts_capability_token(tmp_path: Path, monk
         stdout=stdout,
     )
     assert code == 0
+    assert recognition_seen["proof"]
+    assert recognition_seen["body"] == {}
     payload = json.loads(stdout.getvalue())
     assert payload["data"]["capability_token"] == "[redacted]"
     assert "cap-secret" not in stdout.getvalue()

@@ -98,6 +98,8 @@ async def test_doctor_agent_runs_mcp_checks(tmp_path: Path, monkeypatch: pytest.
     assert "mcp_tools_list" in names
     assert "mcp_tool_schemas" in names
     assert "mcp_stdout_purity" in names
+    assert "install_method" in names
+    assert "optional_extras" in names
 
 
 def test_run_agent_mcp_checks_does_not_block_on_open_stdout(tmp_path: Path) -> None:

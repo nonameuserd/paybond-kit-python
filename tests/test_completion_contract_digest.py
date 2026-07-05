@@ -14,7 +14,7 @@ def test_vendor_contract_digests_match_schemas() -> None:
     catalog = load_completion_catalog()
     verify_catalog_vendor_contracts(catalog)
     vendor_packs = [preset for preset in catalog["presets"] if preset.get("kind") == "vendor_pack"]
-    assert len(vendor_packs) == 9
+    assert len(vendor_packs) == 12
     for preset in vendor_packs:
         contract = preset.get("vendor_contract")
         assert isinstance(contract, dict), preset["preset_id"]

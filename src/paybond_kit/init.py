@@ -18,11 +18,20 @@ FRAMEWORK_NOTES = {
     "google-ai": "Call the guarded handler before the Google AI function call performs paid or external work.",
     "vercel-ai": "Call the guarded handler from your Vercel AI SDK tool execute function.",
     "langgraph": "Call the guarded handler from the LangGraph node or tool wrapper that performs paid work.",
+    "crewai": "Register guarded CrewAI @tool / BaseTool instances on your crew agents.",
     "mcp": "Use the same operation name in your MCP tool handler before executing paid work.",
 }
 
 PRESETS = ("paid-tool-guard", "agent-middleware")
-AGENT_MIDDLEWARE_FRAMEWORKS = ("generic", "claude-agents", "openai", "langgraph", "vercel-ai")
+AGENT_MIDDLEWARE_FRAMEWORKS = (
+    "generic",
+    "claude-agents",
+    "crewai",
+    "openai",
+    "langgraph",
+    "vercel-ai",
+    "mcp",
+)
 AGENT_MIDDLEWARE_FRAMEWORK_ALIASES = {"provider-agnostic": "generic"}
 PRESET_DEFAULT_OUT = {
     "paid-tool-guard": "paybond_paid_tool_guard.py",
@@ -84,6 +93,70 @@ def _normalize_agent_middleware_framework(framework: str) -> str:
     if normalized not in AGENT_MIDDLEWARE_FRAMEWORKS:
         raise ValueError("invalid --framework for agent-middleware preset")
     return normalized
+
+
+def _production_policy_binding_comments(harbor_template_id: str) -> str:
+    return f"""# Production (signing v7): publish managed template head for {harbor_template_id}, then create a funded intent.
+# from paybond_kit.policy import PaybondPolicy
+# policy = await PaybondPolicy.load("./paybond.policy.yaml")
+# intent_input = policy.to_intent_create_input(
+#     principal_did=principal_did,
+#     principal_signing_seed=principal_seed,
+#     payee_did=payee_did,
+#     payee_signing_seed=payee_seed,
+#     deadline_rfc3339=deadline_rfc3339,
+#     settlement_rail="stripe_connect",
+#     recognition_proof=recognition_proof,
+#     materialized_predicate=published_head["materialized_predicate"],
+#     policy_template_id=published_head["template_id"],
+#     policy_version_seq=published_head["version_seq"],
+#     policy_content_digest_hex=published_head["digest_hex"],
+# )
+# created = await paybond.intents.create_with_policy_binding(**intent_input.__dict__)
+# Fund if needed, then attach middleware via paybond.agent_run.bind(attach=...)"""
+
+
+def _agent_middleware_header_comments(framework: str) -> str:
+    smoke_commands = {
+        "generic": (
+            "paybond agent sandbox smoke --operation travel.book_hotel "
+            "--requested-spend-cents 20000 --evidence-preset cost_and_completion "
+            '--result-body \'{"reservation":{"status":"confirmed","price_cents":20000}}\''
+        ),
+        "claude-agents": (
+            "paybond agent demo claude-agents smoke --operation travel.book_hotel "
+            "--requested-spend-cents 20000 --evidence-preset cost_and_completion --format json"
+        ),
+        "crewai": (
+            "paybond agent demo crewai smoke --operation procurement.submit_po "
+            "--requested-spend-cents 12000 --evidence-preset cost_and_completion --format json"
+        ),
+        "openai": (
+            "paybond agent demo openai smoke --operation travel.book_hotel "
+            "--requested-spend-cents 20000 --evidence-preset cost_and_completion --format json"
+        ),
+        "langgraph": (
+            "paybond agent demo langgraph smoke --operation travel.book_hotel "
+            "--requested-spend-cents 20000 --evidence-preset cost_and_completion --format json"
+        ),
+        "vercel-ai": (
+            "paybond agent demo vercel-ai smoke --operation travel.book_hotel "
+            "--requested-spend-cents 20000 --evidence-preset cost_and_completion --format json"
+        ),
+        "mcp": (
+            "paybond agent demo mcp smoke --operation travel.book_hotel "
+            "--requested-spend-cents 20000 --evidence-preset cost_and_completion --format json"
+        ),
+    }
+    normalized = _normalize_agent_middleware_framework(framework)
+    return "\n".join(
+        [
+            "# Paybond for paid tools; provider-native limits for LLM token caps only.",
+            "# Policy: ./paybond.policy.yaml (scaffold with paybond policy init).",
+            f"# Smoke: {smoke_commands[normalized]}",
+            "# Production: create_with_policy_binding after publishing the managed template head — see block below.",
+        ]
+    )
 
 
 def _agent_middleware_framework_block(framework: str) -> str:
@@ -153,6 +226,71 @@ async def create_claude_agents_guarded_runner(paybond: Paybond) -> CreateGuarded
 
 
 create_claude_agents_guarded_agent_runner = create_claude_agents_guarded_runner'''
+    if framework == "crewai":
+        return '''from crewai.tools import tool
+
+from paybond_kit.agent.guarded_agent import (
+    CreateGuardedAgentInput,
+    CreateGuardedAgentResult,
+    create_guarded_agent,
+)
+from paybond_kit.crewai import create_paybond_crewai_config
+
+
+PROCUREMENT_AGENT_POLICY = {
+    "version": 1,
+    "name": "procurement-agent-v1",
+    "default_deny": True,
+    "tools": {
+        "procurement.submit_po": {
+            "side_effecting": True,
+            "max_spend_cents": DEFAULT_REQUESTED_SPEND_CENTS,
+            "evidence_preset": COMPLETION_PRESET_ID,
+        },
+        "procurement.search_catalog": {
+            "side_effecting": False,
+        },
+    },
+    "intent": {
+        "allowed_tools": ["procurement.submit_po"],
+        "budget": {"currency": "usd", "max_spend_usd": 500},
+    },
+}
+
+
+def submit_po(vendor_id: str, amount_cents: int) -> dict[str, Any]:
+    return {"status": "completed", "cost_cents": amount_cents, "vendor_id": vendor_id}
+
+
+async def create_crewai_guarded_runner(paybond: Paybond) -> CreateGuardedAgentResult:
+    """Policy-driven CrewAI wiring: bind run, wrap @tool handlers, return guarded tools."""
+
+    @tool("procurement.submit_po")
+    def submit_po_tool(vendor_id: str, amount_cents: int) -> str:
+        """Submit a purchase order to a vendor."""
+        import json
+
+        return json.dumps(submit_po(vendor_id, amount_cents))
+
+    result = await create_guarded_agent(
+        paybond,
+        CreateGuardedAgentInput(
+            policy=PROCUREMENT_AGENT_POLICY,
+            framework="crewai",
+            tools=[submit_po_tool],
+            bootstrap={
+                "operation": "procurement.submit_po",
+                "requested_spend_cents": DEFAULT_REQUESTED_SPEND_CENTS,
+                "completion_preset": COMPLETION_PRESET_ID,
+            },
+        ),
+    )
+    return result
+
+
+def wrap_crewai_tools(run: PaybondAgentRun, tools: list[Any]) -> list[Any]:
+    """Wrap CrewAI @tool / BaseTool instances when you already bound a PaybondAgentRun."""
+    return create_paybond_crewai_config(run, tools).tools'''
     if framework == "openai":
         return '''from paybond_kit.agent import create_tool_input_guard_adapter
 
@@ -199,6 +337,13 @@ def create_guarded_vercel_book_hotel_tool(run: PaybondAgentRun):
         )
 
     return _execute'''
+    if framework == "mcp":
+        return '''from paybond_kit.mcp_tool_surface import create_paybond_mcp_tool_surface
+
+
+def create_mcp_tool_surface(run: PaybondAgentRun) -> Any:
+    """Stdio MCP host config — bind a run first, then paybond mcp install for coding-agent hosts."""
+    return create_paybond_mcp_tool_surface(run, env_file=".env.local")'''
     return '''from paybond_kit.agent import create_paybond_generic_agent_config
 
 
@@ -215,7 +360,9 @@ def wrap_agent_tools(run: PaybondAgentRun, tools: list[dict[str, Any]]) -> list[
 def _agent_middleware_template(framework: str) -> str:
     completion_preset = get_completion_preset("cost_and_completion")
     evidence_schema = json.dumps(completion_preset["evidence_schema"], indent=4)
-    framework_block = _agent_middleware_framework_block(_normalize_agent_middleware_framework(framework))
+    normalized_framework = _normalize_agent_middleware_framework(framework)
+    framework_block = _agent_middleware_framework_block(normalized_framework)
+    header_comments = _agent_middleware_header_comments(normalized_framework)
     return f'''import os
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
@@ -225,6 +372,8 @@ from paybond_kit import Paybond
 from paybond_kit.agent import PaybondAgentRun, create_paybond_tool_registry
 
 {_env_helpers_block()}
+
+{header_comments}
 
 # Agent middleware preset maps to completion catalog archetype: cost_and_completion ({completion_preset["harbor_template_id"]}).
 COMPLETION_PRESET_ID = "cost_and_completion"
@@ -296,6 +445,9 @@ async def bind_agent_run(
     )
 
 
+{_production_policy_binding_comments(completion_preset["harbor_template_id"])}
+
+
 {framework_block}
 '''
 
@@ -332,11 +484,13 @@ def build_completion_evidence(fields: CompletionEvidence) -> dict[str, Any]:
     return {{"status": fields.status, "cost_cents": fields.cost_cents}}
 
 
-# Production: use paybond.intents.create_with_policy_binding after publishing {completion_preset["harbor_template_id"]}.
+# Production: version_seq and digest_hex are assigned after publishing the managed template head.
 policy_binding_stub = {{
     "template_id": HARBOR_TEMPLATE_ID,
     "parameters": {parameters},
 }}
+
+{_production_policy_binding_comments(completion_preset["harbor_template_id"])}
 
 _COMPLETION_EVIDENCE_SCHEMA: dict[str, Any] = {evidence_schema}
 

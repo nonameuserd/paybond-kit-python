@@ -45,6 +45,7 @@ def test_paybond_solution_property() -> None:
         a2a = object()
         protocol = object()
         intents = object()
+        audit = object()
 
     host = _Host()
     paybond = Paybond(
@@ -55,6 +56,7 @@ def test_paybond_solution_property() -> None:
         a2a=host.a2a,  # type: ignore[arg-type]
         protocol=host.protocol,  # type: ignore[arg-type]
         intents=host.intents,  # type: ignore[arg-type]
+        audit=host.audit,  # type: ignore[arg-type]
     )
     assert paybond.solution is solution_namespace
 

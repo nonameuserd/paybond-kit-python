@@ -73,8 +73,12 @@ def _wrap_tools_for_framework(
     tools: Any,
     framework: GuardedAgentFramework,
 ) -> Any:
-    if framework in ("vercel-ai", "openai-agents"):
+    if framework == "vercel-ai":
         raise_typescript_only_framework_error(framework)
+    if framework == "openai-agents":
+        from paybond_kit.openai_agents import create_paybond_openai_agents_config
+
+        return create_paybond_openai_agents_config(run, tools).tools
     if framework == "generic":
         return create_paybond_generic_agent_config(run, tools).tools
     if framework == "claude-agents":
@@ -83,6 +87,10 @@ def _wrap_tools_for_framework(
         return create_paybond_claude_agents_config(run, tools).agent_tools
     if framework == "langgraph":
         return tools
+    if framework == "crewai":
+        from paybond_kit.crewai import create_paybond_crewai_config
+
+        return create_paybond_crewai_config(run, tools).tools
     raise ValueError(f"unsupported framework for wrap_tools: {framework}")
 
 
@@ -740,6 +748,13 @@ async def instrument_paybond_claude_agents(
     input_: Mapping[str, Any],
 ) -> PaybondInstrumented | PaybondInstrumentRuntime:
     return await instrument_paybond_agent(paybond, input_, framework="claude-agents")
+
+
+async def instrument_paybond_crewai(
+    paybond: PaybondAgentRunHost,
+    input_: Mapping[str, Any],
+) -> PaybondInstrumented | PaybondInstrumentRuntime:
+    return await instrument_paybond_agent(paybond, input_, framework="crewai")
 
 
 async def instrument_paybond_mcp(

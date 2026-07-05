@@ -1,0 +1,54 @@
+{
+  "name": "dev-x402-fund-success",
+  "scenarioName": "x402-fund-sequence",
+  "requiredScenarioState": "pending",
+  "newScenarioState": "funded",
+  "request": {
+    "method": "POST",
+    "urlPath": "/harbor/intents/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/fund",
+    "headers": {
+      "x-tenant-id": {
+        "equalTo": "dry-run-tenant"
+      },
+      "Authorization": {
+        "contains": "Bearer paybond_sk_"
+      },
+      "x-paybond-agent-recognition-proof": {
+        "matches": ".+"
+      },
+      "payment-signature": {
+        "matches": ".+"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json",
+      "payment-response": "simulated-x402-payment-response"
+    },
+    "jsonBody": {
+      "intent_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "tenant": "dry-run-tenant",
+      "state": "funded",
+      "settlement_rail": "x402_usdc_base",
+      "currency": "usd",
+      "amount_cents": 2000,
+      "funded": true,
+      "capability_token": "cap-x402-dev-mock-1",
+      "funding": {
+        "settlement_rail": "x402_usdc_base",
+        "harbor_fund_endpoint": "/harbor/intents/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/fund",
+        "status": "authorization_succeeded",
+        "payment_session_id": "paymentSession_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "payment_url": "https://pay.coinbase.com/payment-sessions/paymentSession_aaaaaaaa-aaaa-4aaa-aaaaaaaaaaaa",
+        "asset": "usdc",
+        "network": "base",
+        "authorization_id": "auth_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "source_address": "0xsource0000000000000000000000000000000001",
+        "capture_expires_at": "2027-12-31T23:59:59Z",
+        "refund_expires_at": "2028-01-31T23:59:59Z"
+      }
+    }
+  }
+}

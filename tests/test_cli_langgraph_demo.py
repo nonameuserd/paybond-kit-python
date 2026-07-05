@@ -45,3 +45,4 @@ async def test_langgraph_smoke_fails_fast_without_optional_extra(monkeypatch: py
     message = stderr.getvalue()
     assert "langgraph extra" in message
     assert 'paybond-kit[langgraph]' in message
+    assert "pipx inject paybond-kit langgraph langchain-core" in message

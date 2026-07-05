@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Mapping
 from uuid import UUID, uuid4
 
 from paybond_kit.a2a import GatewayA2AClient
+from paybond_kit.audit.exports import PaybondAudit, PaybondAuditExports, GatewayAuditExportsClientOptions
 from paybond_kit.credentials import DEFAULT_PAYBOND_GATEWAY_BASE_URL, PaybondEnvironment
 from paybond_kit.fraud import GatewayFraudClient
 from paybond_kit.guardrails import GatewaySandboxGuardrailsClient
@@ -30,11 +32,12 @@ if TYPE_CHECKING:
     )
     from paybond_kit.agent.run import PaybondAgentRun
     from paybond_kit.policy.load import PaybondPolicyLoadSource
+    from paybond_kit.x402_funding import FundRequestEnvelope, X402FundPollOptions
 
 
 @dataclass
 class PaybondIntents:
-    """Tenant-scoped intent helpers (principal-signed intent create, x402 funding, payee evidence)."""
+    """Tenant-scoped intent helpers (principal-signed intent create, x402 funding, payee evidence, settlement)."""
 
     _harbor: HarborClient | GatewayHarborClient
     _tenant_id: str
@@ -202,6 +205,38 @@ class PaybondIntents:
             idempotency_key=idempotency_key,
         )
 
+    async def fund_with_x402(
+        self,
+        intent_id: UUID,
+        *,
+        recognition_proof: Mapping[str, Any],
+        sign_payment: Callable[[str], Awaitable[str]],
+        issue_recognition_proof: Callable[
+            ["FundRequestEnvelope"], Awaitable[Mapping[str, Any]]
+        ],
+        poll_options: "X402FundPollOptions | None" = None,
+        idempotency_key: str | None = None,
+    ) -> FundIntentResult:
+        """
+        One-call x402 fund flow: sign 402 challenges, retry with ``payment-signature``, poll until funded.
+
+        Wallet keys stay app-owned — pass injectable ``sign_payment`` and ``issue_recognition_proof``.
+        """
+        from paybond_kit.x402_funding import execute_fund_with_x402
+
+        return await execute_fund_with_x402(
+            intent_id=intent_id,
+            recognition_proof=recognition_proof,
+            sign_payment=sign_payment,
+            issue_recognition_proof=issue_recognition_proof,
+            poll_options=poll_options,
+            fund=lambda **kwargs: self.fund(
+                intent_id,
+                idempotency_key=idempotency_key,
+                **kwargs,
+            ),
+        )
+
     async def submit_evidence(
         self,
         intent_id: UUID,
@@ -244,6 +279,28 @@ class PaybondIntents:
             idempotency_key=idempotency_key,
         )
 
+    async def confirm_settlement(
+        self,
+        intent_id: UUID | str,
+        *,
+        recognition_proof: Mapping[str, Any],
+        body: Mapping[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Confirm Harbor settlement via Gateway ``POST /harbor/intents/{intent_id}/settlement/confirm``.
+
+        Confirms the settlement action implied by stored evidence; does not choose release vs refund.
+        """
+        iid = intent_id if isinstance(intent_id, UUID) else UUID(str(intent_id))
+        payload = dict(body or {})
+        return await self._harbor.confirm_settlement(
+            iid,
+            payload,
+            recognition_proof=recognition_proof,  # type: ignore[call-arg]
+            idempotency_key=idempotency_key,
+        )
+
 
 @dataclass
 class Paybond:
@@ -258,6 +315,7 @@ class Paybond:
     a2a: GatewayA2AClient
     protocol: GatewayProtocolClient
     intents: PaybondIntents
+    audit: PaybondAudit
 
     @classmethod
     async def open(
@@ -314,6 +372,16 @@ class Paybond:
                 max_retries=max_retries,
             ),
             intents=PaybondIntents(harbor, tenant),
+            audit=PaybondAudit(
+                PaybondAuditExports.open(
+                    gateway_base_url,
+                    tenant,
+                    options=GatewayAuditExportsClientOptions(
+                        static_gateway_bearer_token=api_key,
+                        max_retries=max_retries,
+                    ),
+                )
+            ),
         )
 
     async def aclose(self) -> None:
@@ -323,6 +391,9 @@ class Paybond:
         await self.a2a.aclose()
         await self.fraud.aclose()
         await self.signal.aclose()
+        exports_gateway = self.audit.exports._gateway
+        if hasattr(exports_gateway, "aclose"):
+            await exports_gateway.aclose()
 
     def spend_guard(self, intent_id: UUID, capability_token: str):
         from paybond_kit.spend_guard import PaybondSpendGuard
@@ -454,6 +525,11 @@ class Paybond:
         from paybond_kit.agent.instrument import instrument_paybond_claude_agents
 
         return await instrument_paybond_claude_agents(self, kwargs)
+
+    async def instrument_crewai(self, **kwargs: Any) -> "PaybondInstrumented | PaybondInstrumentRuntime":
+        from paybond_kit.agent.instrument import instrument_paybond_crewai
+
+        return await instrument_paybond_crewai(self, kwargs)
 
     async def instrument_mcp(self, **kwargs: Any) -> "PaybondInstrumented | PaybondInstrumentRuntime":
         from paybond_kit.agent.instrument import instrument_paybond_mcp

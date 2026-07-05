@@ -283,6 +283,14 @@ export async function createInstrumentedAgent() {{
     sandbox: true,
   }});
 }}
+
+// Production (signing v7): publish managed template head, then:
+// import {{ PaybondPolicy }} from "@paybond/kit";
+// const policy = await PaybondPolicy.load(POLICY_FILE);
+// const created = await paybond.intents.createWithPolicyBinding(
+//   policy.toIntentCreateInput({{ principalDid, principalSigningSeed, payeeDid, payeeSigningSeed, deadlineRfc3339, settlementRail: "stripe_connect", recognitionProof, publishedPolicyHead }}),
+// );
+// Attach middleware: instrumented.bind({{ intentId, capabilityToken, productionEvidence }}) or agentRun.bind({{ attach: ... }})
 '''
 
 
@@ -357,6 +365,15 @@ TOOLS = {{
 async def create_instrumented_agent():
     paybond = await create_paybond_client()
     return {instrument_call}
+
+
+# Production (signing v7): publish managed template head, then:
+# from paybond_kit.policy import PaybondPolicy
+# policy = await PaybondPolicy.load(POLICY_FILE)
+# created = await paybond.intents.create_with_policy_binding(
+#     **policy.to_intent_create_input(principal_did=..., principal_signing_seed=..., ...).__dict__
+# )
+# Attach middleware: await instrumented.bind(intent_id=..., capability_token=..., production_evidence=...)
 '''
 
 
