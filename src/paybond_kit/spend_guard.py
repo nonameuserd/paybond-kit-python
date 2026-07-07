@@ -37,6 +37,9 @@ class _CapabilityVerifier(Protocol):
         agent_subject: str | None = None,
         approval_token: str | None = None,
         idempotency_key: str | None = None,
+        model_family: str | None = None,
+        config_hash_hex: str | None = None,
+        prompt_hash_hex: str | None = None,
     ) -> VerifyCapabilityResult: ...
 
 
@@ -106,6 +109,9 @@ class PaybondSpendGuard:
         agent_subject: str | None = None,
         approval_token: str | None = None,
         idempotency_key: str | None = None,
+        model_family: str | None = None,
+        config_hash_hex: str | None = None,
+        prompt_hash_hex: str | None = None,
     ) -> VerifyCapabilityResult:
         return await self.harbor.verify_capability(
             intent_id=self.intent_id,
@@ -121,6 +127,9 @@ class PaybondSpendGuard:
             agent_subject=agent_subject,
             approval_token=approval_token,
             idempotency_key=idempotency_key,
+            model_family=model_family,
+            config_hash_hex=config_hash_hex,
+            prompt_hash_hex=prompt_hash_hex,
         )
 
     async def authorize_spend(
@@ -137,6 +146,9 @@ class PaybondSpendGuard:
         agent_subject: str | None = None,
         approval_token: str | None = None,
         idempotency_key: str | None = None,
+        model_family: str | None = None,
+        config_hash_hex: str | None = None,
+        prompt_hash_hex: str | None = None,
     ) -> VerifyCapabilityResult:
         return await self.verify_spend_capability(
             operation=operation,
@@ -150,6 +162,9 @@ class PaybondSpendGuard:
             agent_subject=agent_subject,
             approval_token=approval_token,
             idempotency_key=idempotency_key,
+            model_family=model_family,
+            config_hash_hex=config_hash_hex,
+            prompt_hash_hex=prompt_hash_hex,
         )
 
     async def assert_spend_authorized(
@@ -166,6 +181,9 @@ class PaybondSpendGuard:
         agent_subject: str | None = None,
         approval_token: str | None = None,
         idempotency_key: str | None = None,
+        model_family: str | None = None,
+        config_hash_hex: str | None = None,
+        prompt_hash_hex: str | None = None,
     ) -> VerifyCapabilityResult:
         result = await self.authorize_spend(
             operation=operation,
@@ -179,6 +197,9 @@ class PaybondSpendGuard:
             agent_subject=agent_subject,
             approval_token=approval_token,
             idempotency_key=idempotency_key,
+            model_family=model_family,
+            config_hash_hex=config_hash_hex,
+            prompt_hash_hex=prompt_hash_hex,
         )
         if not result.allow:
             if result.approval_required:

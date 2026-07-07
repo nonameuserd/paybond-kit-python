@@ -60,6 +60,7 @@ def _normalize_side_effecting(
             evidence_preset=evidence_preset,
             spend_cents=spend_cents,
             evidence_mapper=policy.get("evidence_mapper"),
+            external_attestation_mapper=policy.get("external_attestation_mapper"),
         )
 
     return entries

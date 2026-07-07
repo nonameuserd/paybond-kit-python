@@ -21,6 +21,16 @@ from paybond_kit.agent.types import (
     PaybondToolInputGuardDenyDecision,
     PaybondUnregisteredSideEffectingToolError,
 )
+from paybond_kit.agent_receipt import (
+    AGENT_RECEIPT_KIND_V1,
+    AGENT_RECEIPT_SCHEMA_VERSION,
+    AGENT_RECEIPT_SCOPE_ACTION,
+    AGENT_RECEIPT_SIGNING_ALGORITHM_ED25519,
+    AGENT_RECEIPT_VERSION_V1,
+    action_receipt_id,
+    agent_receipt_message_digest_sha256_hex,
+    value_digest_sha256_hex,
+)
 from paybond_kit.agent_recognition import sign_harbor_evidence_submit_recognition_proof
 from paybond_kit.signing import sign_payee_evidence_binding
 from paybond_kit.spend_guard import PaybondSpendApprovalRequiredError, PaybondSpendDeniedError
@@ -53,6 +63,8 @@ class PaybondInterceptEvidenceResult:
     predicate_passed: bool | None = None
     sandbox_lifecycle_status: str | None = None
     intent_state: str | None = None
+    payload_digest_sha256_hex: str | None = None
+    artifacts_digest_sha256_hex: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,10 +72,15 @@ class PaybondInterceptWrapExecuteResult:
     tool_result: Any
     authorization: dict[str, Any] | None = None
     evidence: PaybondInterceptEvidenceResult | None = None
+    receipt_draft: dict[str, Any] | None = None
 
 
 def _now_rfc3339_seconds() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _epoch_ms_to_rfc3339(epoch_ms: int) -> str:
+    return datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _trace_timestamp() -> str:
@@ -292,6 +309,7 @@ class PaybondToolInterceptor:
                 "requested_spend_cents": resolved["requested_spend_cents"],
                 "tool_name": tool_name,
                 "cached_at": time.monotonic(),
+                "authorized_at_ms": int(time.time() * 1000),
             }
             self._emit_trace(
                 {
@@ -402,8 +420,10 @@ class PaybondToolInterceptor:
             guard = self._binding.guard
             if cached is not None:
                 auth = cached["auth"]
+                authorized_at_ms = cached["authorized_at_ms"]
             else:
                 auth = await guard.assert_spend_authorized(**resolved["auth_kwargs"])
+                authorized_at_ms = int(time.time() * 1000)
                 self._emit_trace(
                     {
                         "type": "spend_authorized",
@@ -417,6 +437,7 @@ class PaybondToolInterceptor:
                 )
 
             execute_started_at = time.perf_counter()
+            execute_started_at_ms = int(time.time() * 1000)
             try:
                 tool_result = execute()
                 if hasattr(tool_result, "__await__"):
@@ -461,6 +482,16 @@ class PaybondToolInterceptor:
                 raise
 
             evidence_id = _evidence_idempotency_key(str(self._binding.intent_id), tool_call_id)
+            external_attestations = self._resolve_tool_external_attestations(
+                resolved["entry"],
+                tool_result,
+                PaybondToolCallContext(
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    operation=resolved["operation"],
+                    arguments=arguments,
+                ),
+            )
             evidence = await self._submit_auto_evidence(
                 entry=resolved["entry"],
                 tool_name=tool_name,
@@ -483,6 +514,7 @@ class PaybondToolInterceptor:
                     "evidence_preset": resolved["entry"].evidence_preset,
                     "sandbox_lifecycle_status": evidence.sandbox_lifecycle_status,
                     "predicate_passed": evidence.predicate_passed,
+                    "external_attestations": external_attestations,
                 }
             )
 
@@ -494,10 +526,30 @@ class PaybondToolInterceptor:
             if evidence_policy_digest is not None:
                 authorization["policy_digest"] = evidence_policy_digest
 
+            receipt_draft = self._build_receipt_draft(
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                operation=resolved["operation"],
+                arguments=arguments,
+                agent_subject=resolved["auth_kwargs"].get("agent_subject"),
+                requested_spend_cents=resolved["requested_spend_cents"],
+                currency=resolved["auth_kwargs"].get("currency"),
+                vendor_id=resolved["auth_kwargs"].get("vendor_id"),
+                entry=resolved["entry"],
+                auth=auth,
+                authorized_at_ms=authorized_at_ms,
+                policy_digest=evidence_policy_digest,
+                execute_started_at_ms=execute_started_at_ms,
+                tool_result=tool_result,
+                evidence=evidence,
+                external_attestations=external_attestations,
+            )
+
             return PaybondInterceptWrapExecuteResult(
                 tool_result=tool_result,
                 authorization=authorization,
                 evidence=evidence,
+                receipt_draft=receipt_draft,
             )
         finally:
             self._end_in_flight()
@@ -533,6 +585,7 @@ class PaybondToolInterceptor:
             else:
                 spend_cents = min(spend_cents, sandbox_spend)
 
+        agent_context = self._binding.agent_context
         return {
             "operation": resolved_operation,
             "requested_spend_cents": spend_cents,
@@ -546,9 +599,12 @@ class PaybondToolInterceptor:
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
                 "currency": currency,
-                "agent_subject": agent_subject,
+                "agent_subject": agent_subject or (agent_context.operator_did if agent_context else None),
                 "approval_token": approval_token,
                 "idempotency_key": idempotency_key,
+                "model_family": agent_context.model_family if agent_context else None,
+                "config_hash_hex": agent_context.config_hash_hex if agent_context else None,
+                "prompt_hash_hex": agent_context.prompt_hash_hex if agent_context else None,
             },
         }
 
@@ -595,11 +651,15 @@ class PaybondToolInterceptor:
                     },
                     idempotency_key=idempotency_key,
                 )
+                payload_digest = getattr(result, "payload_digest", None)
+                artifacts_digest = getattr(result, "artifacts_digest", None)
                 return PaybondInterceptEvidenceResult(
                     submitted=True,
                     intent_id=str(result.intent_id),
                     predicate_passed=result.predicate_passed,
                     sandbox_lifecycle_status=result.sandbox_lifecycle_status,
+                    payload_digest_sha256_hex=(payload_digest or "").strip().lower() or None,
+                    artifacts_digest_sha256_hex=(artifacts_digest or "").strip().lower() or None,
                 )
 
             production_evidence = self._binding.production_evidence
@@ -634,22 +694,195 @@ class PaybondToolInterceptor:
 
             intent_state = None
             predicate_passed = None
+            payload_digest = None
+            artifacts_digest = None
             if isinstance(result, dict):
                 intent_state = result.get("intent_state") or result.get("state")
                 if isinstance(result.get("predicate_passed"), bool):
                     predicate_passed = result["predicate_passed"]
+                if isinstance(result.get("payload_digest"), str):
+                    payload_digest = result["payload_digest"].strip().lower() or None
+                if isinstance(result.get("artifacts_digest"), str):
+                    artifacts_digest = result["artifacts_digest"].strip().lower() or None
 
             return PaybondInterceptEvidenceResult(
                 submitted=True,
                 intent_id=str(intent_id),
                 intent_state=str(intent_state) if intent_state is not None else None,
                 predicate_passed=predicate_passed,
+                payload_digest_sha256_hex=payload_digest,
+                artifacts_digest_sha256_hex=artifacts_digest,
             )
         except PaybondEvidenceSubmitError:
             raise
         except Exception as exc:
             message = str(exc) if str(exc) else "auto-evidence submission failed"
             raise PaybondEvidenceSubmitError(message, tool_result, cause=exc) from exc
+
+    def _build_receipt_draft(
+        self,
+        *,
+        tool_name: str,
+        tool_call_id: str,
+        operation: str,
+        arguments: Any,
+        agent_subject: str | None,
+        requested_spend_cents: int,
+        currency: str | None,
+        vendor_id: str | None,
+        entry: PaybondSideEffectingToolEntry,
+        auth: Any,
+        authorized_at_ms: int,
+        policy_digest: str | None,
+        execute_started_at_ms: int,
+        tool_result: Any,
+        evidence: PaybondInterceptEvidenceResult,
+        external_attestations: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any] | None:
+        """Composes an unsigned Agent Receipt Standard draft (Phase 1) after a successful
+        authorize -> execute -> evidence cycle. Never signed or persisted here; Phase 2 covers
+        compose/sign/persist. Best-effort: returns ``None`` instead of raising whenever required
+        receipt fields (agent context, principal/operator DID, policy template, pinned policy
+        digest, or a Harbor decision id) are unavailable on this binding or call.
+        """
+        try:
+            agent_context = self._binding.agent_context
+            if agent_context is None or not (
+                agent_context.operator_did and agent_context.principal_did and agent_context.policy_template_id
+            ):
+                return None
+            if not (agent_context.config_hash_hex and agent_context.prompt_hash_hex):
+                return None
+            if auth.decision_id is None or not policy_digest:
+                return None
+
+            actor_subject = agent_subject or agent_context.operator_did
+            bare_digest = policy_digest[len("sha256:") :] if policy_digest.startswith("sha256:") else policy_digest
+
+            completed_at_ms = int(time.time() * 1000)
+            arguments_digest = value_digest_sha256_hex(arguments)
+            try:
+                result_digest: str | None = value_digest_sha256_hex(tool_result)
+            except Exception:
+                result_digest = None
+
+            harbor_state = evidence.intent_state or evidence.sandbox_lifecycle_status or "evidence_submitted"
+
+            merchant: dict[str, Any] | None = None
+            evidence_block: dict[str, Any] | None = None
+            payee_did = (
+                self._binding.production_evidence.get("payee_did")
+                if self._binding.production_evidence is not None
+                else None
+            )
+            if payee_did and evidence.payload_digest_sha256_hex:
+                merchant = {"payee_did": payee_did}
+                if vendor_id:
+                    merchant["vendor_id"] = vendor_id
+                evidence_block = {
+                    "completion_preset_id": entry.evidence_preset,
+                    "payload_digest_sha256_hex": evidence.payload_digest_sha256_hex,
+                    "predicate_passed": bool(evidence.predicate_passed),
+                    "payee_did": payee_did,
+                }
+                if evidence.artifacts_digest_sha256_hex:
+                    evidence_block["artifacts_digest_sha256_hex"] = evidence.artifacts_digest_sha256_hex
+
+            draft: dict[str, Any] = {
+                "schema_version": AGENT_RECEIPT_SCHEMA_VERSION,
+                "kind": AGENT_RECEIPT_KIND_V1,
+                "receipt_version": AGENT_RECEIPT_VERSION_V1,
+                "scope": AGENT_RECEIPT_SCOPE_ACTION,
+                "receipt_id": action_receipt_id(str(self._binding.intent_id), tool_call_id),
+                "issued_at": _epoch_ms_to_rfc3339(completed_at_ms),
+                "tenant_id": self._binding.tenant_id,
+                "authorization": {
+                    "principal_did": agent_context.principal_did,
+                    "actor_subject": actor_subject,
+                    "agent": {
+                        "operator_did": agent_context.operator_did,
+                        "model_family": agent_context.model_family,
+                        **(
+                            {"model_instance_id": agent_context.model_instance_id}
+                            if agent_context.model_instance_id
+                            else {}
+                        ),
+                        "config_hash_sha256_hex": agent_context.config_hash_hex,
+                        "prompt_hash_sha256_hex": agent_context.prompt_hash_hex,
+                    },
+                    "decision_id": str(auth.decision_id),
+                    "audit_id": str(auth.audit_id),
+                    "policy": {
+                        "template_id": agent_context.policy_template_id,
+                        "content_digest_sha256_hex": bare_digest,
+                    },
+                    "authorized_at": _epoch_ms_to_rfc3339(authorized_at_ms),
+                    "requested_spend_cents": requested_spend_cents,
+                    "currency": (currency or "usd").lower(),
+                },
+                "execution": {
+                    "run_id": self._binding.run_id,
+                    "tool_call_id": tool_call_id,
+                    "tool_name": tool_name,
+                    "operation": operation,
+                    "arguments_digest_sha256_hex": arguments_digest,
+                    **(
+                        {"result_digest_sha256_hex": result_digest}
+                        if result_digest is not None
+                        else {}
+                    ),
+                    "outcome": "executed",
+                    "started_at": _epoch_ms_to_rfc3339(execute_started_at_ms),
+                    "completed_at": _epoch_ms_to_rfc3339(completed_at_ms),
+                    "duration_ms": max(0, completed_at_ms - execute_started_at_ms),
+                },
+                "outcome": {
+                    "harbor_state": harbor_state,
+                    "spend_reservation_outcome": "consumed",
+                    **(
+                        {"predicate_passed": evidence.predicate_passed}
+                        if evidence.predicate_passed is not None
+                        else {}
+                    ),
+                },
+                "references": {
+                    "intent_id": str(self._binding.intent_id),
+                    "settlement_receipt_id": None,
+                },
+                "external_attestations": external_attestations or [],
+                "signing_algorithm": AGENT_RECEIPT_SIGNING_ALGORITHM_ED25519,
+                "message_digest_sha256_hex": "",
+                "signing_public_key_ed25519_hex": "",
+                "ed25519_signature_hex": "",
+            }
+            if merchant is not None:
+                draft["merchant"] = merchant
+            if evidence_block is not None:
+                draft["evidence"] = evidence_block
+
+            draft["message_digest_sha256_hex"] = agent_receipt_message_digest_sha256_hex(draft)
+            return draft
+        except Exception:
+            # Draft composition is always best-effort; never fails tool execution (Phase 1).
+            return None
+
+    def _resolve_tool_external_attestations(
+        self,
+        entry: PaybondSideEffectingToolEntry,
+        tool_result: Any,
+        ctx: PaybondToolCallContext,
+    ) -> list[dict[str, Any]]:
+        mapper = entry.external_attestation_mapper
+        if mapper is None:
+            return []
+        try:
+            mapped = mapper(tool_result, ctx)
+            if mapped is None:
+                return []
+            inputs = mapped if isinstance(mapped, list) else [mapped]
+            return [dict(item) for item in resolve_external_attestations(inputs)]
+        except Exception:
+            return []
 
 
 __all__ = [

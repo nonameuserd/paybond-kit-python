@@ -26,6 +26,18 @@ class _CapabilityVerifier(Protocol):
         token: str,
         operation: str,
         requested_spend_cents: int = 0,
+        vendor_id: str | None = None,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        tool_call_id: str | None = None,
+        tool_name: str | None = None,
+        currency: str | None = None,
+        agent_subject: str | None = None,
+        approval_token: str | None = None,
+        idempotency_key: str | None = None,
+        model_family: str | None = None,
+        config_hash_hex: str | None = None,
+        prompt_hash_hex: str | None = None,
     ) -> VerifyCapabilityResult: ...
 
 

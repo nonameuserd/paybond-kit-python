@@ -26,6 +26,16 @@ class AuditExportListPage:
 
 
 @dataclass(frozen=True)
+class AuditExportCreateFilter:
+    time_start: str | None = None
+    time_end: str | None = None
+    intent_id: str | None = None
+    case_id: str | None = None
+    operator_did: str | None = None
+    includes: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
 class AuditExportJobDetail:
     id: str
     status: str
@@ -37,6 +47,9 @@ class AuditExportJobDetail:
     manifest_sha256: str
     bundle_sha256: str
     download_token: str | None = None
+    bundle_size_bytes: int | None = None
+    download_token_expires: str | None = None
+    download_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -102,17 +115,32 @@ def parse_audit_export_job_get(json: Any) -> AuditExportJobGetResponse:
     job_raw = body.get("job", body)
     job_obj = _assert_json_object(job_raw, "job")
     download_token = job_obj.get("download_token")
+    bundle_size = job_obj.get("bundle_size_bytes")
+    download_token_expires = job_obj.get("download_token_expires") or job_obj.get(
+        "download_token_expires_at"
+    )
+    download_path = job_obj.get("download_path")
+    created_at = job_obj.get("created_at")
     return AuditExportJobGetResponse(
         job=AuditExportJobDetail(
             id=_read_string(job_obj.get("id") or job_obj.get("job_id"), "job.id"),
             status=_read_string(job_obj.get("status"), "job.status"),
             tenant_realm_id=_read_string(job_obj.get("tenant_realm_id"), "job.tenant_realm_id"),
             disclosure_tier=_read_string(job_obj.get("disclosure_tier"), "job.disclosure_tier"),
-            created_at=_read_string(job_obj.get("created_at"), "job.created_at"),
+            created_at=str(created_at) if isinstance(created_at, str) else "",
             expires_at=_read_string(job_obj.get("expires_at"), "job.expires_at"),
             error=str(job_obj.get("error") or ""),
             manifest_sha256=str(job_obj.get("manifest_sha256") or ""),
             bundle_sha256=str(job_obj.get("bundle_sha256") or ""),
             download_token=str(download_token).strip() if download_token else None,
+            bundle_size_bytes=int(bundle_size)
+            if isinstance(bundle_size, (int, float)) and float(bundle_size).is_integer()
+            else None,
+            download_token_expires=str(download_token_expires).strip()
+            if isinstance(download_token_expires, str) and download_token_expires.strip()
+            else None,
+            download_path=str(download_path).strip()
+            if isinstance(download_path, str) and download_path.strip()
+            else None,
         )
     )

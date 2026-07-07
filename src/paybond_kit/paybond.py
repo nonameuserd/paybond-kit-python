@@ -190,6 +190,7 @@ class PaybondIntents:
         *,
         recognition_proof: Mapping[str, Any],
         payment_signature: str | None = None,
+        payment_authorization: str | None = None,
         idempotency_key: str | None = None,
     ) -> FundIntentResult:
         """
@@ -197,11 +198,15 @@ class PaybondIntents:
 
         When Harbor responds with ``402``, use the returned ``payment_required`` challenge with
         your x402 wallet or facilitator, then retry with ``payment_signature=...``.
+
+        For MPP Payment Auth through the gateway, pass ``payment_authorization``; Kit sends it as
+        ``x-paybond-payment-authorization: Payment …`` so ``Authorization: Bearer`` stays free.
         """
         return await self._harbor.fund_intent(
             intent_id,
             recognition_proof=recognition_proof,  # type: ignore[call-arg]
             payment_signature=payment_signature,
+            payment_authorization=payment_authorization,
             idempotency_key=idempotency_key,
         )
 
@@ -228,6 +233,74 @@ class PaybondIntents:
             intent_id=intent_id,
             recognition_proof=recognition_proof,
             sign_payment=sign_payment,
+            issue_recognition_proof=issue_recognition_proof,
+            poll_options=poll_options,
+            fund=lambda **kwargs: self.fund(
+                intent_id,
+                idempotency_key=idempotency_key,
+                **kwargs,
+            ),
+        )
+
+    async def fund_with_mpp_charge(
+        self,
+        intent_id: UUID,
+        *,
+        recognition_proof: Mapping[str, Any],
+        create_payment_credential: Callable[[str], Awaitable[str]],
+        issue_recognition_proof: Callable[
+            ["FundRequestEnvelope"], Awaitable[Mapping[str, Any]]
+        ],
+        poll_options: "MppFundPollOptions | None" = None,
+        idempotency_key: str | None = None,
+    ) -> FundIntentResult:
+        """
+        One-shot Stripe MPP charge fund flow: create Payment Auth credentials from 402 challenges,
+        retry with ``payment_authorization``, and poll until funded.
+
+        MPP wallet and SPT secrets stay app-owned — pass injectable ``create_payment_credential``
+        and ``issue_recognition_proof``.
+        """
+        from paybond_kit.mpp_funding import execute_fund_with_mpp_charge
+
+        return await execute_fund_with_mpp_charge(
+            intent_id=intent_id,
+            recognition_proof=recognition_proof,
+            create_payment_credential=create_payment_credential,
+            issue_recognition_proof=issue_recognition_proof,
+            poll_options=poll_options,
+            fund=lambda **kwargs: self.fund(
+                intent_id,
+                idempotency_key=idempotency_key,
+                **kwargs,
+            ),
+        )
+
+    async def fund_with_mpp_session(
+        self,
+        intent_id: UUID,
+        *,
+        recognition_proof: Mapping[str, Any],
+        create_payment_credential: Callable[[str], Awaitable[str]],
+        issue_recognition_proof: Callable[
+            ["FundRequestEnvelope"], Awaitable[Mapping[str, Any]]
+        ],
+        poll_options: "MppFundPollOptions | None" = None,
+        idempotency_key: str | None = None,
+    ) -> FundIntentResult:
+        """
+        Tempo MPP session fund flow: open a session channel deposit via Payment Auth credentials,
+        retry with ``payment_authorization``, and poll until the intent is funded.
+
+        MPP wallet and SPT secrets stay app-owned — pass injectable ``create_payment_credential``
+        and ``issue_recognition_proof``.
+        """
+        from paybond_kit.mpp_funding import execute_fund_with_mpp_session
+
+        return await execute_fund_with_mpp_session(
+            intent_id=intent_id,
+            recognition_proof=recognition_proof,
+            create_payment_credential=create_payment_credential,
             issue_recognition_proof=issue_recognition_proof,
             poll_options=poll_options,
             fund=lambda **kwargs: self.fund(
@@ -536,30 +609,11 @@ class Paybond:
 
         return await instrument_paybond_mcp(self, kwargs)
 
-    async def agent(
-        self,
-        *,
-        policy: "PaybondPolicyLoadSource",
-        tools: Any,
-        framework: "GuardedAgentFramework | None" = None,
-        bootstrap: Any | None = None,
-        attach: Any | None = None,
-        run_id: str | None = None,
-        validate_policy: bool | Mapping[str, Any] | None = None,
-    ) -> "PaybondAgentResult":
-        from paybond_kit.agent.facade import create_paybond_agent
-        from paybond_kit.agent.facade import PaybondAgentResult
+    @property
+    def agent(self) -> "PaybondAgentFacade":
+        from paybond_kit.agent.receipt_client import PaybondAgentFacade
 
-        return await create_paybond_agent(
-            self,
-            policy=policy,
-            tools=tools,
-            framework=framework,
-            bootstrap=bootstrap,
-            attach=attach,
-            run_id=run_id,
-            validate_policy=validate_policy,
-        )
+        return PaybondAgentFacade(self, self.protocol)
 
     def wrap_tools(
         self,

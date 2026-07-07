@@ -967,3 +967,39 @@ def test_mcp_stdio_stdout_contract_is_mcp_pure(tmp_path) -> None:
         process.terminate()
         process.wait(timeout=2)
 
+
+@pytest.mark.asyncio
+async def test_mcp_agent_receipt_resource_reads_gateway_receipt() -> None:
+    receipt_id = "0ab0f1c2b58543f4753b23fec340f16c931e43d102898606a08acbee37a1e484"
+    with respx.mock(assert_all_called=True) as router:
+        router.get("https://gateway.test/v1/auth/principal").respond(
+            200,
+            json={"tenant_id": "tenant-a", "roles": ["operator"], "subject": "svc"},
+        )
+        router.get(f"https://gateway.test/protocol/v2/agent-receipts/{receipt_id}").respond(
+            200,
+            json={
+                "tenant_id": "tenant-a",
+                "receipt_id": receipt_id,
+                "kind": "paybond.agent_receipt_v1",
+            },
+        )
+        server = build_mcp_server(
+            PaybondMCPSettings(
+                gateway_base_url="https://gateway.test",
+                api_key=_api_key(),
+            )
+        )
+        try:
+            templates = await server.list_resource_templates()
+            assert any(
+                template.uriTemplate == "paybond://receipt/{receipt_id}"
+                for template in templates
+            )
+            contents = await server.read_resource(f"paybond://receipt/{receipt_id}")
+            assert contents[0].mime_type == "application/json"
+            body = json.loads(contents[0].content)
+            assert body["receipt_id"] == receipt_id
+        finally:
+            await _close_server(server)
+

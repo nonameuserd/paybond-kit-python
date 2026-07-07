@@ -153,10 +153,10 @@ async def handle_dev_smoke(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
         _assert_offline_dev_credentials_safe(ctx)
         with offline_dev_http_context():
             result = await _run_dev_smoke_core(ctx, preset, offline=True)
-            schedule_cli_command_telemetry(ctx, command_path="dev smoke", offline=True)
+            await schedule_cli_command_telemetry(ctx, command_path="dev smoke", offline=True)
             return result
     result = await _run_dev_smoke_core(ctx, preset, offline=False)
-    schedule_cli_command_telemetry(ctx, command_path="dev smoke", offline=False)
+    await schedule_cli_command_telemetry(ctx, command_path="dev smoke", offline=False)
     return result
 
 
@@ -342,7 +342,7 @@ async def handle_dev_loop(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
         trace_url = str(smoke_data.get("trace_url") or dev_trace_url())
         audit_log = str(smoke_data.get("audit_log") or str(Path(ctx.cwd) / ".paybond/dev-audit.jsonl"))
         smoke_checklist = list(smoke_data.get("checklist_lines") or [])
-        schedule_cli_command_telemetry(ctx, command_path="dev loop", offline=offline)
+        await schedule_cli_command_telemetry(ctx, command_path="dev loop", offline=offline)
         return {
             "offline": offline,
             "steps": steps,

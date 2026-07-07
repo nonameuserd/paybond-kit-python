@@ -44,6 +44,9 @@ class _FakeHarbor:
         agent_subject: str | None = None,
         approval_token: str | None = None,
         idempotency_key: str | None = None,
+        model_family: str | None = None,
+        config_hash_hex: str | None = None,
+        prompt_hash_hex: str | None = None,
     ) -> VerifyCapabilityResult:
         self.calls.append(
             {
@@ -60,6 +63,9 @@ class _FakeHarbor:
                 "agent_subject": agent_subject,
                 "approval_token": approval_token,
                 "idempotency_key": idempotency_key,
+                "model_family": model_family,
+                "config_hash_hex": config_hash_hex,
+                "prompt_hash_hex": prompt_hash_hex,
             }
         )
         return self.result
@@ -113,6 +119,9 @@ async def test_runtime_tool_call_adapter_executes_after_allow() -> None:
             "agent_subject": None,
             "approval_token": None,
             "idempotency_key": None,
+            "model_family": None,
+            "config_hash_hex": None,
+            "prompt_hash_hex": None,
         }
     ]
     assert executed == ["NYC"]

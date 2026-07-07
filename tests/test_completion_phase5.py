@@ -97,7 +97,7 @@ def test_phase52_vendor_packs_declare_rail_hints_and_forbidden_fields() -> None:
     x402 = next(preset for preset in catalog["presets"] if preset["preset_id"] == "x402_paid_api_ok")
     assert ach.get("rail_hints") == ["stripe_ach_debit"]
     assert "payment_intent_id" in (ach.get("forbidden_evidence_fields") or [])
-    assert x402.get("rail_hints") == ["x402_usdc_base"]
+    assert x402.get("rail_hints") == ["x402_usdc_base", "stripe_mpp"]
     assert "payment_session_id" in (x402.get("forbidden_evidence_fields") or [])
 
 

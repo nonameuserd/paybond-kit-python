@@ -9,6 +9,7 @@ from paybond_kit.agent.registry import PaybondToolRegistry
 from paybond_kit.agent.types import PaybondToolRegistryValidationError
 from paybond_kit.completion_resolve import resolve_completion_preset
 from paybond_kit.harbor import SettlementRail
+from paybond_kit.mpp_commercial import validate_usd_denominated_settlement
 from paybond_kit.policy.registry import policy_to_tool_registry
 from paybond_kit.policy.schema import PaybondPolicyDocumentV1
 
@@ -255,6 +256,7 @@ def policy_to_intent_create_input(
         currency=currency,
         amount_cents=amount_cents,
     )
+    validate_usd_denominated_settlement(settlement_rail, resolved_currency)
 
     resolved_preset_id = completion_preset_id or _resolve_evidence_preset_for_operations(
         registry,

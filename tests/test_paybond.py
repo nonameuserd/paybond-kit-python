@@ -40,6 +40,40 @@ async def test_paybond_intents_create_rejects_unknown_settlement_rail() -> None:
 
 
 @pytest.mark.asyncio
+async def test_paybond_intents_create_accepts_stripe_mpp_settlement_rail() -> None:
+    captured: dict[str, object] = {}
+
+    class _Harbor:
+        async def create_intent(
+            self,
+            body: dict[str, object],
+            *,
+            recognition_proof: dict[str, object] | None = None,
+            idempotency_key: str | None = None,
+        ) -> dict[str, object]:
+            captured["settlement_rail"] = body.get("settlement_rail")
+            return {"intent_id": str(uuid.uuid4()), "settlement_rail": body.get("settlement_rail")}
+
+    intents = PaybondIntents(cast(HarborClient, _Harbor()), "tenant-a")
+    await intents.create(
+        principal_did="did:web:example.com#principal",
+        principal_signing_seed=b"\x01" * 32,
+        payee_did="did:web:example.com#payee",
+        payee_signing_seed=b"\x02" * 32,
+        budget={"currency": "usd", "max_spend_usd": 10},
+        predicate={"version": 1, "root": {"op": "true"}},
+        currency="usd",
+        amount_cents=1000,
+        evidence_schema={"type": "object"},
+        deadline_rfc3339="2030-01-01T00:00:00Z",
+        allowed_tools=["payments.capture"],
+        settlement_rail="stripe_mpp",
+        recognition_proof={},
+    )
+    assert captured["settlement_rail"] == "stripe_mpp"
+
+
+@pytest.mark.asyncio
 async def test_paybond_intents_confirm_settlement_delegates_to_harbor() -> None:
     intent_id = uuid.uuid4()
 

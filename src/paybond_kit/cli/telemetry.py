@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import os
@@ -99,14 +98,10 @@ async def report_cli_command_success(
         return
 
 
-def schedule_cli_command_telemetry(
+async def schedule_cli_command_telemetry(
     ctx: CliContext,
     *,
     command_path: CliTelemetryCommand,
     offline: bool,
 ) -> None:
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    loop.create_task(report_cli_command_success(ctx, command_path=command_path, offline=offline))
+    await report_cli_command_success(ctx, command_path=command_path, offline=offline)

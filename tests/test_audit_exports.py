@@ -13,6 +13,7 @@ from paybond_kit.mcp_policy import parse_mcp_tool_policy, tool_allowed_by_policy
 class _FakeGateway:
     def __init__(self) -> None:
         self.paths: list[str] = []
+        self.post_bodies: list[dict[str, Any]] = []
 
     async def get_json(self, path: str) -> dict[str, Any]:
         self.paths.append(path)
@@ -50,9 +51,53 @@ class _FakeGateway:
             }
         raise AssertionError(path)
 
+    async def post_json(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        self.paths.append(path)
+        self.post_bodies.append(body)
+        return {
+            "job": {
+                "id": "job-new",
+                "status": "ready",
+                "tenant_realm_id": "realm-1",
+                "disclosure_tier": body.get("disclosure_tier", "standard"),
+                "expires_at": "2026-02-01T00:00:00Z",
+                "manifest_sha256": "abc",
+                "bundle_sha256": "def",
+                "bundle_size_bytes": 1024,
+                "download_token": "tok",
+                "download_path": "/v1/compliance/audit-exports/job-new/bundle",
+            }
+        }
+
     async def delete_json(self, path: str) -> dict[str, Any]:
         self.paths.append(path)
         return {}
+
+
+@pytest.mark.asyncio
+async def test_paybond_audit_exports_create() -> None:
+    gateway = _FakeGateway()
+    exports = PaybondAuditExports.from_gateway(gateway)
+    body = await exports.create(
+        filter={
+            "time_start": "2026-01-01T00:00:00Z",
+            "time_end": "2026-01-31T23:59:59Z",
+            "includes": ["signal", "disputes"],
+        },
+        disclosure_tier="standard",
+        retention_hours=168,
+    )
+    assert body.job.id == "job-new"
+    assert body.job.bundle_size_bytes == 1024
+    assert gateway.post_bodies[0] == {
+        "filter": {
+            "time_start": "2026-01-01T00:00:00Z",
+            "time_end": "2026-01-31T23:59:59Z",
+            "includes": ["signal", "disputes"],
+        },
+        "disclosure_tier": "standard",
+        "retention_hours": 168,
+    }
 
 
 @pytest.mark.asyncio

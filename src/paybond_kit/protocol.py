@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, TypedDict
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -389,6 +389,84 @@ class GatewayProtocolClient:
         if not isinstance(body, dict):
             raise RuntimeError("protocol receipt verify response was not a JSON object")
         return body  # type: ignore[return-value]
+
+    async def get_agent_receipt_v1_by_id(self, receipt_id: str) -> dict[str, Any]:
+        path = f"protocol/v2/agent-receipts/{quote(receipt_id, safe='')}"
+        url = f"{self._base}{path}"
+        response = await self._request_with_retries("GET", path)
+        if response.status_code >= 400:
+            error_code, error_message = _parse_gateway_error_envelope(response.text)
+            raise ProtocolHttpError(
+                _protocol_http_error_message("agent receipt", response.status_code, response.text),
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+                error_code=error_code,
+                error_message=error_message,
+            )
+        body = response.json()
+        if not isinstance(body, dict):
+            raise RuntimeError("agent receipt response was not a JSON object")
+        echoed_receipt_id = str(body.get("receipt_id", "")).strip()
+        if echoed_receipt_id != receipt_id:
+            raise RuntimeError(
+                f"agent receipt mismatch: requested={receipt_id!r} gateway={echoed_receipt_id!r}"
+            )
+        tenant_id = str(body.get("tenant_id", "")).strip()
+        if tenant_id != self._tenant:
+            raise RuntimeError(
+                f"agent receipt tenant mismatch: client={self._tenant!r} gateway={tenant_id!r}"
+            )
+        return body
+
+    async def get_agent_receipt_v1_by_intent_tool_call(
+        self,
+        *,
+        intent_id: str,
+        tool_call_id: str,
+    ) -> dict[str, Any]:
+        params = urlencode({"intent_id": intent_id, "tool_call_id": tool_call_id})
+        path = f"protocol/v2/agent-receipts?{params}"
+        url = f"{self._base}{path}"
+        response = await self._request_with_retries("GET", path)
+        if response.status_code >= 400:
+            error_code, error_message = _parse_gateway_error_envelope(response.text)
+            raise ProtocolHttpError(
+                _protocol_http_error_message("agent receipt lookup", response.status_code, response.text),
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+                error_code=error_code,
+                error_message=error_message,
+            )
+        body = response.json()
+        if not isinstance(body, dict):
+            raise RuntimeError("agent receipt lookup response was not a JSON object")
+        tenant_id = str(body.get("tenant_id", "")).strip()
+        if tenant_id != self._tenant:
+            raise RuntimeError(
+                f"agent receipt tenant mismatch: client={self._tenant!r} gateway={tenant_id!r}"
+            )
+        return body
+
+    async def verify_agent_receipt_v1(self, receipt: dict[str, Any]) -> dict[str, Any]:
+        path = "protocol/v2/agent-receipts/verify"
+        url = f"{self._base}{path}"
+        response = await self._request_with_retries("POST", path, json_body=dict(receipt))
+        if response.status_code >= 400:
+            error_code, error_message = _parse_gateway_error_envelope(response.text)
+            raise ProtocolHttpError(
+                _protocol_http_error_message("agent receipt verify", response.status_code, response.text),
+                status_code=response.status_code,
+                url=url,
+                body_text=response.text,
+                error_code=error_code,
+                error_message=error_message,
+            )
+        body = response.json()
+        if not isinstance(body, dict):
+            raise RuntimeError("agent receipt verify response was not a JSON object")
+        return body
 
     async def create_harbor_intent(
         self,

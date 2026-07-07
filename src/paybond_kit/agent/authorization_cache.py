@@ -15,6 +15,7 @@ class CachedAuthorizationEntry(TypedDict):
     tool_name: str
     cached_at: float
     policy_digest: str | None
+    authorized_at_ms: int
 
 
 class AuthorizationCacheExpectation(TypedDict):

@@ -12,11 +12,15 @@ from paybond_kit.guardrails import (
 )
 from paybond_kit.harbor import VerifyCapabilityResult
 
+from paybond_kit.agent_receipt import ConfigHashInput, config_hash_sha256_hex, prompt_hash_sha256_hex
+
 from paybond_kit.dev.trace_buffer import resolve_dev_trace_sink
 from paybond_kit.agent.registry import PaybondToolRegistry
 from paybond_kit.agent.types import (
     PaybondAgentRunBindConfig,
     PaybondAgentRunBindError,
+    PaybondRunAgentContext,
+    PaybondRunAgentContextInput,
     PaybondRunBinding,
     PaybondRunBindingAttachInput,
     PaybondRunBindingSandboxBootstrapInput,
@@ -56,6 +60,9 @@ class _AgentRunHarborHost(Protocol):
         agent_subject: str | None = None,
         approval_token: str | None = None,
         idempotency_key: str | None = None,
+        model_family: str | None = None,
+        config_hash_hex: str | None = None,
+        prompt_hash_hex: str | None = None,
     ) -> VerifyCapabilityResult: ...
 
     async def complete_spend_decision(
@@ -164,6 +171,66 @@ def _normalize_production_evidence(
         "agent_recognition_key_id": key_id,
         "agent_recognition_signing_seed": bytes(agent_seed),
     }
+
+
+def _bare_digest_hex(digest: str | None) -> str | None:
+    """Strips the leading ``sha256:`` scheme from a policy snapshot digest, if present."""
+    if not digest:
+        return None
+    trimmed = digest.strip()
+    return trimmed[len("sha256:") :] if trimmed.startswith("sha256:") else trimmed
+
+
+def _resolve_agent_context(
+    input_value: PaybondRunAgentContextInput | None,
+    snapshot: "PaybondPolicySnapshot | None",
+) -> PaybondRunAgentContext | None:
+    """Resolves optional Agent Receipt Standard agent context at bind time: auto-computes
+    ``config_hash_hex`` from ``config_hash_materials`` (per spec,
+    ``sha256(JCS({ system_prompt, tools_manifest, policy_snapshot_id }))``) and
+    ``prompt_hash_hex`` from ``normalized_user_prompt`` when precomputed hashes are not supplied
+    directly. Raw prompt text is hashed here and discarded; only the digest is retained.
+    """
+    if input_value is None:
+        return None
+
+    model_family = str(input_value["model_family"]).strip()
+    if not model_family:
+        raise PaybondAgentRunBindError("agent_context.model_family must be non-empty")
+
+    config_hash_hex = (input_value.get("config_hash_hex") or "").strip().lower() or None
+    materials = input_value.get("config_hash_materials")
+    if not config_hash_hex and materials is not None:
+        policy_snapshot_id = (materials.get("policy_snapshot_id") or "").strip() or _bare_digest_hex(
+            snapshot.digest if snapshot is not None else None
+        )
+        if not policy_snapshot_id:
+            raise PaybondAgentRunBindError(
+                "agent_context.config_hash_materials.policy_snapshot_id is required when no "
+                "policy_snapshot is bound"
+            )
+        config_hash_hex = config_hash_sha256_hex(
+            ConfigHashInput(
+                system_prompt=materials["system_prompt"],
+                tools_manifest=materials["tools_manifest"],
+                policy_snapshot_id=policy_snapshot_id,
+            )
+        )
+
+    prompt_hash_hex = (input_value.get("prompt_hash_hex") or "").strip().lower() or None
+    normalized_user_prompt = input_value.get("normalized_user_prompt")
+    if not prompt_hash_hex and normalized_user_prompt is not None:
+        prompt_hash_hex = prompt_hash_sha256_hex(normalized_user_prompt)
+
+    return PaybondRunAgentContext(
+        model_family=model_family,
+        model_instance_id=(input_value.get("model_instance_id") or "").strip() or None,
+        config_hash_hex=config_hash_hex,
+        prompt_hash_hex=prompt_hash_hex,
+        principal_did=(input_value.get("principal_did") or "").strip() or None,
+        operator_did=(input_value.get("operator_did") or "").strip() or None,
+        policy_template_id=(input_value.get("policy_template_id") or "").strip() or None,
+    )
 
 
 def _assert_exclusive_bind_mode(config: PaybondAgentRunBindConfig) -> None:
@@ -428,6 +495,7 @@ class PaybondAgentRun:
         registry = snapshot.registry if snapshot is not None else registry
         registry.validate_for_bind(list(allowed_tools))
         guard = paybond.spend_guard(intent_id, capability_token)
+        agent_context = _resolve_agent_context(config.get("agent_context"), snapshot)
         binding = PaybondRunBinding(
             run_id=run_id,
             tenant_id=tenant_id,
@@ -440,6 +508,7 @@ class PaybondAgentRun:
             production_evidence=production_evidence,
             policy_snapshot=snapshot,
             on_trace=config.get("trace_sink") or config.get("on_trace") or resolve_dev_trace_sink(),
+            agent_context=agent_context,
         )
         policy_file_path = (config.get("policy_file") or "").strip() or None
         run = cls(binding, paybond, current_snapshot=snapshot, policy_file_path=policy_file_path)

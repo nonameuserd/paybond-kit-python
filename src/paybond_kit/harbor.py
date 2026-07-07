@@ -22,9 +22,14 @@ import httpx
 
 from paybond_kit.credentials import normalize_gateway_base_url
 from paybond_kit.gateway_retry import httpx_with_gateway_retries
+from paybond_kit.payment_transport import (
+    append_direct_harbor_payment_authorization,
+    payment_authorization_gateway_header,
+    read_fund_payment_transport_headers,
+)
 
-SettlementRail: TypeAlias = Literal["stripe_connect", "stripe_ach_debit", "x402_usdc_base"]
-_SETTLEMENT_RAIL_VALUES = frozenset({"stripe_connect", "stripe_ach_debit", "x402_usdc_base"})
+SettlementRail: TypeAlias = Literal["stripe_connect", "stripe_ach_debit", "stripe_mpp", "x402_usdc_base"]
+_SETTLEMENT_RAIL_VALUES = frozenset({"stripe_connect", "stripe_ach_debit", "stripe_mpp", "x402_usdc_base"})
 
 
 def validate_settlement_rail(value: str, *, field: str = "settlement_rail") -> SettlementRail:
@@ -139,6 +144,9 @@ def _verify_capability_payload(
     agent_subject: str | None = None,
     approval_token: str | None = None,
     idempotency_key: str | None = None,
+    model_family: str | None = None,
+    config_hash_hex: str | None = None,
+    prompt_hash_hex: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "intent_id": str(intent_id),
@@ -164,6 +172,14 @@ def _verify_capability_payload(
         payload["approval_token"] = approval_token.strip()
     if idempotency_key and idempotency_key.strip():
         payload["idempotency_key"] = idempotency_key.strip()
+    # Agent Receipt Standard context (Phase 1): forwarded to Gateway `/verify` on every call
+    # for spend-decision audit correlation. See `go/gateway/internal/spendauth/types.go` `VerifyRequest`.
+    if model_family and model_family.strip():
+        payload["model_family"] = model_family.strip()
+    if config_hash_hex and config_hash_hex.strip():
+        payload["config_hash_hex"] = config_hash_hex.strip().lower()
+    if prompt_hash_hex and prompt_hash_hex.strip():
+        payload["prompt_hash_hex"] = prompt_hash_hex.strip().lower()
     return payload
 
 
@@ -204,6 +220,20 @@ class IntentFundingResult:
     capture_expires_at: str | None
     refund_expires_at: str | None
     onchain_transaction_hashes: dict[str, list[str]] | None
+    payment_auth_intent: str | None = None
+    payment_auth_method: str | None = None
+    challenge_id: str | None = None
+    settlement_asset: str | None = None
+    settlement_network: str | None = None
+    channel_id: str | None = None
+    session_protocol: str | None = None
+    deposit_amount_base_units: str | None = None
+    accepted_cumulative_base_units: str | None = None
+    pending_cumulative_base_units: str | None = None
+    descriptor_hash: str | None = None
+    last_voucher_at: str | None = None
+    last_settle_tx_hash: str | None = None
+    channel_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -213,6 +243,9 @@ class FundIntentResult:
     status_code: int
     payment_required: str | None
     payment_response: str | None
+    www_authenticate: list[str] | None
+    payment_receipt: str | None
+    cache_control: str | None
     intent_id: UUID
     tenant: str
     state: str
@@ -359,6 +392,9 @@ class HarborClient:
         agent_subject: str | None = None,
         approval_token: str | None = None,
         idempotency_key: str | None = None,
+        model_family: str | None = None,
+        config_hash_hex: str | None = None,
+        prompt_hash_hex: str | None = None,
     ) -> VerifyCapabilityResult:
         """
         Call ``POST /verify`` with a Biscuit capability token (PAYBOND-006).
@@ -384,6 +420,9 @@ class HarborClient:
             agent_subject=agent_subject,
             approval_token=approval_token,
             idempotency_key=idempotency_key,
+            model_family=model_family,
+            config_hash_hex=config_hash_hex,
+            prompt_hash_hex=prompt_hash_hex,
         )
         extra_headers = {}
         if idempotency_key and idempotency_key.strip():
@@ -474,6 +513,7 @@ class HarborClient:
         intent_id: UUID,
         *,
         payment_signature: str | None = None,
+        payment_authorization: str | None = None,
         idempotency_key: str | None = None,
     ) -> FundIntentResult:
         """
@@ -483,6 +523,9 @@ class HarborClient:
         - ``402`` with ``payment_required`` when a wallet or facilitator must sign
         - ``202`` while authorization is pending
         - ``200`` once the intent is funded
+
+        For MPP Payment Auth credentials on direct Harbor, pass ``payment_authorization``;
+        it is sent as a second ``Authorization: Payment …`` header alongside Bearer tenant JWT.
         """
         path = f"intents/{intent_id}/fund"
         url = f"{self._base}{path}"
@@ -491,7 +534,22 @@ class HarborClient:
             extra["idempotency-key"] = idempotency_key.strip()
         if payment_signature is not None and payment_signature.strip() != "":
             extra["payment-signature"] = payment_signature.strip()
-        response = await self._post_json_with_retries(path, extra, {})
+
+        if payment_authorization is not None and payment_authorization.strip():
+            auth_hdr = await self._authorization_header()
+            header_pairs: list[tuple[str, str]] = [
+                ("content-type", "application/json"),
+                ("x-tenant-id", self._tenant),
+                *auth_hdr.items(),
+                *extra.items(),
+            ]
+            append_direct_harbor_payment_authorization(header_pairs, payment_authorization)
+            response = await httpx_with_gateway_retries(
+                lambda: self._client.post(url, headers=header_pairs, json={}),
+                max_retries=self._max_retries,
+            )
+        else:
+            response = await self._post_json_with_retries(path, extra, {})
         if response.status_code not in (200, 202, 402):
             raise HarborHttpError(
                 f"Harbor fund intent HTTP {response.status_code}: {response.text}",
@@ -579,10 +637,14 @@ class HarborClient:
                 body_text=response.text,
             ) from exc
         capability_token = body.get("capability_token")
+        transport = read_fund_payment_transport_headers(response.headers)
         return FundIntentResult(
             status_code=response.status_code,
             payment_required=response.headers.get("payment-required"),
             payment_response=response.headers.get("payment-response"),
+            www_authenticate=transport.get("www_authenticate"),
+            payment_receipt=transport.get("payment_receipt"),
+            cache_control=transport.get("cache_control"),
             intent_id=echoed_intent_id,
             tenant=tenant,
             state=state,
@@ -972,6 +1034,9 @@ class GatewayHarborClient:
         agent_subject: str | None = None,
         approval_token: str | None = None,
         idempotency_key: str | None = None,
+        model_family: str | None = None,
+        config_hash_hex: str | None = None,
+        prompt_hash_hex: str | None = None,
     ) -> VerifyCapabilityResult:
         path = "verify"
         url = f"{self._base}{path}"
@@ -989,6 +1054,9 @@ class GatewayHarborClient:
             agent_subject=agent_subject,
             approval_token=approval_token,
             idempotency_key=idempotency_key,
+            model_family=model_family,
+            config_hash_hex=config_hash_hex,
+            prompt_hash_hex=prompt_hash_hex,
         )
         extra_headers = {}
         if idempotency_key and idempotency_key.strip():
@@ -1160,6 +1228,7 @@ class GatewayHarborClient:
         *,
         recognition_proof: Mapping[str, Any],
         payment_signature: str | None = None,
+        payment_authorization: str | None = None,
         idempotency_key: str | None = None,
     ) -> FundIntentResult:
         path = f"harbor/intents/{intent_id}/fund"
@@ -1167,6 +1236,8 @@ class GatewayHarborClient:
         extra_headers: dict[str, str] = {}
         if payment_signature is not None and payment_signature.strip():
             extra_headers["payment-signature"] = payment_signature.strip()
+        if payment_authorization is not None and payment_authorization.strip():
+            extra_headers.update(payment_authorization_gateway_header(payment_authorization))
         response = await self._post_json_with_retries(
             path,
             {},
@@ -1192,11 +1263,15 @@ class GatewayHarborClient:
                 url=url,
                 body_text=response.text,
             )
+        transport = read_fund_payment_transport_headers(response.headers)
         return _parse_fund_intent_response(
             body,
             status_code=response.status_code,
             payment_required=response.headers.get("payment-required"),
             payment_response=response.headers.get("payment-response"),
+            www_authenticate=transport.get("www_authenticate"),
+            payment_receipt=transport.get("payment_receipt"),
+            cache_control=transport.get("cache_control"),
             tenant_id=self._tenant,
             intent_id=intent_id,
             source="gateway",
@@ -1296,6 +1371,9 @@ def _parse_fund_intent_response(
     status_code: int,
     payment_required: str | None,
     payment_response: str | None,
+    www_authenticate: list[str] | None = None,
+    payment_receipt: str | None = None,
+    cache_control: str | None = None,
     tenant_id: str,
     intent_id: UUID,
     source: str,
@@ -1377,6 +1455,9 @@ def _parse_fund_intent_response(
         status_code=status_code,
         payment_required=payment_required,
         payment_response=payment_response,
+        www_authenticate=www_authenticate,
+        payment_receipt=payment_receipt,
+        cache_control=cache_control,
         intent_id=echoed_intent_id,
         tenant=tenant,
         state=state,
@@ -1470,6 +1551,26 @@ def _parse_intent_funding_result(value: dict[str, Any]) -> IntentFundingResult:
         capture_expires_at=_optional_nonempty_string(value.get("capture_expires_at")),
         refund_expires_at=_optional_nonempty_string(value.get("refund_expires_at")),
         onchain_transaction_hashes=onchain,
+        payment_auth_intent=_optional_nonempty_string(value.get("intent")),
+        payment_auth_method=_optional_nonempty_string(value.get("method")),
+        challenge_id=_optional_nonempty_string(value.get("challenge_id")),
+        settlement_asset=_optional_nonempty_string(value.get("settlement_asset")),
+        settlement_network=_optional_nonempty_string(value.get("settlement_network")),
+        channel_id=_optional_nonempty_string(value.get("channel_id")),
+        session_protocol=_optional_nonempty_string(value.get("session_protocol")),
+        deposit_amount_base_units=_optional_nonempty_string(
+            value.get("deposit_amount_base_units")
+        ),
+        accepted_cumulative_base_units=_optional_nonempty_string(
+            value.get("accepted_cumulative_base_units")
+        ),
+        pending_cumulative_base_units=_optional_nonempty_string(
+            value.get("pending_cumulative_base_units")
+        ),
+        descriptor_hash=_optional_nonempty_string(value.get("descriptor_hash")),
+        last_voucher_at=_optional_nonempty_string(value.get("last_voucher_at")),
+        last_settle_tx_hash=_optional_nonempty_string(value.get("last_settle_tx_hash")),
+        channel_status=_optional_nonempty_string(value.get("channel_status")),
     )
 
 

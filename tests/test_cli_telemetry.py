@@ -13,6 +13,7 @@ from paybond_kit.cli.telemetry import (
     hash_cli_install_id,
     report_cli_command_success,
     resolve_cli_install_id,
+    schedule_cli_command_telemetry,
 )
 
 
@@ -79,6 +80,44 @@ async def test_report_cli_command_success_posts_payload(
     assert isinstance(body, dict)
     assert body["command_path"] == "dev loop"
     assert body["offline"] is True
+
+
+@pytest.mark.asyncio
+async def test_schedule_cli_command_telemetry_awaits_post(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("PAYBOND_TELEMETRY", "1")
+
+    posted = False
+
+    class _Response:
+        status_code = 201
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, *_args, **_kwargs):
+            nonlocal posted
+            posted = True
+            return _Response()
+
+    ctx = CliContext(
+        globals=GlobalOptions(gateway="http://127.0.0.1:8081", format="json"),
+        cwd=tmp_path,
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+
+    with patch("paybond_kit.cli.telemetry.httpx.AsyncClient", return_value=_Client()):
+        await schedule_cli_command_telemetry(ctx, command_path="dev loop", offline=True)
+
+    assert posted is True
 
 
 def test_cli_telemetry_respects_config_opt_out(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

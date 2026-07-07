@@ -1,6 +1,7 @@
 """Compliance audit export SDK."""
 
 from paybond_kit.audit.exports import (
+    AuditExportCreateFilter,
     GatewayAuditExportsClient,
     GatewayAuditExportsClientOptions,
     PaybondAudit,
@@ -14,6 +15,7 @@ from paybond_kit.audit.verify import (
     verify_audit_manifest,
 )
 from paybond_kit.audit.wire import (
+    AuditExportCreateFilter,
     AuditExportJobDetail,
     AuditExportJobGetResponse,
     AuditExportJobSummary,
@@ -23,6 +25,7 @@ from paybond_kit.audit.wire import (
 )
 
 __all__ = [
+    "AuditExportCreateFilter",
     "AuditExportJobDetail",
     "AuditExportJobGetResponse",
     "AuditExportJobSummary",

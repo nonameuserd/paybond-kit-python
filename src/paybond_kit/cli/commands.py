@@ -728,7 +728,7 @@ async def _handle_intents_fund(
 def _redact_fund_intent_response(result: Any) -> dict[str, Any]:
     from dataclasses import asdict, is_dataclass
 
-    if not is_dataclass(result):
+    if not is_dataclass(result) or isinstance(result, type):
         redacted = redact_sensitive_fields(result)
         return redacted if isinstance(redacted, dict) else {"value": redacted}
     payload = asdict(result)
@@ -920,17 +920,19 @@ def handle_spend_authorize(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
 
 
 def handle_signal(ctx: CliContext, subcommand: str, argv: list[str]) -> dict[str, Any]:
-    principal = gateway_request(ctx, "GET", "/v1/auth/principal")
-    tenant_id = str(principal.get("tenant_id", ""))
     if subcommand == "portfolio":
-        return gateway_request(ctx, "GET", f"/signal/v1/tenants/{tenant_id}/portfolio/summary")
+        return gateway_request(ctx, "GET", "/signal/v1/portfolio/summary")
     _, did, _ = consume_flag(argv, "--did")
     if not did:
         raise CliError(f"signal {subcommand} requires --did", code="cli.usage.missing_did")
     if subcommand == "reputation":
-        return gateway_request(ctx, "GET", f"/signal/v1/tenants/{quote(tenant_id, safe='')}/reputation/{quote(did, safe='')}")
+        return gateway_request(ctx, "GET", f"/reputation/{quote(did, safe='')}")
     if subcommand == "fraud":
-        return gateway_request(ctx, "GET", f"/fraud/v1/tenants/{quote(tenant_id, safe='')}/assessments/{quote(did, safe='')}")
+        return gateway_request(
+            ctx,
+            "GET",
+            f"/signal/v1/operators/{quote(did, safe='')}/review-status",
+        )
     raise CliError(f"unknown signal subcommand: {subcommand}", code="cli.usage.unknown_command")
 
 
@@ -938,6 +940,14 @@ def handle_receipts(ctx: CliContext, subcommand: str, argv: list[str]) -> dict[s
     receipt_id = argv[0] if argv else ""
     if not receipt_id:
         raise CliError(f"receipts {subcommand} requires <receipt_id>", code="cli.usage.missing_receipt_id")
+    _, kind, rest = consume_flag(argv[1:], "--kind")
+    receipt_kind = (kind or "protocol").strip().lower()
+    if receipt_kind == "agent":
+        if subcommand == "get":
+            return gateway_request(ctx, "GET", f"/protocol/v2/agent-receipts/{receipt_id}")
+        if subcommand == "verify":
+            fetched = gateway_request(ctx, "GET", f"/protocol/v2/agent-receipts/{receipt_id}")
+            return gateway_request(ctx, "POST", "/protocol/v2/agent-receipts/verify", fetched)
     if subcommand == "get":
         return gateway_request(ctx, "GET", f"/protocol/v2/receipts/{receipt_id}")
     if subcommand == "verify":
@@ -954,7 +964,7 @@ def handle_mandates(ctx: CliContext, subcommand: str, argv: list[str]) -> dict[s
     if subcommand == "verify":
         return gateway_request(ctx, "POST", "/protocol/v2/mandates/verify", payload)
     if subcommand == "import":
-        return gateway_request(ctx, "POST", "/protocol/v2/mandates/import", payload)
+        return gateway_request(ctx, "POST", "/protocol/v2/mandates", payload)
     raise CliError(f"unknown mandates subcommand: {subcommand}", code="cli.usage.unknown_command")
 
 

@@ -13,8 +13,17 @@ if TYPE_CHECKING:
 TArgs = TypeVar("TArgs")
 TResult = TypeVar("TResult")
 
+from paybond_kit.agent_receipt_external_attestations import (
+    PaybondExternalAttestationInput,
+    resolve_external_attestations,
+)
+
 PaybondSpendResolver = Callable[[Any], int | None]
 PaybondEvidenceMapper = Callable[[Any, "PaybondToolCallContext"], Mapping[str, Any]]
+PaybondExternalAttestationMapper = Callable[
+    [Any, "PaybondToolCallContext"],
+    PaybondExternalAttestationInput | list[PaybondExternalAttestationInput] | None,
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +43,7 @@ class PaybondSideEffectingToolPolicy(TypedDict, total=False):
     spend_cents: int | PaybondSpendResolver
     evidence_preset: str
     evidence_mapper: PaybondEvidenceMapper
+    external_attestation_mapper: PaybondExternalAttestationMapper
 
 
 class PaybondToolRegistryConfig(TypedDict, total=False):
@@ -48,6 +58,7 @@ class PaybondSideEffectingToolEntry:
     evidence_preset: str
     spend_cents: int | PaybondSpendResolver | None = None
     evidence_mapper: PaybondEvidenceMapper | None = None
+    external_attestation_mapper: PaybondExternalAttestationMapper | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +160,7 @@ class PaybondRunBinding:
     production_evidence: PaybondRunProductionEvidenceCredentials | None = None
     policy_snapshot: "PaybondPolicySnapshot | None" = None
     on_trace: PaybondTraceSink | None = None
+    agent_context: "PaybondRunAgentContext | None" = None
 
 
 class PaybondAgentRunBindConfig(TypedDict, total=False):
@@ -161,6 +173,7 @@ class PaybondAgentRunBindConfig(TypedDict, total=False):
     reload: Any
     trace_sink: PaybondTraceSink
     on_trace: PaybondTraceSink
+    agent_context: "PaybondRunAgentContextInput"
 
 
 class _PaybondAuthorizeToolCallInputRequired(TypedDict):
@@ -179,6 +192,49 @@ class PaybondAuthorizeToolCallInput(_PaybondAuthorizeToolCallInputRequired, tota
     agent_subject: str
     approval_token: str
     idempotency_key: str
+
+
+class PaybondRunConfigHashMaterials(TypedDict):
+    """Materials to auto-compute ``config_hash_hex`` per the Agent Receipt Standard spec:
+    ``sha256(JCS({ system_prompt, tools_manifest, policy_snapshot_id }))``. ``policy_snapshot_id``
+    defaults to the bound policy snapshot digest (without the ``sha256:`` prefix) when omitted."""
+
+    system_prompt: str
+    tools_manifest: Any
+    policy_snapshot_id: NotRequired[str]
+
+
+class PaybondRunAgentContextInput(TypedDict):
+    """Optional agent identity/config context for :meth:`PaybondAgentRun.bind`.
+
+    Threaded onto every spend verify call and used to compose the unsigned Agent Receipt
+    Standard draft returned from :meth:`PaybondToolInterceptor.wrap_execute`. Raw prompts are
+    hashed locally and never retained or transmitted; only ``prompt_hash_hex`` is kept on the
+    resolved binding.
+    """
+
+    model_family: str
+    model_instance_id: NotRequired[str]
+    config_hash_hex: NotRequired[str]
+    config_hash_materials: NotRequired[PaybondRunConfigHashMaterials]
+    prompt_hash_hex: NotRequired[str]
+    normalized_user_prompt: NotRequired[str]
+    principal_did: NotRequired[str]
+    operator_did: NotRequired[str]
+    policy_template_id: NotRequired[str]
+
+
+@dataclass(frozen=True, slots=True)
+class PaybondRunAgentContext:
+    """Resolved agent context stored on the run binding after bind-time hash computation."""
+
+    model_family: str
+    model_instance_id: str | None = None
+    config_hash_hex: str | None = None
+    prompt_hash_hex: str | None = None
+    principal_did: str | None = None
+    operator_did: str | None = None
+    policy_template_id: str | None = None
 
 
 class PaybondToolInputGuardAllowDecision(TypedDict, total=False):

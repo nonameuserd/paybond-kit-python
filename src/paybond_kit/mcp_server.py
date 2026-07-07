@@ -52,6 +52,11 @@ from paybond_kit.mcp_policy_reload import (
     parse_mcp_policy_reload_config,
 )
 from paybond_kit.fraud import GatewayFraudClient
+from paybond_kit.mcp_receipt_resource import (
+    MCP_AGENT_RECEIPT_RESOURCE_MIME_TYPE,
+    agent_receipt_resource_uri,
+    parse_agent_receipt_resource_uri,
+)
 from paybond_kit.harbor import TenantBindingError
 from paybond_kit.signal import GatewaySignalClient
 
@@ -748,6 +753,20 @@ class PaybondMCPRuntime:
             receipt,
             extra_headers={"x-tenant-id": await self.tenant_id()},
         )
+
+    async def get_agent_receipt_v1(self, receipt_id: str) -> dict[str, Any]:
+        normalized = receipt_id.strip().lower()
+        body = await self._gateway.get_json(
+            f"/protocol/v2/agent-receipts/{quote(normalized, safe='')}",
+            extra_headers={"x-tenant-id": await self.tenant_id()},
+        )
+        echoed_receipt = str(body.get("receipt_id", "")).strip().lower()
+        if echoed_receipt != normalized:
+            raise TenantBindingError(
+                f"receipt mismatch: requested={normalized!r} gateway={echoed_receipt!r}"
+            )
+        await self._assert_tenant_echo(body, field="tenant_id")
+        return body
 
     async def create_harbor_intent(
         self,
@@ -1723,6 +1742,20 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             "review, and receipt generation use the same audit-ready record."
         ),
     )(_handle_submit_spend_evidence)
+
+    @server.resource(
+        "paybond://receipt/{receipt_id}",
+        name="paybond_agent_receipt",
+        title="Paybond Agent Receipt",
+        description=(
+            "Signed paybond.agent_receipt_v1 JSON fetched tenant-bound from "
+            "Gateway GET /protocol/v2/agent-receipts/{receipt_id}."
+        ),
+        mime_type=MCP_AGENT_RECEIPT_RESOURCE_MIME_TYPE,
+    )
+    async def paybond_agent_receipt_resource(receipt_id: str) -> str:
+        receipt = await runtime.get_agent_receipt_v1(receipt_id)
+        return json.dumps(receipt, indent=2, sort_keys=True)
 
     @paybond_tool(
         name="paybond_confirm_settlement",
