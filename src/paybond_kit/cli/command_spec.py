@@ -40,6 +40,9 @@ COMMAND_PATHS: list[str] = [
     "shopify checkout smoke",
     "shopify order show",
     "shopify capture ready",
+    "shopify payments doctor",
+    "shopify payments smoke",
+    "shopify payments session show",
     "version",
     "diagnose",
     "config get",
@@ -263,6 +266,17 @@ COMMAND_EXAMPLES: dict[str, list[str]] = {
     "shopify capture ready": [
         "paybond shopify capture ready",
         "paybond shopify capture ready --format json"
+    ],
+    "shopify payments doctor": [
+        "paybond shopify payments doctor",
+        "paybond shopify payments doctor --format json"
+    ],
+    "shopify payments smoke": [
+        "paybond shopify payments smoke --shop paybond-agent-commerce-dev.myshopify.com",
+        "paybond shopify payments smoke --offline --format json"
+    ],
+    "shopify payments session show": [
+        "paybond shopify payments session show paybond-smoke-payment-session --shop paybond-agent-commerce-dev.myshopify.com"
     ],
     "version": [
         "paybond version",
