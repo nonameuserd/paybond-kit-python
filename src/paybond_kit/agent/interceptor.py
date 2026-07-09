@@ -31,14 +31,11 @@ from paybond_kit.agent_receipt import (
     agent_receipt_message_digest_sha256_hex,
     value_digest_sha256_hex,
 )
+from paybond_kit.agent_receipt_external_attestations import resolve_external_attestations
+from paybond_kit.agent.evidence import build_auto_evidence_payload
 from paybond_kit.agent_recognition import sign_harbor_evidence_submit_recognition_proof
 from paybond_kit.signing import sign_payee_evidence_binding
 from paybond_kit.spend_guard import PaybondSpendApprovalRequiredError, PaybondSpendDeniedError
-from paybond_kit.completion_resolve import (
-    is_vendor_pack,
-    map_vendor_evidence_to_canonical,
-    resolve_completion_preset,
-)
 
 if TYPE_CHECKING:
     from paybond_kit.agent.run import PaybondAgentRunHost
@@ -104,24 +101,7 @@ def _build_auto_evidence_payload(
     result: Any,
     ctx: PaybondToolCallContext,
 ) -> dict[str, Any]:
-    if entry.evidence_mapper is not None:
-        mapped = entry.evidence_mapper(result, ctx)
-        return dict(mapped)
-
-    resolved = resolve_completion_preset(entry.evidence_preset)
-    preset = resolved["preset"]
-    if is_vendor_pack(preset):
-        if isinstance(result, dict):
-            return map_vendor_evidence_to_canonical(preset, result)
-        raise ValueError(
-            f'side-effecting tool "{ctx.tool_name}" uses vendor pack preset '
-            f'"{entry.evidence_preset}"; provide evidence_mapper when tool result is not a dict'
-        )
-
-    if isinstance(result, dict):
-        return dict(result)
-
-    return dict(resolved["archetype"]["sample_evidence"])
+    return build_auto_evidence_payload(entry, result, ctx)
 
 
 def _authorization_cache_key(tool_call_id: str, operation: str) -> str:

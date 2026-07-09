@@ -63,6 +63,7 @@ from paybond_kit.template_init import (
     normalize_template_id,
     template_init_usage,
 )
+from paybond_kit.cli.shopify import run_shopify_doctor_checks
 from paybond_kit.completion_catalog import list_completion_preset_ids
 from paybond_kit.completion_init import scaffold_completion_init
 from paybond_kit.login import LoginOptions, LoginResult, PaybondLoginError, parse_args as parse_login_args, run_login
@@ -412,6 +413,7 @@ def handle_mcp_verify_config(ctx: CliContext, argv: list[str]) -> dict[str, Any]
 
 async def handle_doctor(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     agent, rest = consume_boolean_flag(argv, "--agent")
+    shopify, rest = consume_boolean_flag(rest, "--shopify")
     _, host, _ = consume_flag(rest, "--host")
     checks: list[dict[str, Any]] = [
         {"name": "runtime", "ok": True, "message": f"python {sys.version.split()[0]}"},
@@ -489,6 +491,8 @@ async def handle_doctor(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     gateway_get = None
     if api_key:
         gateway_get = lambda path: gateway_request(ctx, "GET", path)
+    if shopify:
+        checks.extend(await run_shopify_doctor_checks(ctx))
     checks.extend(
         run_completion_catalog_doctor_checks(cwd=ctx.cwd, gateway_get=gateway_get)
     )

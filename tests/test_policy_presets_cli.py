@@ -14,7 +14,19 @@ from paybond_kit.policy.init import (
     scaffold_policy_from_preset,
 )
 from paybond_kit.policy.load import PaybondPolicy
-from paybond_kit.policy.presets import resolve_composed_preset_document
+from paybond_kit.policy.presets import (
+    is_known_policy_preset_id,
+    list_policy_preset_ids,
+    read_policy_preset_yaml,
+    resolve_composed_preset_document,
+    resolve_policy_preset_path,
+)
+from paybond_kit.solution_catalog import (
+    get_solution_smoke_defaults,
+    is_known_solution_id,
+    list_solution_ids,
+    load_solution_manifest,
+)
 from paybond_kit.policy.render_yaml import render_policy_document_yaml
 
 
@@ -41,7 +53,7 @@ def test_list_policy_presets_catalog() -> None:
     assert isinstance(domains, list)
     assert isinstance(solutions, list)
     assert len(domains) == 4
-    assert len(solutions) == 4
+    assert len(solutions) == 5
 
 
 def test_scaffold_policy_from_preset_with_max_spend(tmp_path: Path) -> None:
@@ -75,6 +87,7 @@ def test_scaffold_composed_policy(tmp_path: Path) -> None:
 def test_handle_policy_presets_list() -> None:
     data = handle_policy_presets_list(_ctx(Path.cwd()), [])
     assert len(data["domains"]) == 4
+    assert len(data["solutions"]) == 5
 
 
 def test_handle_policy_presets_show_travel() -> None:

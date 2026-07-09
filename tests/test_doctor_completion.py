@@ -101,3 +101,51 @@ def test_doctor_warns_when_vendor_pack_pin_lags_catalog(tmp_path: Path) -> None:
     pack_stale = next(check for check in checks if check["name"] == "completion_pack_stale")
     assert "warn:" in pack_stale["message"]
     assert "legacy_epoch" in pack_stale["message"]
+
+
+def test_doctor_includes_stripe_tool_metadata_binding_checklist(tmp_path: Path) -> None:
+    checks = run_completion_catalog_doctor_checks(cwd=tmp_path)
+    binding = next(check for check in checks if check["name"] == "stripe_tool_metadata_binding")
+    assert binding["ok"] is True
+    assert "Stripe tool metadata binding" in binding["message"]
+
+
+def test_doctor_warns_when_stripe_wrapping_sources_omit_metadata_helpers(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "charge.py").write_text(
+        (
+            "def charge(stripe):\n"
+            "    return stripe.PaymentIntent.create(amount=100, currency='usd')\n"
+        ),
+        encoding="utf-8",
+    )
+
+    checks = run_completion_catalog_doctor_checks(cwd=tmp_path)
+    binding = next(check for check in checks if check["name"] == "stripe_tool_metadata_binding")
+    assert binding["ok"] is True
+    assert "warn:" in binding["message"]
+    assert "build_paybond_stripe_metadata" in binding["message"]
+    assert "src/charge.py" in binding["details"]["missing_helper_files"]
+
+
+def test_doctor_passes_stripe_metadata_binding_when_helpers_used(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "charge.py").write_text(
+        (
+            "from paybond_kit import build_paybond_stripe_metadata\n\n"
+            "def charge(stripe, tenant_id, intent_id):\n"
+            "    metadata = build_paybond_stripe_metadata("
+            "{'tenant_id': tenant_id, 'intent_id': intent_id})\n"
+            "    return stripe.PaymentIntent.create("
+            "amount=100, currency='usd', metadata=metadata)\n"
+        ),
+        encoding="utf-8",
+    )
+
+    checks = run_completion_catalog_doctor_checks(cwd=tmp_path)
+    binding = next(check for check in checks if check["name"] == "stripe_tool_metadata_binding")
+    assert binding["ok"] is True
+    assert "warn:" not in binding["message"]
+    assert "reference Paybond metadata helpers" in binding["message"]

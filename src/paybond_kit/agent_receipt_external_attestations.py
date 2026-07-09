@@ -6,15 +6,21 @@ import hashlib
 import json
 from typing import Any, Literal, TypedDict, cast
 
+from paybond_kit.agent_mandate import verify_signed_agent_mandate_v1
 from paybond_kit.agent_receipt import AgentReceiptExternalAttestationV1
 from paybond_kit.json_digest import normalize_json
 from paybond_kit.mcp_sep2828_evidence import strip_digest_prefix
+from paybond_kit.protocol_receipt import (
+    verify_protocol_authorization_receipt_v1,
+    verify_protocol_settlement_receipt_v1,
+)
 from paybond_kit.sep2828_signature import verify_sep2828_receipt_pair
 from paybond_kit.x402_receipt_evidence import build_x402_receipt_digest_payload
 from paybond_kit.x402_receipt_signature import extract_signed_x402_receipt, verify_signed_x402_receipt
 
 AGENT_RECEIPT_EXTERNAL_SOURCE_SEP2828 = "sep2828_mcp"
 AGENT_RECEIPT_EXTERNAL_SOURCE_X402 = "x402"
+AGENT_RECEIPT_EXTERNAL_SOURCE_AP2 = "ap2"
 
 _SEP2828_SIGNATURE_KEYS = frozenset(
     {
@@ -80,6 +86,55 @@ def sep2828_records_to_external_attestations(
     ]
 
 
+def signed_mandate_to_external_attestations(
+    signed: dict[str, Any],
+    transport_binding: dict[str, Any] | None = None,
+) -> list[AgentReceiptExternalAttestationV1]:
+    verify_signed_agent_mandate_v1(signed)
+    digest = str(signed.get("message_digest_sha256_hex", "")).strip().lower()
+    external_authorization_id = ""
+    if transport_binding is not None:
+        external_authorization_id = str(transport_binding.get("external_authorization_id", "")).strip()
+    nonce = str(signed.get("nonce", "")).strip()
+    reference_id = external_authorization_id or nonce or None
+    attestation: AgentReceiptExternalAttestationV1 = {
+        "source": AGENT_RECEIPT_EXTERNAL_SOURCE_AP2,
+        "kind": "agent_mandate_v1",
+        "digest_sha256_hex": digest,
+    }
+    if reference_id:
+        attestation["reference_id"] = reference_id
+    return [attestation]
+
+
+def protocol_authorization_receipt_to_external_attestations(
+    receipt: dict[str, Any],
+) -> list[AgentReceiptExternalAttestationV1]:
+    verified = verify_protocol_authorization_receipt_v1(receipt)
+    return [
+        {
+            "source": AGENT_RECEIPT_EXTERNAL_SOURCE_AP2,
+            "kind": "protocol_authorization_receipt_v1",
+            "digest_sha256_hex": verified["message_digest_sha256_hex"],
+            "reference_id": verified["intent_id"],
+        }
+    ]
+
+
+def protocol_settlement_receipt_to_external_attestations(
+    receipt: dict[str, Any],
+) -> list[AgentReceiptExternalAttestationV1]:
+    verified = verify_protocol_settlement_receipt_v1(receipt)
+    return [
+        {
+            "source": AGENT_RECEIPT_EXTERNAL_SOURCE_AP2,
+            "kind": "protocol_settlement_receipt_v1",
+            "digest_sha256_hex": verified["message_digest_sha256_hex"],
+            "reference_id": verified["intent_id"],
+        }
+    ]
+
+
 def x402_receipt_to_external_attestations(
     receipt_input: dict[str, Any],
 ) -> list[AgentReceiptExternalAttestationV1]:
@@ -108,8 +163,29 @@ class X402ExternalAttestationInput(TypedDict):
     receipt: dict[str, Any]
 
 
+class Ap2MandateExternalAttestationInput(TypedDict, total=False):
+    kind: Literal["ap2_mandate"]
+    signed_mandate: dict[str, Any]
+    transport_binding: dict[str, Any]
+
+
+class Ap2AuthorizationReceiptExternalAttestationInput(TypedDict):
+    kind: Literal["ap2_authorization_receipt"]
+    receipt: dict[str, Any]
+
+
+class Ap2SettlementReceiptExternalAttestationInput(TypedDict):
+    kind: Literal["ap2_settlement_receipt"]
+    receipt: dict[str, Any]
+
+
 PaybondExternalAttestationInput = (
-    Sep2828ExternalAttestationInput | X402ExternalAttestationInput | AgentReceiptExternalAttestationV1
+    Sep2828ExternalAttestationInput
+    | X402ExternalAttestationInput
+    | Ap2MandateExternalAttestationInput
+    | Ap2AuthorizationReceiptExternalAttestationInput
+    | Ap2SettlementReceiptExternalAttestationInput
+    | AgentReceiptExternalAttestationV1
 )
 
 
@@ -129,4 +205,21 @@ def resolve_external_attestations(
         if kind == "x402":
             x402 = cast(X402ExternalAttestationInput, item)
             out.extend(x402_receipt_to_external_attestations(x402["receipt"]))
+            continue
+        if kind == "ap2_mandate":
+            ap2_mandate = cast(Ap2MandateExternalAttestationInput, item)
+            out.extend(
+                signed_mandate_to_external_attestations(
+                    ap2_mandate["signed_mandate"],
+                    ap2_mandate.get("transport_binding"),
+                )
+            )
+            continue
+        if kind == "ap2_authorization_receipt":
+            ap2_auth = cast(Ap2AuthorizationReceiptExternalAttestationInput, item)
+            out.extend(protocol_authorization_receipt_to_external_attestations(ap2_auth["receipt"]))
+            continue
+        if kind == "ap2_settlement_receipt":
+            ap2_settle = cast(Ap2SettlementReceiptExternalAttestationInput, item)
+            out.extend(protocol_settlement_receipt_to_external_attestations(ap2_settle["receipt"]))
     return out

@@ -43,6 +43,7 @@ from paybond_kit.cli.policy import (
 )
 from paybond_kit.cli.agent import handle_agent
 from paybond_kit.cli.dev import handle_dev
+from paybond_kit.cli.shopify import handle_shopify
 from paybond_kit.cli.suggest import format_unknown_command_message
 from paybond_kit.cli.ux import (
     handle_completion_command,
@@ -94,6 +95,16 @@ async def _dispatch(ctx: CliContext, command: list[str]) -> tuple[str, dict[str,
         return "mcp verify-config", commands.handle_mcp_verify_config(ctx, command[2:])
     if head == "doctor":
         return "doctor", await commands.handle_doctor(ctx, command[1:])
+    if head == "shopify" and second:
+        is_payments_session_show = second == "payments" and third == "session"
+        fourth = command[3] if is_payments_session_show and len(command) > 3 else None
+        parts = ["shopify", second]
+        if third:
+            parts.append(third)
+        if fourth:
+            parts.append(fourth)
+        argv_start = 4 if is_payments_session_show else (3 if third else 2)
+        return " ".join(parts), await handle_shopify(ctx, second, third, fourth, command[argv_start:])
     if head == "dev" and second:
         return f"dev {second}", await handle_dev(ctx, second, command[2:])
     if head == "version":

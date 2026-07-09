@@ -167,6 +167,27 @@
       "demo_mode": "generic"
     },
     {
+      "id": "stripe-agent-demo",
+      "repo": "paybond-stripe-agent-demo",
+      "title": "Stripe commerce agent (generic TypeScript)",
+      "language": "typescript",
+      "framework": "generic",
+      "preset": "stripe-commerce",
+      "primary_operation": "payments.charge_customer",
+      "requested_spend_cents": 2500,
+      "evidence_preset": "stripe_charge",
+      "smoke_result_body": {
+        "payment_intent_id": "pi_smoke",
+        "charge_id": "ch_smoke",
+        "cost_cents": 2500,
+        "status": "succeeded"
+      },
+      "dependencies": {
+        "@paybond/kit": "^0.12.0"
+      },
+      "demo_mode": "generic"
+    },
+    {
       "id": "invoice-agent",
       "repo": "paybond-invoice-agent",
       "title": "Invoice processing agent (Python LangGraph)",

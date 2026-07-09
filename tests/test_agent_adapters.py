@@ -11,7 +11,7 @@ from paybond_kit import (
     PaybondSpendDeniedError,
     paybond_runtime_tool_call_adapter,
 )
-from paybond_kit.agent_adapters import _CapabilityVerifier
+from paybond_kit.spend_guard import _CapabilityVerifier
 from paybond_kit.harbor import VerifyCapabilityResult
 
 

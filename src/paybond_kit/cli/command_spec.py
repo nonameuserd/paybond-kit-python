@@ -33,6 +33,13 @@ COMMAND_PATHS: list[str] = [
     "dev trace",
     "dev loop",
     "dev up",
+    "shopify doctor",
+    "shopify link",
+    "shopify dev",
+    "shopify webhook trigger",
+    "shopify checkout smoke",
+    "shopify order show",
+    "shopify capture ready",
     "version",
     "diagnose",
     "config get",
@@ -202,7 +209,8 @@ COMMAND_EXAMPLES: dict[str, list[str]] = {
     ],
     "doctor": [
         "paybond doctor",
-        "paybond doctor --agent --format json"
+        "paybond doctor --agent --format json",
+        "paybond doctor --shopify"
     ],
     "dev": [
         "paybond dev smoke --offline",
@@ -222,12 +230,39 @@ COMMAND_EXAMPLES: dict[str, list[str]] = {
     "dev loop": [
         "paybond dev loop",
         "paybond dev loop --offline",
+        "paybond dev loop --preset shopping --shopify",
         "paybond dev loop --format json"
     ],
     "dev up": [
         "paybond dev up",
         "paybond dev up --port 18089",
         "paybond dev up --down"
+    ],
+    "shopify doctor": [
+        "paybond shopify doctor",
+        "paybond shopify doctor --format json"
+    ],
+    "shopify link": [
+        "paybond shopify link"
+    ],
+    "shopify dev": [
+        "paybond shopify dev",
+        "paybond shopify dev --tunnel https://example.ngrok-free.app"
+    ],
+    "shopify webhook trigger": [
+        "paybond shopify webhook trigger --topic orders/paid --gateway https://api.paybond.ai",
+        "paybond shopify webhook trigger --address http://127.0.0.1:8081/webhooks/sandbox/shopify --dry-run"
+    ],
+    "shopify checkout smoke": [
+        "paybond shopify checkout smoke --shop paybond-agent-commerce-dev.myshopify.com",
+        "paybond shopify checkout smoke --offline --format json"
+    ],
+    "shopify order show": [
+        "paybond shopify order show gid://shopify/Order/123 --shop paybond-agent-commerce-dev.myshopify.com"
+    ],
+    "shopify capture ready": [
+        "paybond shopify capture ready",
+        "paybond shopify capture ready --format json"
     ],
     "version": [
         "paybond version",

@@ -36,7 +36,7 @@ class SolutionSmokeDefaults(TypedDict):
     result_body: dict[str, Any]
 
 
-KNOWN_SOLUTION_IDS = ("travel", "shopping", "saas", "aws")
+KNOWN_SOLUTION_IDS = ("travel", "shopping", "saas", "aws", "stripe-commerce")
 SolutionId = str
 
 

@@ -126,6 +126,26 @@ async def test_agent_sandbox_smoke_preset_travel_solution_defaults(
 
 
 @pytest.mark.asyncio
+async def test_agent_sandbox_smoke_preset_stripe_commerce_solution_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PAYBOND_API_KEY", SANDBOX_RAW_KEY)
+    install_agent_gateway_mock(monkeypatch)
+
+    stdout = io.StringIO()
+    code = await run_cli(
+        ["--format", "json", "agent", "sandbox", "smoke", "--preset", "stripe-commerce"],
+        stdout=stdout,
+    )
+    payload = json.loads(stdout.getvalue())
+    assert code == 0
+    assert payload["data"]["bind"]["operation"] == "payments.charge_customer"
+    assert payload["data"]["execute"]["evidence"]["submitted"] is True
+
+
+@pytest.mark.asyncio
 async def test_agent_sandbox_smoke_preset_travel_table_output(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

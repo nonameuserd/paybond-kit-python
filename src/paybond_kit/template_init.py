@@ -21,6 +21,7 @@ TemplateId = Literal[
     "invoice-agent",
     "crewai-procurement-agent",
     "aws-operator",
+    "shopify-shopping-agent",
 ]
 
 TEMPLATE_ALIASES: dict[str, TemplateId] = {
@@ -45,6 +46,8 @@ TEMPLATE_ALIASES: dict[str, TemplateId] = {
     "paybond-crewai-procurement-agent": "crewai-procurement-agent",
     "aws-operator": "aws-operator",
     "paybond-aws-operator": "aws-operator",
+    "shopify-shopping-agent": "shopify-shopping-agent",
+    "paybond-shopify-shopping-agent": "shopify-shopping-agent",
 }
 
 

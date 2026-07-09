@@ -9,7 +9,15 @@ from paybond_kit.policy.compose import compose_bundled_preset_default, compose_l
 from paybond_kit.policy.parse_text import parse_policy_document_text
 from paybond_kit.policy.schema import PaybondPolicyDocumentV1, parse_paybond_policy_document_v1
 
-KNOWN_POLICY_PRESET_IDS = ("travel", "shopping", "saas", "aws", "read-only", "strict")
+KNOWN_POLICY_PRESET_IDS = (
+    "travel",
+    "shopping",
+    "saas",
+    "aws",
+    "stripe-commerce",
+    "read-only",
+    "strict",
+)
 
 PolicyPresetId = str
 LayeredPolicyPresetId = str

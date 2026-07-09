@@ -7,6 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping, Sequence, TypedDict
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -19,6 +20,19 @@ AGENT_RECEIPT_SIGNING_ALGORITHM_ED25519 = "ed25519-sha256-json-v1"
 AGENT_RECEIPT_SCOPE_ACTION = "action"
 AGENT_RECEIPT_SCOPE_INTENT_TERMINAL = "intent_terminal"
 AGENT_RECEIPT_WELL_KNOWN_PATH = "/.well-known/agent-receipt-v1.json"
+AGENT_RECEIPT_SIGNING_KEYS_WELL_KNOWN_PATH = "/.well-known/agent-receipt-signing-keys.json"
+
+FORBIDDEN_AGENT_RECEIPT_FIELDS: tuple[str, ...] = (
+    "user_prompt",
+    "system_prompt",
+    "tool_arguments",
+    "tool_results",
+    "evidence_payload",
+    "payee_signature",
+)
+
+_AGENT_RECEIPT_DIR = Path(__file__).resolve().parents[3] / "agent-receipt"
+_AGENT_RECEIPT_SCHEMA: dict[str, Any] | None = None
 
 _SCOPE_TOKEN_RE = re.compile(r"^[a-z0-9][a-z0-9._:/-]{0,127}$")
 _HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -42,6 +56,57 @@ class ConfigHashInput:
     system_prompt: str
     tools_manifest: Any
     policy_snapshot_id: str
+
+
+def _agent_receipt_schema() -> dict[str, Any]:
+    global _AGENT_RECEIPT_SCHEMA
+    if _AGENT_RECEIPT_SCHEMA is None:
+        import jsonschema
+
+        raw = (_AGENT_RECEIPT_DIR / "schema.json").read_text(encoding="utf-8")
+        _AGENT_RECEIPT_SCHEMA = json.loads(raw)
+    return _AGENT_RECEIPT_SCHEMA
+
+
+def _reject_forbidden_agent_receipt_fields(value: Any) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in FORBIDDEN_AGENT_RECEIPT_FIELDS:
+                raise ValueError(f"agent receipt: forbidden field {key!r}")
+            _reject_forbidden_agent_receipt_fields(child)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _reject_forbidden_agent_receipt_fields(item)
+
+
+def validate_agent_receipt_json(raw: bytes | str | Mapping[str, Any]) -> dict[str, Any]:
+    """Reject forbidden privacy fields and validate against the published Draft 2020-12 schema."""
+    import jsonschema
+
+    if isinstance(raw, Mapping):
+        doc: Any = dict(raw)
+    else:
+        text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+        try:
+            doc = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"agent receipt: invalid JSON: {exc}") from exc
+    if not isinstance(doc, dict):
+        raise ValueError("agent receipt: root value must be a JSON object")
+    _reject_forbidden_agent_receipt_fields(doc)
+    jsonschema.validate(instance=doc, schema=_agent_receipt_schema())
+    return doc
+
+
+def verify_agent_receipt_v1_from_json(
+    raw: bytes | str | Mapping[str, Any],
+    *,
+    expected_signing_public_keys: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Validate raw JSON (schema + forbidden fields) then verify signature."""
+    doc = validate_agent_receipt_json(raw)
+    return verify_agent_receipt_v1(doc, expected_signing_public_keys=expected_signing_public_keys)
 
 
 def _format_rfc3339_seconds(value: str) -> str:
@@ -612,9 +677,37 @@ def agent_receipt_message_digest_sha256_hex(receipt: Mapping[str, Any]) -> str:
     return hashlib.sha256(canonical_agent_receipt_bytes(receipt)).hexdigest()
 
 
-def verify_agent_receipt_v1(receipt: Mapping[str, Any]) -> dict[str, Any]:
-    """Validate structure, receipt_id derivation, digest, and detached Ed25519 signature."""
+def _allows_signing_public_key_hex(
+    signing_public_key_hex: str,
+    expected_signing_public_keys: Sequence[str] | None,
+) -> bool:
+    if not expected_signing_public_keys:
+        return True
+    normalized = signing_public_key_hex.strip().lower()
+    return any(value.strip().lower() == normalized for value in expected_signing_public_keys)
+
+
+def verify_agent_receipt_v1(
+    receipt: Mapping[str, Any],
+    *,
+    expected_signing_public_keys: Sequence[str] | None = None,
+    verify_operator_against_registry: bool = False,
+    trusted_operator_public_keys: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Validate structure, receipt_id derivation, digest, and detached Ed25519 signature.
+
+    The ``operator_did`` binding to ``authorization.agent.operator_did`` is always enforced
+    when an ``operator_attestation`` is present. When ``verify_operator_against_registry`` is
+    ``True``, the operator signing key must additionally appear in ``trusted_operator_public_keys``.
+    """
     normalized = _normalize_receipt(receipt)
+    if not _allows_signing_public_key_hex(
+        str(normalized["signing_public_key_ed25519_hex"]),
+        expected_signing_public_keys,
+    ):
+        raise ValueError(
+            "agent receipt: signing_public_key_ed25519_hex is not in the configured trusted key set"
+        )
     canonical = _marshal_canonical_agent_receipt(normalized)
     digest = hashlib.sha256(canonical).digest()
     digest_hex = digest.hex()
@@ -638,17 +731,50 @@ def verify_agent_receipt_v1(receipt: Mapping[str, Any]) -> dict[str, Any]:
         verifier.verify(signature, digest)
     except InvalidSignature as exc:
         raise ValueError("agent receipt: ed25519 signature verification failed") from exc
-    _verify_operator_attestation(normalized, digest)
+    _verify_operator_attestation(
+        normalized,
+        digest,
+        verify_operator_against_registry=verify_operator_against_registry,
+        trusted_operator_public_keys=trusted_operator_public_keys,
+    )
     return normalized
 
 
-def _verify_operator_attestation(normalized: Mapping[str, Any], digest: bytes) -> None:
+def _allows_operator_public_key_hex(
+    operator_public_key_hex: str,
+    trusted_operator_public_keys: Sequence[str] | None,
+) -> bool:
+    if not trusted_operator_public_keys:
+        return False
+    normalized = operator_public_key_hex.strip().lower()
+    return any(value.strip().lower() == normalized for value in trusted_operator_public_keys)
+
+
+def _verify_operator_attestation(
+    normalized: Mapping[str, Any],
+    digest: bytes,
+    *,
+    verify_operator_against_registry: bool = False,
+    trusted_operator_public_keys: Sequence[str] | None = None,
+) -> None:
     attestation = normalized.get("operator_attestation")
     if not attestation:
         return
+    agent = normalized["authorization"]["agent"]
+    if str(attestation["operator_did"]).strip() != str(agent["operator_did"]).strip():
+        raise ValueError(
+            "agent receipt: operator_attestation.operator_did must match authorization.agent.operator_did"
+        )
     if str(attestation["message_digest_sha256_hex"]) != str(normalized["message_digest_sha256_hex"]):
         raise ValueError(
             "agent receipt: operator_attestation message_digest_sha256_hex must match gateway digest"
+        )
+    if verify_operator_against_registry and not _allows_operator_public_key_hex(
+        str(attestation["signing_public_key_ed25519_hex"]),
+        trusted_operator_public_keys,
+    ):
+        raise ValueError(
+            "agent receipt: operator_attestation signing key is not in the configured tenant operator registry"
         )
     public_key = bytes.fromhex(str(attestation["signing_public_key_ed25519_hex"]))
     signature = bytes.fromhex(str(attestation["ed25519_signature_hex"]))
@@ -673,13 +799,20 @@ def attach_operator_attestation_v1(
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
     verified = verify_agent_receipt_v1(receipt)
+    normalized_operator_did = operator_did.strip()
+    if not normalized_operator_did:
+        raise ValueError("agent receipt: operator_did is required")
+    if normalized_operator_did != str(verified["authorization"]["agent"]["operator_did"]).strip():
+        raise ValueError(
+            "agent receipt: operator_did must match authorization.agent.operator_did"
+        )
     digest = bytes.fromhex(str(verified["message_digest_sha256_hex"]))
     private_key = Ed25519PrivateKey.from_private_bytes(operator_private_key_seed[:32])
     signature = private_key.sign(digest)
     public_key = private_key.public_key().public_bytes_raw()
     verified = dict(verified)
     verified["operator_attestation"] = {
-        "operator_did": operator_did.strip(),
+        "operator_did": normalized_operator_did,
         "signing_public_key_ed25519_hex": public_key.hex(),
         "message_digest_sha256_hex": verified["message_digest_sha256_hex"],
         "ed25519_signature_hex": signature.hex(),

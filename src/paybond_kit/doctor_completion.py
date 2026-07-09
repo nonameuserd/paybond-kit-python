@@ -21,6 +21,42 @@ STRIPE_FUNDING_WEBHOOK_EVENT_TYPES = frozenset(
     {"payment_intent.succeeded", "charge.succeeded"},
 )
 
+STRIPE_METADATA_HELPER_MARKERS: tuple[str, ...] = (
+    "buildPaybondStripeMetadata",
+    "build_paybond_stripe_metadata",
+)
+
+STRIPE_WRAPPING_SOURCE_MARKERS: tuple[str, ...] = (
+    "paymentIntents.create",
+    "payment_intents.create",
+    "PaymentIntent.create",
+    "stripe.PaymentIntent",
+    "stripe.paymentIntents",
+    "charges.create",
+    "Charge.create",
+    "payments.charge_customer",
+)
+
+_SOURCE_FILE_EXTENSIONS = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py"})
+_SKIP_DIR_NAMES = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".paybond",
+        "node_modules",
+        "dist",
+        "build",
+        "coverage",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "target",
+        ".next",
+        ".turbo",
+    }
+)
+
 _SCAFFOLD_PATTERNS = (
     re.compile(r"^paybond-completion-[\w-]+\.(ts|js|py)$"),
     re.compile(r"^paybond-paid-tool-guard\.(ts|js|py)$"),
@@ -65,6 +101,116 @@ def _vendor_schema_forbidden_hits(
 
 def is_stripe_funding_webhook_event_type(event_type: Any) -> bool:
     return isinstance(event_type, str) and event_type in STRIPE_FUNDING_WEBHOOK_EVENT_TYPES
+
+
+def source_looks_like_stripe_wrapping(body: str) -> bool:
+    """True when source text appears to wrap Stripe charge / PaymentIntent APIs."""
+    return any(marker in body for marker in STRIPE_WRAPPING_SOURCE_MARKERS)
+
+
+def source_uses_stripe_metadata_helper(body: str) -> bool:
+    """True when source text references Paybond Stripe metadata helpers."""
+    return any(marker in body for marker in STRIPE_METADATA_HELPER_MARKERS)
+
+
+def _collect_source_files(root: Path, *, max_files: int = 400) -> list[Path]:
+    files: list[Path] = []
+    queue: list[Path] = [root]
+    while queue and len(files) < max_files:
+        current = queue.pop(0)
+        try:
+            entries = list(current.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if len(files) >= max_files:
+                break
+            if entry.is_dir():
+                if entry.name in _SKIP_DIR_NAMES or entry.name.startswith("."):
+                    continue
+                queue.append(entry)
+                continue
+            if not entry.is_file():
+                continue
+            if entry.suffix.lower() not in _SOURCE_FILE_EXTENSIONS:
+                continue
+            files.append(entry)
+    return files
+
+
+def run_stripe_tool_metadata_binding_doctor_check(cwd: Path) -> dict[str, Any]:
+    """Scan project sources for Stripe-wrapping tools that omit metadata helpers.
+
+    Warns (ok: True) when helpers appear missing; never hard-fails.
+    """
+    if not cwd.is_dir():
+        return {
+            "name": "stripe_tool_metadata_binding",
+            "ok": True,
+            "message": "skipped Stripe tool metadata binding scan (cwd is not a directory)",
+        }
+
+    source_files = _collect_source_files(cwd)
+    missing_helper_files: list[str] = []
+    stripe_wrapping_files = 0
+
+    for file_path in source_files:
+        try:
+            body = file_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if not source_looks_like_stripe_wrapping(body):
+            continue
+        stripe_wrapping_files += 1
+        if not source_uses_stripe_metadata_helper(body):
+            try:
+                relative = str(file_path.relative_to(cwd))
+            except ValueError:
+                relative = file_path.name
+            missing_helper_files.append(relative)
+
+    if stripe_wrapping_files == 0:
+        return {
+            "name": "stripe_tool_metadata_binding",
+            "ok": True,
+            "message": (
+                "Stripe tool metadata binding: no Stripe-wrapping sources detected "
+                "(use buildPaybondStripeMetadata with tenant_id from Paybond session)"
+            ),
+            "details": {"checked_files": len(source_files), "stripe_wrapping_files": 0},
+        }
+
+    if missing_helper_files:
+        preview = ", ".join(missing_helper_files[:5])
+        if len(missing_helper_files) > 5:
+            preview = f"{preview}, …"
+        return {
+            "name": "stripe_tool_metadata_binding",
+            "ok": True,
+            "message": (
+                f"warn: Stripe-wrapping tool(s) may lack Paybond metadata helpers ({preview}); "
+                "use buildPaybondStripeMetadata / build_paybond_stripe_metadata with tenant_id "
+                "from authenticated Paybond session credentials — never client input"
+            ),
+            "details": {
+                "checked_files": len(source_files),
+                "stripe_wrapping_files": stripe_wrapping_files,
+                "missing_helper_files": missing_helper_files,
+            },
+        }
+
+    return {
+        "name": "stripe_tool_metadata_binding",
+        "ok": True,
+        "message": (
+            f"Stripe tool metadata binding: {stripe_wrapping_files} Stripe-wrapping "
+            "source(s) reference Paybond metadata helpers"
+        ),
+        "details": {
+            "checked_files": len(source_files),
+            "stripe_wrapping_files": stripe_wrapping_files,
+        },
+    }
 
 
 def _find_completion_scaffolds(cwd: Path) -> list[Path]:
@@ -467,6 +613,7 @@ def run_completion_catalog_doctor_checks(
             }
         )
         _push_funding_event_misuse_check(checks, funding_event_warnings, len(scaffold_paths))
+        checks.append(run_stripe_tool_metadata_binding_doctor_check(cwd))
         return checks
 
     head_warnings: list[str] = []
@@ -528,4 +675,5 @@ def run_completion_catalog_doctor_checks(
         )
 
     _push_funding_event_misuse_check(checks, funding_event_warnings, len(scaffold_paths))
+    checks.append(run_stripe_tool_metadata_binding_doctor_check(cwd))
     return checks

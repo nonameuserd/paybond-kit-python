@@ -641,7 +641,15 @@ def write_success_output(
             ctx.stdout.write(f"{line}\n")
         for warning in merged_warnings:
             ctx.stderr.write(f"{warning}\n")
-    elif canonical in ("dev smoke", "dev loop") and isinstance(data.get("checklist_lines"), list):
+    elif canonical in (
+        "dev smoke",
+        "dev loop",
+        "shopify doctor",
+        "shopify checkout smoke",
+        "shopify capture ready",
+        "shopify dev",
+        "shopify link",
+    ) and isinstance(data.get("checklist_lines"), list):
         if canonical == "dev loop" and isinstance(data.get("banner_lines"), list):
             for line in data["banner_lines"]:
                 ctx.stdout.write(f"{line}\n")

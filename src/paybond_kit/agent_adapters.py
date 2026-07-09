@@ -4,47 +4,18 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable
-from typing import Protocol, TypeVar
-from uuid import UUID
+from typing import TypeVar
 
 from paybond_kit.harbor import VerifyCapabilityResult
 from paybond_kit.spend_guard import (
     PaybondSpendApprovalRequiredError,
     PaybondSpendDeniedError,
     PaybondSpendGuard,
+    _SpendGuardSource,
 )
 
 TCall = TypeVar("TCall")
 R = TypeVar("R")
-
-
-class _CapabilityVerifier(Protocol):
-    async def verify_capability(
-        self,
-        *,
-        intent_id: UUID,
-        token: str,
-        operation: str,
-        requested_spend_cents: int = 0,
-        vendor_id: str | None = None,
-        task_id: str | None = None,
-        workflow_id: str | None = None,
-        tool_call_id: str | None = None,
-        tool_name: str | None = None,
-        currency: str | None = None,
-        agent_subject: str | None = None,
-        approval_token: str | None = None,
-        idempotency_key: str | None = None,
-        model_family: str | None = None,
-        config_hash_hex: str | None = None,
-        prompt_hash_hex: str | None = None,
-    ) -> VerifyCapabilityResult: ...
-
-
-class _SpendGuardSource(Protocol):
-    harbor: _CapabilityVerifier
-    intent_id: UUID
-    capability_token: str
 
 
 OperationResolver = str | Callable[[TCall], str]
