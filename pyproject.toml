@@ -111,6 +111,11 @@ include = [
   "src/paybond_kit/data/dev/wiremock/mappings/*.json",
   "src/paybond_kit/data/dev/trace-ui/dashboard.html",
 ]
+# Never pack accidental local installs under scaffolder templates (path-too-long on sdist).
+exclude = [
+  "src/paybond_kit/data/templates/**/node_modules/**",
+  "src/paybond_kit/data/templates/**/dist/**",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

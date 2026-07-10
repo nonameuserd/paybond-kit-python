@@ -21,7 +21,18 @@ BANNED_FRAGMENTS = (
     "/.pytest_cache/",
     "/__pycache__/",
     "/rust/target/",
+    "/node_modules/",
 )
+
+
+def _is_banned_local_artifact(name: str) -> bool:
+    normalized = f"/{name}"
+    if any(fragment in normalized for fragment in BANNED_FRAGMENTS):
+        return True
+    # Accidental template builds only (avoid matching *.dist-info paths).
+    if "/templates/" in normalized and "/dist/" in normalized:
+        return True
+    return False
 
 
 def run(
@@ -59,7 +70,7 @@ def inspect_sdist(path: Path) -> None:
         names = archive.getnames()
     for name in names:
         normalized = f"/{name}"
-        if any(fragment in normalized for fragment in BANNED_FRAGMENTS):
+        if _is_banned_local_artifact(name):
             raise RuntimeError(f"sdist should not include local artifact path: {name}")
         if normalized.endswith(("/src/paybond_kit/_native.so", "/src/paybond_kit/_native.pyd")):
             raise RuntimeError(f"sdist should not include prebuilt native extension: {name}")
@@ -75,8 +86,7 @@ def inspect_wheel(path: Path) -> None:
         entry_points_name = next((name for name in names if name.endswith(".dist-info/entry_points.txt")), None)
         entry_points = archive.read(entry_points_name).decode("utf-8") if entry_points_name else ""
     for name in names:
-        normalized = f"/{name}"
-        if any(fragment in normalized for fragment in BANNED_FRAGMENTS):
+        if _is_banned_local_artifact(name):
             raise RuntimeError(f"wheel should not include local artifact path: {name}")
     if not any(".dist-info/licenses/LICENSE" in name or name.endswith(".dist-info/LICENSE") for name in names):
         raise RuntimeError("wheel must include LICENSE")

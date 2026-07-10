@@ -6,5 +6,7 @@ dist-release/
 rust/target/
 src/paybond_kit/_native*.so
 src/paybond_kit/_native*.pyd
+src/paybond_kit/data/templates/**/node_modules/
+src/paybond_kit/data/templates/**/dist/
 *.whl
 *.tar.gz
