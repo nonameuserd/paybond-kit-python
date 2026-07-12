@@ -923,6 +923,98 @@ def handle_spend_authorize(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     }
 
 
+def _parse_spend_preflight_cli_args(argv: list[str]) -> tuple[str, str, int, dict[str, Any]]:
+    _, intent_id, rest = consume_flag(argv, "--intent-id")
+    _, operation, rest = consume_flag(rest, "--operation")
+    _, spend, rest = consume_flag(rest, "--requested-spend-cents")
+    _, vendor_id, rest = consume_flag(rest, "--vendor-id")
+    _, tool_name, rest = consume_flag(rest, "--tool-name")
+    _, task_id, rest = consume_flag(rest, "--task-id")
+    _, workflow_id, rest = consume_flag(rest, "--workflow-id")
+    _, tool_call_id, rest = consume_flag(rest, "--tool-call-id")
+    _, currency, rest = consume_flag(rest, "--currency")
+    _, agent_subject, rest = consume_flag(rest, "--agent-subject")
+    _, approval_token, _ = consume_flag(rest, "--approval-token")
+    if not intent_id:
+        raise CliError("spend preflight requires --intent-id", code="cli.usage.missing_args")
+    resolved_operation = (operation or "").strip() or "*"
+    spend_cents = parse_optional_non_negative_int(spend, field="--requested-spend-cents")
+    payload: dict[str, Any] = {
+        "intent_id": intent_id,
+        "operation": resolved_operation,
+        "requested_spend_cents": spend_cents,
+    }
+    if vendor_id:
+        payload["vendor_id"] = vendor_id
+    if tool_name:
+        payload["tool_name"] = tool_name
+    if task_id:
+        payload["task_id"] = task_id
+    if workflow_id:
+        payload["workflow_id"] = workflow_id
+    if tool_call_id:
+        payload["tool_call_id"] = tool_call_id
+    if currency:
+        payload["currency"] = currency
+    if agent_subject:
+        payload["agent_subject"] = agent_subject
+    if approval_token:
+        payload["approval_token"] = approval_token
+    return intent_id, resolved_operation, spend_cents, payload
+
+
+def _normalize_explain_policy_outcome(outcome: str, classification: str) -> str:
+    normalized = outcome.strip().lower()
+    if normalized in ("allow", "anomaly_observe"):
+        return "allow"
+    if normalized in ("approval_required", "anomaly_escalate"):
+        return "approval_required"
+    if normalized == "deny":
+        return "deny"
+    class_norm = classification.strip().lower()
+    if class_norm == "allow":
+        return "allow"
+    if class_norm == "hold":
+        return "approval_required"
+    return "deny"
+
+
+def handle_spend_budget_remaining(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+    intent_id, operation, spend_cents, payload = _parse_spend_preflight_cli_args(argv)
+    body = gateway_request(ctx, "POST", "/v1/spend/preflight", payload)
+    return {
+        "remaining_cents": body.get("remaining_cents"),
+        "spend_scope": body.get("spend_scope"),
+        "policy_version": body.get("policy_version"),
+        "intent_id": intent_id,
+        "operation": operation,
+        "requested_spend_cents": spend_cents,
+    }
+
+
+def handle_spend_explain_policy(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+    intent_id, operation, spend_cents, payload = _parse_spend_preflight_cli_args(argv)
+    body = gateway_request(ctx, "POST", "/v1/spend/preflight", payload)
+    raw_codes = body.get("reason_codes") or []
+    reason_codes = [str(code) for code in raw_codes] if isinstance(raw_codes, list) else []
+    outcome = _normalize_explain_policy_outcome(
+        str(body.get("outcome", "")),
+        str(body.get("classification", "")),
+    )
+    result: dict[str, Any] = {
+        "outcome": outcome,
+        "reason_codes": reason_codes,
+        "explanation": str(body.get("explanation", "")),
+        "remaining_cents": body.get("remaining_cents"),
+        "intent_id": intent_id,
+        "operation": operation,
+        "requested_spend_cents": spend_cents,
+    }
+    if "approval_threshold_exceeded" in reason_codes or outcome == "approval_required":
+        result["approval_threshold_exceeded"] = "approval_threshold_exceeded" in reason_codes
+    return result
+
+
 def handle_signal(ctx: CliContext, subcommand: str, argv: list[str]) -> dict[str, Any]:
     if subcommand == "portfolio":
         return gateway_request(ctx, "GET", "/signal/v1/portfolio/summary")

@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, is_dataclass
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import quote, urlencode, urljoin
 from uuid import UUID
 
@@ -586,6 +586,128 @@ class PaybondMCPRuntime:
             )
         return body
 
+    async def spend_preflight(
+        self,
+        *,
+        intent_id: UUID,
+        operation: str | None = None,
+        requested_spend_cents: int | None = None,
+        vendor_id: str | None = None,
+        tool_name: str | None = None,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        tool_call_id: str | None = None,
+        currency: str | None = None,
+        agent_subject: str | None = None,
+        approval_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Side-effect-free spend policy dry-run via POST /v1/spend/preflight."""
+
+        payload: dict[str, Any] = {
+            "intent_id": str(intent_id),
+            "operation": (operation or "").strip() or "*",
+            "requested_spend_cents": 0 if requested_spend_cents is None else int(requested_spend_cents),
+        }
+        if vendor_id and vendor_id.strip():
+            payload["vendor_id"] = vendor_id.strip()
+        if tool_name and tool_name.strip():
+            payload["tool_name"] = tool_name.strip()
+        if task_id and task_id.strip():
+            payload["task_id"] = task_id.strip()
+        if workflow_id and workflow_id.strip():
+            payload["workflow_id"] = workflow_id.strip()
+        if tool_call_id and tool_call_id.strip():
+            payload["tool_call_id"] = tool_call_id.strip()
+        if currency and currency.strip():
+            payload["currency"] = currency.strip()
+        if agent_subject and agent_subject.strip():
+            payload["agent_subject"] = agent_subject.strip()
+        if approval_token and approval_token.strip():
+            payload["approval_token"] = approval_token.strip()
+        return await self._gateway.post_json(
+            "/v1/spend/preflight",
+            payload,
+            extra_headers={"x-tenant-id": await self.tenant_id()},
+        )
+
+    async def get_budget_remaining(
+        self,
+        *,
+        intent_id: UUID,
+        operation: str | None = None,
+        requested_spend_cents: int | None = None,
+        vendor_id: str | None = None,
+        tool_name: str | None = None,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        tool_call_id: str | None = None,
+        currency: str | None = None,
+        agent_subject: str | None = None,
+        approval_token: str | None = None,
+    ) -> dict[str, Any]:
+        body = await self.spend_preflight(
+            intent_id=intent_id,
+            operation=operation,
+            requested_spend_cents=requested_spend_cents,
+            vendor_id=vendor_id,
+            tool_name=tool_name,
+            task_id=task_id,
+            workflow_id=workflow_id,
+            tool_call_id=tool_call_id,
+            currency=currency,
+            agent_subject=agent_subject,
+            approval_token=approval_token,
+        )
+        return {
+            "remaining_cents": body.get("remaining_cents"),
+            "spend_scope": body.get("spend_scope"),
+            "policy_version": body.get("policy_version"),
+        }
+
+    async def explain_policy(
+        self,
+        *,
+        intent_id: UUID,
+        operation: str | None = None,
+        requested_spend_cents: int | None = None,
+        vendor_id: str | None = None,
+        tool_name: str | None = None,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        tool_call_id: str | None = None,
+        currency: str | None = None,
+        agent_subject: str | None = None,
+        approval_token: str | None = None,
+    ) -> dict[str, Any]:
+        body = await self.spend_preflight(
+            intent_id=intent_id,
+            operation=operation,
+            requested_spend_cents=requested_spend_cents,
+            vendor_id=vendor_id,
+            tool_name=tool_name,
+            task_id=task_id,
+            workflow_id=workflow_id,
+            tool_call_id=tool_call_id,
+            currency=currency,
+            agent_subject=agent_subject,
+            approval_token=approval_token,
+        )
+        raw_codes = body.get("reason_codes") or []
+        reason_codes = [str(code) for code in raw_codes] if isinstance(raw_codes, list) else []
+        outcome = _normalize_explain_policy_outcome(
+            str(body.get("outcome", "")),
+            str(body.get("classification", "")),
+        )
+        result: dict[str, Any] = {
+            "outcome": outcome,
+            "reason_codes": reason_codes,
+            "explanation": str(body.get("explanation", "")),
+            "remaining_cents": body.get("remaining_cents"),
+        }
+        if "approval_threshold_exceeded" in reason_codes or outcome == "approval_required":
+            result["approval_threshold_exceeded"] = "approval_threshold_exceeded" in reason_codes
+        return result
+
     async def bootstrap_sandbox_guardrail(
         self,
         *,
@@ -882,6 +1004,63 @@ def _mcp_output_object_schema(
     return schema
 
 
+_AUTHORIZE_SPEND_OUTPUT_PROPERTIES: dict[str, Any] = {
+    "allow": {
+        "type": "boolean",
+        "description": "Whether the requested operation is allowed.",
+    },
+    "tenant": {
+        "type": "string",
+        "description": "Tenant echoed by the gateway.",
+    },
+    "intent_id": {
+        "type": "string",
+        "description": "Verified Harbor intent UUID.",
+    },
+    "audit_id": {
+        "type": "string",
+        "description": "Gateway audit identifier when available.",
+    },
+    "remaining_cents": {
+        "type": "integer",
+        "description": "Remaining spend budget in cents for the evaluated scope, when available.",
+    },
+    "reason_codes": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Stable spend-policy reason codes from the authorization decision.",
+    },
+    "message": {
+        "type": "string",
+        "description": "Human-readable decision message when present.",
+    },
+    "decision_id": {
+        "type": "string",
+        "description": "Persisted spend decision identifier when authorization creates one.",
+    },
+    "approval_request_id": {
+        "type": "string",
+        "description": "Approval request identifier when human approval is required.",
+    },
+}
+
+
+def _normalize_explain_policy_outcome(outcome: str, classification: str) -> str:
+    normalized = outcome.strip().lower()
+    if normalized in ("allow", "anomaly_observe"):
+        return "allow"
+    if normalized in ("approval_required", "anomaly_escalate"):
+        return "approval_required"
+    if normalized == "deny":
+        return "deny"
+    class_norm = classification.strip().lower()
+    if class_norm == "allow":
+        return "allow"
+    if class_norm == "hold":
+        return "approval_required"
+    return "deny"
+
+
 def _mcp_tool_selection_metadata(tool_annotations_cls: Any) -> dict[str, dict[str, Any]]:
     def read_only(title: str) -> Any:
         return tool_annotations_cls(
@@ -922,12 +1101,7 @@ def _mcp_tool_selection_metadata(tool_annotations_cls: Any) -> dict[str, dict[st
             ),
             "annotations": additive_mutation("Verify Paybond Capability"),
             "output_schema": _mcp_output_object_schema(
-                {
-                    "allow": {"type": "boolean"},
-                    "tenant": {"type": "string"},
-                    "intent_id": {"type": "string"},
-                    "audit_id": {"type": "string"},
-                },
+                dict(_AUTHORIZE_SPEND_OUTPUT_PROPERTIES),
                 ["tenant", "intent_id"],
             ),
         },
@@ -941,13 +1115,71 @@ def _mcp_tool_selection_metadata(tool_annotations_cls: Any) -> dict[str, dict[st
             ),
             "annotations": additive_mutation("Authorize Agent Spend"),
             "output_schema": _mcp_output_object_schema(
-                {
-                    "allow": {"type": "boolean"},
-                    "tenant": {"type": "string"},
-                    "intent_id": {"type": "string"},
-                    "audit_id": {"type": "string"},
-                },
+                dict(_AUTHORIZE_SPEND_OUTPUT_PROPERTIES),
                 ["tenant", "intent_id"],
+            ),
+        },
+        "paybond_get_budget_remaining": {
+            "title": "Get Budget Remaining",
+            "description": (
+                "Use this when you need a read-only dry-run of remaining spend budget for a tenant-bound "
+                "intent before authorizing a paid tool. Do not use this to authorize spend or create "
+                "decisions; call paybond_authorize_agent_spend when you are ready to gate a side-effecting tool."
+            ),
+            "annotations": read_only("Get Budget Remaining"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "remaining_cents": {
+                        "type": "integer",
+                        "description": "Remaining spend budget in cents for the evaluated scope, when available.",
+                    },
+                    "spend_scope": {
+                        "type": "object",
+                        "description": "Spend scope used for the budget evaluation (scope_type and scope_key).",
+                        "additionalProperties": True,
+                    },
+                    "policy_version": {
+                        "type": "integer",
+                        "description": "Active spend-control policy version when a policy is configured.",
+                    },
+                },
+            ),
+        },
+        "paybond_explain_policy": {
+            "title": "Explain Spend Policy",
+            "description": (
+                "Use this when you need a read-only explanation of whether a proposed spend would allow, "
+                "require approval, or deny under the tenant spend-control policy. Do not use this to authorize "
+                "spend or create approval requests; call paybond_authorize_agent_spend to persist a decision."
+            ),
+            "annotations": read_only("Explain Spend Policy"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "outcome": {
+                        "type": "string",
+                        "description": "Normalized policy outcome: allow, approval_required, or deny.",
+                    },
+                    "reason_codes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Stable policy reason codes from the dry-run evaluation.",
+                    },
+                    "explanation": {
+                        "type": "string",
+                        "description": "Human-readable explanation derived from reason codes.",
+                    },
+                    "remaining_cents": {
+                        "type": "integer",
+                        "description": "Remaining spend budget in cents for the evaluated scope, when available.",
+                    },
+                    "approval_threshold_exceeded": {
+                        "type": "boolean",
+                        "description": (
+                            "True when the dry-run indicates the request is at or above the approval threshold."
+                        ),
+                    },
+                },
+                ["outcome", "explanation"],
             ),
         },
         "paybond_bootstrap_sandbox_guardrail": {
@@ -1046,11 +1278,129 @@ def _mcp_tool_selection_metadata(tool_annotations_cls: Any) -> dict[str, dict[st
         },
         "paybond_get_reputation_receipt": {
             "title": "Get Reputation Receipt",
+            "description": (
+                "Use this when you need the signed Signal reputation receipt for one known "
+                "tenant-scoped operator DID (score, metrics, reason codes, and Ed25519 signing "
+                "material under receipt). Requires PAYBOND_API_KEY with Signal analytics read "
+                "access. Do not use this for tenant-wide aggregates—call "
+                "paybond_get_portfolio_summary—or a portable signed operator list—call "
+                "paybond_get_signed_portfolio_artifact—or one operator's fraud review posture—call "
+                "paybond_get_fraud_assessment. Idempotent read with no side effects; returns null "
+                "when no receipt exists for that operator and score_version."
+            ),
             "annotations": read_only("Get Reputation Receipt"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "schema_version": {
+                        "type": "integer",
+                        "description": "Reputation receipt envelope schema version.",
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "description": (
+                            "RFC3339 timestamp when the stored receipt row was last updated."
+                        ),
+                    },
+                    "receipt": {
+                        "type": "object",
+                        "additionalProperties": True,
+                        "description": (
+                            "Signed Signal receipt for the operator (tenant_id, operator_did, "
+                            "score_version, score, metrics, reason_codes, signing_algorithm, "
+                            "message_digest_hex, signing_public_key_hex, signature_hex)."
+                        ),
+                        "examples": [
+                            {
+                                "tenant_id": "tenant-a",
+                                "operator_did": "did:web:vendor.example#booker-agent",
+                                "score_version": "1.0",
+                                "score": 812,
+                                "signature_hex": "ab" * 32,
+                            },
+                        ],
+                    },
+                },
+            ),
         },
         "paybond_get_portfolio_summary": {
             "title": "Get Portfolio Summary",
+            "description": (
+                "Use this when you need a read-only, tenant-scoped Signal portfolio aggregate for the "
+                "authenticated API key (operator_count, average_score, total_terminal_intents, "
+                "total_receipted_volume_cents, operators_under_review, and checkpoint_last_ledger_seq). "
+                "Requires PAYBOND_API_KEY with Signal analytics read access and the private-dashboards "
+                "feature. Do not use this when you need a portable signed operator list for partner or "
+                "verifier sharing—call paybond_get_signed_portfolio_artifact instead—or for one "
+                "operator's signed receipt—call paybond_get_reputation_receipt. Idempotent read with "
+                "no side effects; auth, RBAC, feature, or gateway failures surface as tool errors."
+            ),
             "annotations": read_only("Get Portfolio Summary"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "schema_version": {
+                        "type": "integer",
+                        "description": "Portfolio summary schema version (currently 1).",
+                    },
+                    "tenant_id": {
+                        "type": "string",
+                        "description": (
+                            "Tenant echoed by the gateway for the authenticated API key "
+                            "(example: tenant-a)."
+                        ),
+                        "examples": ["tenant-a"],
+                    },
+                    "score_model_version": {
+                        "type": "string",
+                        "description": (
+                            "Score model version used for the aggregate (echoes the requested "
+                            "score_version or the gateway default 1.0)."
+                        ),
+                        "examples": ["1.0"],
+                    },
+                    "scoring_model": {
+                        "type": "string",
+                        "description": "Scoring model identifier used by Signal for this summary.",
+                    },
+                    "checkpoint_last_ledger_seq": {
+                        "type": "integer",
+                        "description": (
+                            "Last ledger sequence included in the tenant Signal checkpoint."
+                        ),
+                    },
+                    "operator_count": {
+                        "type": "integer",
+                        "description": (
+                            "Number of operators with reputation data for this score model version."
+                        ),
+                    },
+                    "average_score": {
+                        "type": "number",
+                        "description": (
+                            "Average operator score across the tenant portfolio for this score "
+                            "model version."
+                        ),
+                    },
+                    "total_terminal_intents": {
+                        "type": "integer",
+                        "description": (
+                            "Aggregate terminal Harbor intents across operators in the portfolio."
+                        ),
+                    },
+                    "total_receipted_volume_cents": {
+                        "type": "integer",
+                        "description": (
+                            "Aggregate receipted settlement volume in cents across the portfolio."
+                        ),
+                    },
+                    "operators_under_review": {
+                        "type": "integer",
+                        "description": (
+                            "Count of operators currently under Signal review for this score "
+                            "model version."
+                        ),
+                    },
+                },
+            ),
         },
         "paybond_get_signed_portfolio_artifact": {
             "title": "Get Signed Portfolio Artifact",
@@ -1058,11 +1408,143 @@ def _mcp_tool_selection_metadata(tool_annotations_cls: Any) -> dict[str, dict[st
         },
         "paybond_get_fraud_assessment": {
             "title": "Get Fraud Assessment",
+            "description": (
+                "Use this when you need the read-only fraud assessment and review posture for one "
+                "known tenant-scoped operator DID (review state, fraud signals, and compact "
+                "fraud_assessment). Example: look up operator_did=did:web:vendor.example#booker-agent "
+                "(optionally score_version=1.0) before deciding whether to continue a spend workflow "
+                "for that operator. Do not use this for tenant-wide fraud backtesting metrics—call "
+                "paybond_get_fraud_metrics instead—or for Harbor intent escrow detail—call "
+                "paybond_get_intent. Idempotent read; returns null when no assessment exists for "
+                "that operator."
+            ),
             "annotations": read_only("Get Fraud Assessment"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "tenant_id": {
+                        "type": "string",
+                        "description": (
+                            "Tenant echoed by the gateway for the authenticated API key "
+                            "(example: tenant-a)."
+                        ),
+                        "examples": ["tenant-a"],
+                    },
+                    "operator_did": {
+                        "type": "string",
+                        "description": (
+                            "Operator DID echoed from the assessment response "
+                            "(example: did:web:vendor.example#booker-agent)."
+                        ),
+                        "examples": ["did:web:vendor.example#booker-agent"],
+                    },
+                    "fraud_assessment": {
+                        "type": "object",
+                        "additionalProperties": True,
+                        "description": (
+                            "Compact fraud assessment for the operator (level, severity, "
+                            "signal counts, summary). Example shape: "
+                            '{"level":"high","highest_severity":"high","signal_count":1,'
+                            '"summary":"level=high"}.'
+                        ),
+                        "examples": [
+                            {
+                                "level": "high",
+                                "highest_severity": "high",
+                                "signal_count": 1,
+                                "summary": "level=high",
+                            },
+                        ],
+                    },
+                },
+            ),
         },
         "paybond_get_fraud_metrics": {
             "title": "Get Fraud Metrics",
+            "description": (
+                "Use this when you need tenant-wide Signal fraud backtesting and monitoring metrics over a "
+                "rolling window (flagged operators, severity counts, review outcomes, precision/"
+                "false-positive rates, and backtest_summary). Requires PAYBOND_API_KEY with Signal "
+                "analytics read access and the private-dashboards feature. Do not use this for one "
+                "operator's fraud posture—call paybond_get_fraud_assessment instead—or for Harbor "
+                "intent escrow detail—call paybond_get_intent. Idempotent read with no side effects; "
+                "omit window to default to 24h; unsupported windows fail with HTTP 400 "
+                '("window must be one of 24h, 7d, or 30d").'
+            ),
             "annotations": read_only("Get Fraud Metrics"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "tenant_id": {
+                        "type": "string",
+                        "description": (
+                            "Tenant echoed by the gateway for the authenticated API key "
+                            "(example: tenant-a)."
+                        ),
+                        "examples": ["tenant-a"],
+                    },
+                    "score_model_version": {
+                        "type": "string",
+                        "description": (
+                            "Score model version used for the metrics (echoes the requested "
+                            "score_version or the gateway default 1.0)."
+                        ),
+                        "examples": ["1.0"],
+                    },
+                    "window": {
+                        "type": "string",
+                        "description": "Active metrics window label: 24h, 7d, or 30d.",
+                        "examples": ["24h", "7d", "30d"],
+                    },
+                    "window_started_at": {
+                        "type": "string",
+                        "description": "RFC3339 start of the evaluated rolling window.",
+                    },
+                    "window_ended_at": {
+                        "type": "string",
+                        "description": "RFC3339 end of the evaluated rolling window.",
+                    },
+                    "flagged_operator_count": {
+                        "type": "integer",
+                        "description": "Operators with at least one fraud signal in the window.",
+                    },
+                    "critical_signal_count": {
+                        "type": "integer",
+                        "description": "Count of critical-severity fraud signals in the window.",
+                    },
+                    "high_signal_count": {
+                        "type": "integer",
+                        "description": "Count of high-severity fraud signals in the window.",
+                    },
+                    "elevated_signal_count": {
+                        "type": "integer",
+                        "description": "Count of elevated-severity fraud signals in the window.",
+                    },
+                    "review_open_count": {
+                        "type": "integer",
+                        "description": "Operators currently in an open review state.",
+                    },
+                    "labeled_outcome_count": {
+                        "type": "integer",
+                        "description": (
+                            "Review outcomes labeled in the window (confirmed risk, false "
+                            "positive, or needs more evidence)."
+                        ),
+                    },
+                    "confirmed_risk_count": {
+                        "type": "integer",
+                        "description": "Labeled confirmed-risk outcomes in the window.",
+                    },
+                    "false_positive_count": {
+                        "type": "integer",
+                        "description": "Labeled false-positive outcomes in the window.",
+                    },
+                    "backtest_summary": {
+                        "type": "string",
+                        "description": (
+                            "Human-readable backtest summary derived from the window metrics."
+                        ),
+                    },
+                },
+            ),
         },
         "paybond_get_a2a_agent_card": {
             "title": "Get A2A Agent Card",
@@ -1094,7 +1576,63 @@ def _mcp_tool_selection_metadata(tool_annotations_cls: Any) -> dict[str, dict[st
         },
         "paybond_verify_protocol_receipt_v1": {
             "title": "Verify Protocol Receipt",
+            "description": (
+                "Use this when you already have a signed protocol-v2 authorization or settlement "
+                "receipt JSON object and need offline Ed25519 verification (structure, message "
+                "digest, and signature) through the gateway. Do not use this to verify "
+                "AgentMandateV1 envelopes—call paybond_verify_agent_mandate_v1—or to check a Harbor "
+                "capability token before spend—call paybond_verify_capability or "
+                "paybond_authorize_agent_spend. To load a settlement receipt by intent UUID first, "
+                "call paybond_get_settlement_receipt_v1 then pass its body here. Read-only and "
+                "side-effect free: success returns valid=true with kind, receipt_id, tenant_id, and "
+                "the normalized receipt; unsupported kind, malformed JSON, digest mismatch, or bad "
+                "signature fail with a gateway error (typically HTTP 400)."
+            ),
             "annotations": read_only("Verify Protocol Receipt"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "valid": {
+                        "type": "boolean",
+                        "description": (
+                            "True when the gateway accepted the receipt structure and Ed25519 "
+                            "signature. Example: true."
+                        ),
+                        "examples": [True],
+                    },
+                    "kind": {
+                        "type": "string",
+                        "description": (
+                            "Verified receipt kind echoed from the normalized receipt. One of "
+                            "paybond.protocol_authorization_receipt_v1 or "
+                            "paybond.protocol_settlement_receipt_v1."
+                        ),
+                        "examples": [
+                            "paybond.protocol_authorization_receipt_v1",
+                            "paybond.protocol_settlement_receipt_v1",
+                        ],
+                    },
+                    "receipt_id": {
+                        "type": "string",
+                        "description": "Canonical receipt identifier from the verified receipt.",
+                        "examples": ["550e8400-e29b-41d4-a716-446655440000"],
+                    },
+                    "tenant_id": {
+                        "type": "string",
+                        "description": (
+                            "Tenant id embedded in the verified receipt (not invented by the caller)."
+                        ),
+                        "examples": ["acme-pilot"],
+                    },
+                    "receipt": {
+                        "type": "object",
+                        "additionalProperties": True,
+                        "description": (
+                            "Normalized verified receipt object matching the input kind "
+                            "(authorization or settlement fields plus signing material)."
+                        ),
+                    },
+                },
+            ),
         },
         "paybond_create_intent": {
             "title": "Create Harbor Intent",
@@ -1224,11 +1762,16 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
     try:
         from mcp.server.fastmcp import FastMCP
         from mcp.types import ToolAnnotations
+        from pydantic import Field as PydanticField
     except ImportError as exc:  # pragma: no cover - exercised only without the optional dep
         raise RuntimeError(
             "The Paybond MCP server requires the optional 'mcp' dependency. "
             "Install it with `pip install \"paybond-kit[mcp]\"`."
         ) from exc
+
+    # FastMCP evaluates postponed annotations against the module globals.
+    global Field
+    Field = PydanticField
 
     resolved = settings or PaybondMCPSettings.from_env()
     effective_policy = resolve_mcp_tool_policy(resolved.tool_policy)
@@ -1355,6 +1898,74 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             operation=operation,
             requested_spend_cents=requested_spend_cents,
             tool_name=operation,
+        )
+
+    @paybond_tool(
+        name="paybond_get_budget_remaining",
+        description=(
+            "Read-only dry-run of remaining spend budget for a tenant-bound intent "
+            "via gateway spend preflight."
+        ),
+    )
+    async def paybond_get_budget_remaining(
+        intent_id: str,
+        operation: str | None = None,
+        requested_spend_cents: int | None = None,
+        vendor_id: str | None = None,
+        tool_name: str | None = None,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        tool_call_id: str | None = None,
+        currency: str | None = None,
+        agent_subject: str | None = None,
+        approval_token: str | None = None,
+    ) -> dict[str, Any]:
+        return await runtime.get_budget_remaining(
+            intent_id=UUID(intent_id),
+            operation=operation,
+            requested_spend_cents=requested_spend_cents,
+            vendor_id=vendor_id,
+            tool_name=tool_name,
+            task_id=task_id,
+            workflow_id=workflow_id,
+            tool_call_id=tool_call_id,
+            currency=currency,
+            agent_subject=agent_subject,
+            approval_token=approval_token,
+        )
+
+    @paybond_tool(
+        name="paybond_explain_policy",
+        description=(
+            "Read-only dry-run explanation of whether proposed spend would allow, "
+            "require approval, or deny under tenant spend policy."
+        ),
+    )
+    async def paybond_explain_policy(
+        intent_id: str,
+        operation: str | None = None,
+        requested_spend_cents: int | None = None,
+        vendor_id: str | None = None,
+        tool_name: str | None = None,
+        task_id: str | None = None,
+        workflow_id: str | None = None,
+        tool_call_id: str | None = None,
+        currency: str | None = None,
+        agent_subject: str | None = None,
+        approval_token: str | None = None,
+    ) -> dict[str, Any]:
+        return await runtime.explain_policy(
+            intent_id=UUID(intent_id),
+            operation=operation,
+            requested_spend_cents=requested_spend_cents,
+            vendor_id=vendor_id,
+            tool_name=tool_name,
+            task_id=task_id,
+            workflow_id=workflow_id,
+            tool_call_id=tool_call_id,
+            currency=currency,
+            agent_subject=agent_subject,
+            approval_token=approval_token,
         )
 
     @paybond_tool(
@@ -1492,8 +2103,31 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         description="Fetch the signed Signal receipt for one operator DID.",
     )
     async def paybond_get_reputation_receipt(
-        operator_did: str,
-        score_version: str | None = None,
+        operator_did: Annotated[
+            str,
+            Field(
+                description=(
+                    "Tenant-scoped operator DID whose signed Signal reputation receipt to fetch. "
+                    "Must belong to the authenticated tenant; do not invent tenant identifiers. "
+                    "Examples: did:web:vendor.example#booker-agent, "
+                    "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK."
+                ),
+                examples=[
+                    "did:web:vendor.example#booker-agent",
+                    "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+                ],
+            ),
+        ],
+        score_version: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Optional Signal score model version to query. Omit to use the gateway "
+                    "default current model (1.0). Example: 1.0."
+                ),
+                examples=["1.0"],
+            ),
+        ] = None,
     ) -> dict[str, Any] | None:
         signal = await runtime.signal()
         return _jsonable(
@@ -1503,16 +2137,24 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
             )
         )
 
-    async def _handle_get_portfolio_summary(
-        score_version: str | None = None,
+    @paybond_tool(
+        name="paybond_get_portfolio_summary",
+        description="Fetch the tenant-scoped Signal portfolio summary.",
+    )
+    async def paybond_get_portfolio_summary(
+        score_version: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Optional Signal score model version to query. Omit to use the gateway "
+                    "default current model (1.0). Example: 1.0."
+                ),
+                examples=["1.0"],
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         signal = await runtime.signal()
         return _jsonable(await signal.get_portfolio_summary(score_version=score_version))
-
-    paybond_tool(
-        name="paybond_get_portfolio_summary",
-        description="Fetch the tenant-scoped Signal portfolio summary.",
-    )(_handle_get_portfolio_summary)
 
     @paybond_tool(
         name="paybond_get_signed_portfolio_artifact",
@@ -1532,8 +2174,31 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         description="Fetch the read-only fraud assessment for one tenant-scoped operator DID.",
     )
     async def paybond_get_fraud_assessment(
-        operator_did: str,
-        score_version: str | None = None,
+        operator_did: Annotated[
+            str,
+            Field(
+                description=(
+                    "Tenant-scoped operator DID to assess. Must belong to the authenticated "
+                    "tenant; do not invent tenant identifiers. Examples: "
+                    "did:web:vendor.example#booker-agent, "
+                    "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK."
+                ),
+                examples=[
+                    "did:web:vendor.example#booker-agent",
+                    "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+                ],
+            ),
+        ],
+        score_version: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Optional Signal score model version to query. Omit to use the gateway "
+                    "default current model. Example: 1.0."
+                ),
+                examples=["1.0"],
+            ),
+        ] = None,
     ) -> dict[str, Any] | None:
         fraud = await runtime.fraud()
         return _jsonable(
@@ -1545,11 +2210,32 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
 
     @paybond_tool(
         name="paybond_get_fraud_metrics",
-        description="Fetch tenant-scoped read-only fraud backtesting and monitoring metrics for a supported active window.",
+        description=(
+            "Fetch tenant-scoped read-only fraud backtesting and monitoring metrics for a "
+            "supported active window."
+        ),
     )
     async def paybond_get_fraud_metrics(
-        window: str | None = None,
-        score_version: str | None = None,
+        window: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Rolling metrics window. Allowed values: 24h, 7d, 30d. Omit to use the "
+                    "gateway default 24h. Unsupported values fail with HTTP 400."
+                ),
+                examples=["24h", "7d", "30d"],
+            ),
+        ] = None,
+        score_version: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Optional Signal score model version to query. Omit to use the gateway "
+                    "default current model (1.0). Example: 1.0."
+                ),
+                examples=["1.0"],
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         fraud = await runtime.fraud()
         return _jsonable(await fraud.get_fraud_metrics(window=window, score_version=score_version))
@@ -1634,9 +2320,37 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
 
     @paybond_tool(
         name="paybond_verify_protocol_receipt_v1",
-        description="Verify a protocol-v2 authorization or settlement receipt through the gateway.",
+        description=(
+            "Verify a signed protocol-v2 authorization or settlement receipt through the gateway."
+        ),
     )
-    async def paybond_verify_protocol_receipt_v1(receipt: dict[str, Any]) -> dict[str, Any]:
+    async def paybond_verify_protocol_receipt_v1(
+        receipt: Annotated[
+            dict[str, Any],
+            Field(
+                description=(
+                    "Complete signed protocol receipt object posted as the verify request body "
+                    "(not a receipt_id string). Discriminate on kind: "
+                    "paybond.protocol_authorization_receipt_v1 requires schema_version=1, "
+                    'receipt_version="1", receipt_id, issued_at, status (authorized), intent_id, '
+                    "tenant_id, verifier_id, transport_binding, mandate_digest_sha256_hex, "
+                    "imported_mandate_signing_public_key_ed25519_hex, authorization, agent, "
+                    "allowed_actions, allowed_tools, spend_ceiling, settlement, constraint, "
+                    "expires_at, nonce, human_presence_mode, plus "
+                    "signing_algorithm=ed25519-sha256-json-v1, message_digest_sha256_hex, "
+                    "signing_public_key_ed25519_hex, and ed25519_signature_hex. "
+                    "paybond.protocol_settlement_receipt_v1 requires schema_version=1, "
+                    'receipt_version="1", receipt_id, issued_at, intent_id, tenant_id, '
+                    "verifier_id, transport_binding, authorization_receipt_id, "
+                    "mandate_digest_sha256_hex, harbor_state, settlement_rail, settlement_mode, "
+                    "principal_did, payee_did, currency, amount_cents, terminal_observed_at, "
+                    "optional predicate_passed, and the same Ed25519 signing fields. Obtain "
+                    "receipts from mandate import, paybond_get_settlement_receipt_v1, audit "
+                    "export, or partner handoff—do not invent digests or signatures."
+                ),
+            ),
+        ],
+    ) -> dict[str, Any]:
         return await runtime.verify_protocol_receipt_v1(receipt)
 
     @paybond_tool(

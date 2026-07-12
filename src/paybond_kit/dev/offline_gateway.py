@@ -115,6 +115,16 @@ def create_offline_dev_gateway_transport(
                         "audit_id": "00000000-0000-4000-8000-000000000002",
                         "decision_id": "00000000-0000-4000-8000-000000000003",
                     }
+            elif url.endswith("/v1/spend/preflight"):
+                payload = {
+                    "classification": "allow",
+                    "outcome": "allow",
+                    "reason_codes": [],
+                    "remaining_cents": 100000,
+                    "spend_scope": {"scope_type": "tenant", "scope_key": ""},
+                    "policy_version": 1,
+                    "explanation": "Spend is allowed under the current policy.",
+                }
             elif url.endswith(f"/v1/sandbox/guardrails/{OFFLINE_DEV_INTENT_ID}/evidence"):
                 payload = {
                     "tenant_id": OFFLINE_DEV_TENANT_ID,
@@ -209,6 +219,16 @@ def offline_dev_http_context() -> Any:
                     "intent_id": OFFLINE_DEV_INTENT_ID,
                     "audit_id": "00000000-0000-4000-8000-000000000002",
                     "decision_id": "00000000-0000-4000-8000-000000000003",
+                }
+            elif url.endswith("/v1/spend/preflight"):
+                payload = {
+                    "classification": "allow",
+                    "outcome": "allow",
+                    "reason_codes": [],
+                    "remaining_cents": 100000,
+                    "spend_scope": {"scope_type": "tenant", "scope_key": ""},
+                    "policy_version": 1,
+                    "explanation": "Spend is allowed under the current policy.",
                 }
             elif url.endswith(f"/v1/sandbox/guardrails/{OFFLINE_DEV_INTENT_ID}/evidence"):
                 payload = {

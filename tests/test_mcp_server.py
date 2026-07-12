@@ -84,6 +84,8 @@ async def test_gateway_only_server_exposes_gateway_first_mutation_tools() -> Non
         assert "paybond_get_settlement_receipt_v1" in names
         assert "paybond_verify_protocol_receipt_v1" in names
         assert "paybond_authorize_agent_spend" in names
+        assert "paybond_get_budget_remaining" in names
+        assert "paybond_explain_policy" in names
         assert "paybond_bootstrap_sandbox_guardrail" in names
         assert "paybond_submit_sandbox_guardrail_evidence" in names
         assert "paybond_validate_completion_evidence" in names
@@ -110,6 +112,29 @@ async def test_gateway_only_server_exposes_gateway_first_mutation_tools() -> Non
         assert authorize["outputSchema"]["properties"]["allow"]["type"] == "boolean"
         assert authorize["outputSchema"]["properties"]["tenant"]["type"] == "string"
         assert authorize["outputSchema"]["properties"]["intent_id"]["type"] == "string"
+        assert authorize["outputSchema"]["properties"]["remaining_cents"]["type"] == "integer"
+        assert authorize["outputSchema"]["properties"]["reason_codes"]["type"] == "array"
+        assert authorize["outputSchema"]["properties"]["message"]["type"] == "string"
+        assert authorize["outputSchema"]["properties"]["decision_id"]["type"] == "string"
+        assert authorize["outputSchema"]["properties"]["approval_request_id"]["type"] == "string"
+
+        budget = tool_by_name["paybond_get_budget_remaining"].model_dump(
+            by_alias=True, exclude_none=True
+        )
+        assert budget["title"] == "Get Budget Remaining"
+        assert budget["annotations"]["readOnlyHint"] is True
+        assert budget["outputSchema"]["properties"]["remaining_cents"]["type"] == "integer"
+        assert budget["outputSchema"]["properties"]["spend_scope"]["type"] == "object"
+        assert budget["outputSchema"]["properties"]["policy_version"]["type"] == "integer"
+
+        explain = tool_by_name["paybond_explain_policy"].model_dump(
+            by_alias=True, exclude_none=True
+        )
+        assert explain["title"] == "Explain Spend Policy"
+        assert explain["annotations"]["readOnlyHint"] is True
+        assert explain["outputSchema"]["properties"]["outcome"]["type"] == "string"
+        assert explain["outputSchema"]["properties"]["reason_codes"]["type"] == "array"
+        assert explain["outputSchema"]["properties"]["explanation"]["type"] == "string"
 
         create_spend = tool_by_name["paybond_create_spend_intent"].model_dump(
             by_alias=True, exclude_none=True
@@ -126,6 +151,150 @@ async def test_gateway_only_server_exposes_gateway_first_mutation_tools() -> Non
         assert principal["annotations"]["readOnlyHint"] is True
         assert principal["annotations"]["openWorldHint"] is False
         assert "sandbox-only" in tool_by_name["paybond_bootstrap_sandbox_guardrail"].description
+
+        fraud_assessment = tool_by_name["paybond_get_fraud_assessment"].model_dump(
+            by_alias=True, exclude_none=True
+        )
+        assert fraud_assessment["title"] == "Get Fraud Assessment"
+        assert "Use this when" in fraud_assessment["description"]
+        assert "did:web:vendor.example#booker-agent" in fraud_assessment["description"]
+        assert "paybond_get_fraud_metrics" in fraud_assessment["description"]
+        assert "paybond_get_intent" in fraud_assessment["description"]
+        assert "Do not use this" in fraud_assessment["description"]
+        assert fraud_assessment["annotations"] == {
+            "title": "Get Fraud Assessment",
+            "readOnlyHint": True,
+            "openWorldHint": False,
+        }
+        operator_did_prop = fraud_assessment["inputSchema"]["properties"]["operator_did"]
+        assert "did:web:vendor.example#booker-agent" in operator_did_prop["description"]
+        assert "did:web:vendor.example#booker-agent" in operator_did_prop["examples"]
+        score_version_prop = fraud_assessment["inputSchema"]["properties"]["score_version"]
+        assert "1.0" in score_version_prop["description"]
+        assert "1.0" in score_version_prop["examples"]
+        assert "tenant-a" in fraud_assessment["outputSchema"]["properties"]["tenant_id"][
+            "description"
+        ]
+        assert fraud_assessment["outputSchema"]["properties"]["tenant_id"]["examples"] == [
+            "tenant-a"
+        ]
+        assert "Operator DID" in fraud_assessment["outputSchema"]["properties"]["operator_did"][
+            "description"
+        ]
+        assert fraud_assessment["outputSchema"]["properties"]["operator_did"]["examples"] == [
+            "did:web:vendor.example#booker-agent"
+        ]
+        fraud_assessment_prop = fraud_assessment["outputSchema"]["properties"]["fraud_assessment"]
+        assert "level" in fraud_assessment_prop["description"]
+        assert fraud_assessment_prop["examples"][0]["level"] == "high"
+
+        portfolio_summary = tool_by_name["paybond_get_portfolio_summary"].model_dump(
+            by_alias=True, exclude_none=True
+        )
+        assert portfolio_summary["title"] == "Get Portfolio Summary"
+        assert "Use this when" in portfolio_summary["description"]
+        assert "paybond_get_signed_portfolio_artifact" in portfolio_summary["description"]
+        assert "paybond_get_reputation_receipt" in portfolio_summary["description"]
+        assert "Do not use this" in portfolio_summary["description"]
+        assert "no side effects" in portfolio_summary["description"]
+        assert portfolio_summary["annotations"] == {
+            "title": "Get Portfolio Summary",
+            "readOnlyHint": True,
+            "openWorldHint": False,
+        }
+        portfolio_score_version = portfolio_summary["inputSchema"]["properties"]["score_version"]
+        assert "1.0" in portfolio_score_version["description"]
+        assert "1.0" in portfolio_score_version["examples"]
+        assert "tenant-a" in portfolio_summary["outputSchema"]["properties"]["tenant_id"][
+            "description"
+        ]
+        assert portfolio_summary["outputSchema"]["properties"]["operator_count"]["type"] == "integer"
+        assert portfolio_summary["outputSchema"]["properties"]["average_score"]["type"] == "number"
+        assert "operators" not in portfolio_summary["outputSchema"]["properties"]
+
+        verify_protocol_receipt = tool_by_name["paybond_verify_protocol_receipt_v1"].model_dump(
+            by_alias=True, exclude_none=True
+        )
+        assert verify_protocol_receipt["title"] == "Verify Protocol Receipt"
+        assert "Use this when" in verify_protocol_receipt["description"]
+        assert "paybond_verify_agent_mandate_v1" in verify_protocol_receipt["description"]
+        assert "paybond_verify_capability" in verify_protocol_receipt["description"]
+        assert "paybond_get_settlement_receipt_v1" in verify_protocol_receipt["description"]
+        assert "Do not use this" in verify_protocol_receipt["description"]
+        assert "side-effect free" in verify_protocol_receipt["description"]
+        assert verify_protocol_receipt["annotations"] == {
+            "title": "Verify Protocol Receipt",
+            "readOnlyHint": True,
+            "openWorldHint": False,
+        }
+        receipt_prop = verify_protocol_receipt["inputSchema"]["properties"]["receipt"]
+        assert "paybond.protocol_authorization_receipt_v1" in receipt_prop["description"]
+        assert "paybond.protocol_settlement_receipt_v1" in receipt_prop["description"]
+        assert verify_protocol_receipt["outputSchema"]["properties"]["valid"]["type"] == "boolean"
+        assert "Ed25519" in verify_protocol_receipt["outputSchema"]["properties"]["valid"][
+            "description"
+        ]
+        assert verify_protocol_receipt["outputSchema"]["properties"]["receipt"]["type"] == "object"
+
+        fraud_metrics = tool_by_name["paybond_get_fraud_metrics"].model_dump(
+            by_alias=True, exclude_none=True
+        )
+        assert fraud_metrics["title"] == "Get Fraud Metrics"
+        assert "Use this when" in fraud_metrics["description"]
+        assert "paybond_get_fraud_assessment" in fraud_metrics["description"]
+        assert "Do not use this" in fraud_metrics["description"]
+        assert "24h" in fraud_metrics["description"]
+        assert "no side effects" in fraud_metrics["description"]
+        assert fraud_metrics["annotations"] == {
+            "title": "Get Fraud Metrics",
+            "readOnlyHint": True,
+            "openWorldHint": False,
+        }
+        window_prop = fraud_metrics["inputSchema"]["properties"]["window"]
+        assert "24h" in window_prop["description"]
+        assert set(window_prop.get("examples", [])) >= {"24h", "7d", "30d"}
+        metrics_score_version = fraud_metrics["inputSchema"]["properties"]["score_version"]
+        assert "1.0" in metrics_score_version["description"]
+        assert "1.0" in metrics_score_version["examples"]
+        assert fraud_metrics["outputSchema"]["properties"]["flagged_operator_count"][
+            "type"
+        ] == "integer"
+        assert "Operators" in fraud_metrics["outputSchema"]["properties"]["flagged_operator_count"][
+            "description"
+        ]
+        assert fraud_metrics["outputSchema"]["properties"]["critical_signal_count"][
+            "type"
+        ] == "integer"
+        assert "backtest" in fraud_metrics["outputSchema"]["properties"]["backtest_summary"][
+            "description"
+        ]
+
+        reputation_receipt = tool_by_name["paybond_get_reputation_receipt"].model_dump(
+            by_alias=True, exclude_none=True
+        )
+        assert reputation_receipt["title"] == "Get Reputation Receipt"
+        assert "Use this when" in reputation_receipt["description"]
+        assert "paybond_get_portfolio_summary" in reputation_receipt["description"]
+        assert "paybond_get_signed_portfolio_artifact" in reputation_receipt["description"]
+        assert "paybond_get_fraud_assessment" in reputation_receipt["description"]
+        assert "Do not use this" in reputation_receipt["description"]
+        assert "returns null" in reputation_receipt["description"]
+        assert reputation_receipt["annotations"] == {
+            "title": "Get Reputation Receipt",
+            "readOnlyHint": True,
+            "openWorldHint": False,
+        }
+        reputation_operator = reputation_receipt["inputSchema"]["properties"]["operator_did"]
+        assert "did:web:vendor.example#booker-agent" in reputation_operator["description"]
+        assert "did:web:vendor.example#booker-agent" in reputation_operator["examples"]
+        reputation_score_version = reputation_receipt["inputSchema"]["properties"]["score_version"]
+        assert "1.0" in reputation_score_version["description"]
+        assert "1.0" in reputation_score_version["examples"]
+        assert reputation_receipt["outputSchema"]["properties"]["schema_version"]["type"] == "integer"
+        assert reputation_receipt["outputSchema"]["properties"]["updated_at"]["type"] == "string"
+        assert "signature_hex" in reputation_receipt["outputSchema"]["properties"]["receipt"][
+            "description"
+        ]
     finally:
         await _close_server(server)
 
@@ -421,6 +590,81 @@ async def test_verify_capability_tool_rejects_tenant_mismatch() -> None:
                     "requested_spend_cents": 100,
                 },
             )
+    finally:
+        await _close_server(server)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_budget_remaining_and_explain_policy_call_spend_preflight() -> None:
+    intent_id = uuid4()
+    respx.get("https://gateway.test/v1/auth/principal").mock(
+        return_value=httpx.Response(200, json={"tenant_id": "tenant-a"})
+    )
+    preflight = respx.post("https://gateway.test/v1/spend/preflight").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "classification": "hold",
+                "outcome": "approval_required",
+                "reason_codes": ["approval_threshold_exceeded"],
+                "remaining_cents": 25000,
+                "spend_scope": {"scope_type": "tenant", "scope_key": ""},
+                "policy_version": 3,
+                "explanation": (
+                    "Requested spend is at or above the approval threshold and requires human approval."
+                ),
+            },
+        )
+    )
+    server = build_mcp_server(
+        PaybondMCPSettings(
+            gateway_base_url="https://gateway.test",
+            api_key=_api_key(),
+        )
+    )
+    try:
+        _, budget = await server.call_tool(
+            "paybond_get_budget_remaining",
+            {
+                "intent_id": str(intent_id),
+                "operation": "tool.purchase",
+                "requested_spend_cents": 75000,
+                "vendor_id": "vendor-1",
+            },
+        )
+        assert budget == {
+            "remaining_cents": 25000,
+            "spend_scope": {"scope_type": "tenant", "scope_key": ""},
+            "policy_version": 3,
+        }
+
+        _, explained = await server.call_tool(
+            "paybond_explain_policy",
+            {
+                "intent_id": str(intent_id),
+                "operation": "tool.purchase",
+                "requested_spend_cents": 75000,
+                "vendor_id": "vendor-1",
+            },
+        )
+        assert explained == {
+            "outcome": "approval_required",
+            "reason_codes": ["approval_threshold_exceeded"],
+            "explanation": (
+                "Requested spend is at or above the approval threshold and requires human approval."
+            ),
+            "remaining_cents": 25000,
+            "approval_threshold_exceeded": True,
+        }
+        assert preflight.call_count == 2
+        request = preflight.calls[0].request
+        assert request.headers.get("x-tenant-id") == "tenant-a"
+        body = json.loads(request.content.decode("utf-8"))
+        assert body["intent_id"] == str(intent_id)
+        assert body["operation"] == "tool.purchase"
+        assert body["requested_spend_cents"] == 75000
+        assert body["vendor_id"] == "vendor-1"
     finally:
         await _close_server(server)
 
@@ -890,6 +1134,8 @@ async def test_readonly_tool_policy_limits_exposed_tools() -> None:
         assert "paybond_get_principal" in names
         assert "paybond_list_audit_exports" in names
         assert "paybond_get_audit_export" in names
+        assert "paybond_get_budget_remaining" in names
+        assert "paybond_explain_policy" in names
         assert "paybond_create_spend_intent" not in names
     finally:
         await _close_server(server)

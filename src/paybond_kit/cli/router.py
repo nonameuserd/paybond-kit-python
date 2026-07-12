@@ -123,6 +123,10 @@ async def _dispatch(ctx: CliContext, command: list[str]) -> tuple[str, dict[str,
         return f"guardrails {second}", commands.handle_guardrails(ctx, second, command[2:])
     if head == "spend" and second == "authorize":
         return "spend authorize", commands.handle_spend_authorize(ctx, command[2:])
+    if head == "spend" and second == "budget-remaining":
+        return "spend budget-remaining", commands.handle_spend_budget_remaining(ctx, command[2:])
+    if head == "spend" and second == "explain-policy":
+        return "spend explain-policy", commands.handle_spend_explain_policy(ctx, command[2:])
     if head == "signal" and second:
         return f"signal {second}", commands.handle_signal(ctx, second, command[2:])
     if head == "receipts" and second:
