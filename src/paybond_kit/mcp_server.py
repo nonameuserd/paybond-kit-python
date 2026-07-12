@@ -1090,7 +1090,45 @@ def _mcp_tool_selection_metadata(tool_annotations_cls: Any) -> dict[str, dict[st
     return {
         "paybond_get_principal": {
             "title": "Get Paybond Principal",
+            "description": (
+                "Use this when you need to confirm which tenant-bound service-account principal the "
+                "configured PAYBOND_API_KEY authenticates as (tenant_id, subject, and roles). Call early "
+                "as a prerequisite before Harbor escrow, Signal reads, or other tenant-scoped tools when "
+                "tenant identity is unknown. Not required before every later call once tenant_id is "
+                "already known from a prior principal response or host config. Do not use this when you "
+                "need Harbor intent escrow detail; use paybond_get_intent instead when you have an "
+                "intent_id. Do not use this for A2A discovery; use paybond_get_a2a_agent_card instead. "
+                "Makes one read-only external GET to the gateway principal endpoint; idempotent identity "
+                "lookup with no side effects (no mutations, spend reservations, escrow changes, or "
+                "ledger writes); auth or gateway failures surface as tool errors."
+            ),
             "annotations": read_only("Get Paybond Principal"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "tenant_id": {
+                        "type": "string",
+                        "description": "Tenant bound to the configured Paybond API key.",
+                        "examples": ["tenant-a"],
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": (
+                            "Service-account subject identifier echoed by the gateway for the "
+                            "authenticated API key (example: service-account-1)."
+                        ),
+                        "examples": ["service-account-1"],
+                    },
+                    "roles": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "RBAC roles granted to this principal for the authenticated tenant "
+                            '(example: ["operator"]).'
+                        ),
+                        "examples": [["operator"]],
+                    },
+                },
+            ),
         },
         "paybond_verify_capability": {
             "title": "Verify Paybond Capability",
@@ -1404,7 +1442,57 @@ def _mcp_tool_selection_metadata(tool_annotations_cls: Any) -> dict[str, dict[st
         },
         "paybond_get_signed_portfolio_artifact": {
             "title": "Get Signed Portfolio Artifact",
+            "description": (
+                "Use this when you need a portable, tenant-scoped signed Signal portfolio snapshot "
+                "(operator list plus Ed25519 signing material) for offline verifier checks or partner "
+                "sharing—not a public leaderboard. Requires PAYBOND_API_KEY with Signal analytics read "
+                "access. Omit score_version to use the gateway default current model (1.0). Do not use "
+                "this for tenant-wide aggregates without signatures—call paybond_get_portfolio_summary—or "
+                "for one operator's signed receipt—call paybond_get_reputation_receipt—or for one "
+                "operator's fraud review posture—call paybond_get_fraud_assessment. Idempotent read with "
+                "no side effects; auth, RBAC, feature, or gateway failures surface as tool errors."
+            ),
             "annotations": read_only("Get Signed Portfolio Artifact"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "kind": {
+                        "type": "string",
+                        "description": (
+                            "Artifact kind identifier (currently paybond.signal.portfolio_snapshot)."
+                        ),
+                        "examples": ["paybond.signal.portfolio_snapshot"],
+                    },
+                    "tenant_id": {
+                        "type": "string",
+                        "description": (
+                            "Tenant echoed by the gateway for the authenticated API key "
+                            "(example: tenant-a). Never invent tenant identifiers."
+                        ),
+                        "examples": ["tenant-a"],
+                    },
+                    "score_model_version": {
+                        "type": "string",
+                        "description": (
+                            "Score model version used for the artifact (echoes the requested "
+                            "score_version or the gateway default 1.0)."
+                        ),
+                        "examples": ["1.0"],
+                    },
+                    "checkpoint_last_ledger_seq": {
+                        "type": "integer",
+                        "description": (
+                            "Last ledger sequence included in the tenant Signal checkpoint for "
+                            "this artifact."
+                        ),
+                    },
+                    "signature_hex": {
+                        "type": "string",
+                        "description": (
+                            "Ed25519 signature hex over the canonical portfolio artifact payload."
+                        ),
+                    },
+                },
+            ),
         },
         "paybond_get_fraud_assessment": {
             "title": "Get Fraud Assessment",
@@ -1848,8 +1936,16 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
     @paybond_tool(
         name="paybond_get_principal",
         description=(
-            "Resolve the tenant-bound Paybond principal behind the configured "
-            "service-account API key."
+            "Use this when you need to confirm which tenant-bound service-account principal the "
+            "configured PAYBOND_API_KEY authenticates as (tenant_id, subject, and roles). Call early "
+            "as a prerequisite before Harbor escrow, Signal reads, or other tenant-scoped tools when "
+            "tenant identity is unknown. Not required before every later call once tenant_id is "
+            "already known from a prior principal response or host config. Do not use this when you "
+            "need Harbor intent escrow detail; use paybond_get_intent instead when you have an "
+            "intent_id. Do not use this for A2A discovery; use paybond_get_a2a_agent_card instead. "
+            "Makes one read-only external GET to the gateway principal endpoint; idempotent identity "
+            "lookup with no side effects (no mutations, spend reservations, escrow changes, or "
+            "ledger writes); auth or gateway failures surface as tool errors."
         ),
     )
     async def paybond_get_principal() -> dict[str, Any]:
@@ -2164,7 +2260,16 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         ),
     )
     async def paybond_get_signed_portfolio_artifact(
-        score_version: str | None = None,
+        score_version: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Optional Signal score model version to query. Omit to use the gateway "
+                    "default current model (1.0). Example: 1.0."
+                ),
+                examples=["1.0"],
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         signal = await runtime.signal()
         return _jsonable(await signal.get_signed_portfolio_artifact(score_version=score_version))

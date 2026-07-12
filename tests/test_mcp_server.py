@@ -148,9 +148,66 @@ async def test_gateway_only_server_exposes_gateway_first_mutation_tools() -> Non
         principal = tool_by_name["paybond_get_principal"].model_dump(
             by_alias=True, exclude_none=True
         )
-        assert principal["annotations"]["readOnlyHint"] is True
-        assert principal["annotations"]["openWorldHint"] is False
+        assert principal["title"] == "Get Paybond Principal"
+        assert "Use this when" in principal["description"]
+        assert "Call early as a prerequisite" in principal["description"]
+        assert "Not required before every later call" in principal["description"]
+        assert (
+            "use paybond_get_intent instead when you have an intent_id"
+            in principal["description"]
+        )
+        assert (
+            "Do not use this for A2A discovery; use paybond_get_a2a_agent_card instead"
+            in principal["description"]
+        )
+        assert "Do not use this when" in principal["description"]
+        assert "no side effects" in principal["description"]
+        assert "read-only" in principal["description"]
+        assert principal["annotations"] == {
+            "title": "Get Paybond Principal",
+            "readOnlyHint": True,
+            "openWorldHint": False,
+        }
+        assert "Tenant bound" in principal["outputSchema"]["properties"]["tenant_id"][
+            "description"
+        ]
+        assert "service-account" in principal["outputSchema"]["properties"]["subject"][
+            "description"
+        ]
+        assert principal["outputSchema"]["properties"]["subject"]["examples"] == [
+            "service-account-1"
+        ]
+        assert "RBAC" in principal["outputSchema"]["properties"]["roles"]["description"]
+        assert principal["outputSchema"]["properties"]["roles"]["examples"] == [["operator"]]
         assert "sandbox-only" in tool_by_name["paybond_bootstrap_sandbox_guardrail"].description
+
+        signed_portfolio = tool_by_name["paybond_get_signed_portfolio_artifact"].model_dump(
+            by_alias=True, exclude_none=True
+        )
+        assert signed_portfolio["title"] == "Get Signed Portfolio Artifact"
+        assert "Use this when" in signed_portfolio["description"]
+        assert "paybond_get_portfolio_summary" in signed_portfolio["description"]
+        assert "paybond_get_reputation_receipt" in signed_portfolio["description"]
+        assert "paybond_get_fraud_assessment" in signed_portfolio["description"]
+        assert "Do not use this" in signed_portfolio["description"]
+        assert "no side effects" in signed_portfolio["description"]
+        assert signed_portfolio["annotations"] == {
+            "title": "Get Signed Portfolio Artifact",
+            "readOnlyHint": True,
+            "openWorldHint": False,
+        }
+        signed_score_version = signed_portfolio["inputSchema"]["properties"]["score_version"]
+        assert "1.0" in signed_score_version["description"]
+        assert "1.0" in signed_score_version["examples"]
+        assert "paybond.signal.portfolio_snapshot" in signed_portfolio["outputSchema"][
+            "properties"
+        ]["kind"]["description"]
+        assert "tenant-a" in signed_portfolio["outputSchema"]["properties"]["tenant_id"][
+            "description"
+        ]
+        assert "Ed25519" in signed_portfolio["outputSchema"]["properties"]["signature_hex"][
+            "description"
+        ]
 
         fraud_assessment = tool_by_name["paybond_get_fraud_assessment"].model_dump(
             by_alias=True, exclude_none=True
