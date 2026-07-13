@@ -125,6 +125,34 @@ async def test_agent_run_bind_sandbox_bootstrap() -> None:
     assert run.binding.sandbox.sandbox_lifecycle_status == "funded"
 
 
+@pytest.mark.asyncio
+async def test_agent_run_store_and_get_approval_token() -> None:
+    paybond = _FakePaybond(harbor=_FakeHarbor(), guardrails=_FakeGuardrails())
+    run = await PaybondAgentRun.bind(
+        paybond,
+        {
+            "bootstrap": {
+                "kind": "sandbox",
+                "operation": "travel.book_hotel",
+                "requested_spend_cents": 20_000,
+            },
+            "registry": _registry(),
+        },
+    )
+
+    assert run.get_approval_token("missing") is None
+    assert run.get_approval_token("  missing  ") is None
+
+    run.store_approval_token("  call-1  ", "  operator-token-123  ")
+    assert run.get_approval_token("call-1") == "operator-token-123"
+    assert run.get_approval_token("  call-1  ") == "operator-token-123"
+
+    with pytest.raises(ValueError, match="tool_call_id must be non-empty"):
+        run.store_approval_token("   ", "token")
+    with pytest.raises(ValueError, match="approval token must be non-empty"):
+        run.store_approval_token("call-1", "   ")
+
+
 def _production_evidence() -> PaybondRunProductionEvidenceCredentials:
     return {
         "payee_did": "did:web:vendor.example",

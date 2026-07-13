@@ -142,6 +142,21 @@
         }
       }
     },
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "deny_provider_executed_tools": { "type": "boolean" }
+      }
+    },
+    "adapter_override": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "deny_provider_executed_tools": { "type": "boolean" }
+      }
+    },
     "intent_override": {
       "type": "object",
       "minProperties": 1,
@@ -182,12 +197,14 @@
           "additionalProperties": { "$ref": "#/$defs/tool_override_entry" },
           "propertyNames": { "$ref": "#/$defs/tool_name" }
         },
-        "intent": { "$ref": "#/$defs/intent_override" }
+        "intent": { "$ref": "#/$defs/intent_override" },
+        "adapter": { "$ref": "#/$defs/adapter_override" }
       },
       "anyOf": [
         { "required": ["default_deny"] },
         { "required": ["tools"] },
-        { "required": ["intent"] }
+        { "required": ["intent"] },
+        { "required": ["adapter"] }
       ]
     },
     "policy_document_v1": {
@@ -205,7 +222,8 @@
           "additionalProperties": { "$ref": "#/$defs/tool_entry" },
           "propertyNames": { "$ref": "#/$defs/tool_name" }
         },
-        "intent": { "$ref": "#/$defs/intent" }
+        "intent": { "$ref": "#/$defs/intent" },
+        "adapter": { "$ref": "#/$defs/adapter" }
       }
     },
     "policy_document_v2": {
@@ -224,7 +242,8 @@
           "additionalProperties": { "$ref": "#/$defs/tool_entry" },
           "propertyNames": { "$ref": "#/$defs/tool_name" }
         },
-        "intent": { "$ref": "#/$defs/intent" }
+        "intent": { "$ref": "#/$defs/intent" },
+        "adapter": { "$ref": "#/$defs/adapter" }
       },
       "allOf": [
         {

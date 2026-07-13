@@ -52,10 +52,13 @@ from paybond_kit.mcp_policy_reload import (
     parse_mcp_policy_reload_config,
 )
 from paybond_kit.fraud import GatewayFraudClient
+from paybond_kit.agent_receipt import (
+    AGENT_RECEIPT_KIND_V1,
+    verify_agent_receipt_v1_from_json,
+)
 from paybond_kit.mcp_receipt_resource import (
     MCP_AGENT_RECEIPT_RESOURCE_MIME_TYPE,
     agent_receipt_resource_uri,
-    parse_agent_receipt_resource_uri,
 )
 from paybond_kit.harbor import TenantBindingError
 from paybond_kit.signal import GatewaySignalClient
@@ -1662,6 +1665,86 @@ def _mcp_tool_selection_metadata(tool_annotations_cls: Any) -> dict[str, dict[st
             "title": "Get Settlement Receipt",
             "annotations": read_only("Get Settlement Receipt"),
         },
+        "paybond_get_agent_receipt_v1": {
+            "title": "Get Agent Receipt",
+            "description": (
+                "Use this when you need the signed paybond.agent_receipt_v1 JSON for one "
+                "receipt_id (SHA-256 action id or intent-terminal UUID) via tenant-bound "
+                "Gateway GET. Do not use this for protocol settlement receipts—call "
+                "paybond_get_settlement_receipt_v1. For agent-to-agent handoff without "
+                "embedding JSON in prompts, prefer the MCP resource "
+                "paybond://receipt/{receipt_id} (resources/read verifies at the operational "
+                "tier). Validity tiers beyond operational, continuity-chain, inclusion "
+                "proofs, owner disclosure, and ACTA/PEF/SCITT adapters are Kit/CLI/Gateway "
+                "auditor surfaces—not this tool's job. Read-only and side-effect free."
+            ),
+            "annotations": read_only("Get Agent Receipt"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "tenant_id": {"type": "string"},
+                    "receipt_id": {"type": "string"},
+                    "kind": {"type": "string"},
+                },
+            ),
+        },
+        "paybond_verify_agent_receipt_v1": {
+            "title": "Verify Agent Receipt",
+            "description": (
+                "Use this when you already have a signed paybond.agent_receipt_v1 JSON "
+                "object and need an offline operational-tier (default) Ed25519 signature "
+                "check—schema, digest, and Gateway signature—matching resources/read on "
+                "paybond://receipt/{receipt_id}. Optional validity_tier=primary|attested "
+                "raises the bar (payee digest / operator attestation). Do not use this for "
+                "protocol authorization/settlement receipts—call "
+                "paybond_verify_protocol_receipt_v1. Continuity-chain audits, inclusion "
+                "proofs, owner disclosure, and ACTA/PEF/SCITT are Kit/CLI/Gateway auditor "
+                "surfaces. Read-only and side-effect free: success returns valid=true with "
+                "kind, receipt_id, tenant_id, and the normalized receipt; failures raise a "
+                "clear verification error."
+            ),
+            "annotations": read_only("Verify Agent Receipt"),
+            "output_schema": _mcp_output_object_schema(
+                {
+                    "valid": {
+                        "type": "boolean",
+                        "description": (
+                            "True when operational (or requested) validity checks passed. "
+                            "Example: true."
+                        ),
+                        "examples": [True],
+                    },
+                    "kind": {
+                        "type": "string",
+                        "description": "Verified receipt kind (paybond.agent_receipt_v1).",
+                        "examples": [AGENT_RECEIPT_KIND_V1],
+                    },
+                    "receipt_id": {
+                        "type": "string",
+                        "description": "Canonical receipt identifier from the verified receipt.",
+                    },
+                    "tenant_id": {
+                        "type": "string",
+                        "description": (
+                            "Tenant id embedded in the verified receipt "
+                            "(not invented by the caller)."
+                        ),
+                    },
+                    "validity_tier": {
+                        "type": "string",
+                        "description": (
+                            "Requested validity tier used for this verify "
+                            "(operational, primary, or attested)."
+                        ),
+                        "examples": ["operational", "primary", "attested"],
+                    },
+                    "receipt": {
+                        "type": "object",
+                        "additionalProperties": True,
+                        "description": "Normalized verified paybond.agent_receipt_v1 object.",
+                    },
+                },
+            ),
+        },
         "paybond_verify_protocol_receipt_v1": {
             "title": "Verify Protocol Receipt",
             "description": (
@@ -2424,6 +2507,61 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         return await runtime.get_settlement_receipt_v1(receipt_id)
 
     @paybond_tool(
+        name="paybond_get_agent_receipt_v1",
+        description="Fetch the signed paybond.agent_receipt_v1 for one receipt_id.",
+    )
+    async def paybond_get_agent_receipt_v1(receipt_id: str) -> dict[str, Any]:
+        # Validate id shape via the same helper used for paybond://receipt/{id}.
+        agent_receipt_resource_uri(receipt_id)
+        return await runtime.get_agent_receipt_v1(receipt_id)
+
+    @paybond_tool(
+        name="paybond_verify_agent_receipt_v1",
+        description=(
+            "Verify a signed paybond.agent_receipt_v1 offline (operational tier by default)."
+        ),
+    )
+    async def paybond_verify_agent_receipt_v1(
+        receipt: Annotated[
+            dict[str, Any],
+            Field(
+                description=(
+                    "Complete signed paybond.agent_receipt_v1 object (not a receipt_id "
+                    "string). Obtain from paybond_get_agent_receipt_v1, "
+                    "paybond://receipt/{receipt_id}, audit export "
+                    "(agent_receipts/{id}.json; PEF companions may also appear as "
+                    "*.pef.json), or partner handoff—do not invent digests or signatures."
+                ),
+            ),
+        ],
+        validity_tier: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Optional validity bar: operational (default), primary, or attested. "
+                    "Higher tiers are auditor-oriented; MCP handoff only requires operational."
+                ),
+            ),
+        ] = None,
+    ) -> dict[str, Any]:
+        tier = (validity_tier or "operational").strip().lower() or "operational"
+        try:
+            verified = verify_agent_receipt_v1_from_json(
+                receipt,
+                required_validity_tier=tier,
+            )
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"agent receipt verification failed: {exc}") from exc
+        return {
+            "valid": True,
+            "kind": AGENT_RECEIPT_KIND_V1,
+            "receipt_id": verified["receipt_id"],
+            "tenant_id": verified["tenant_id"],
+            "validity_tier": tier,
+            "receipt": verified,
+        }
+
+    @paybond_tool(
         name="paybond_verify_protocol_receipt_v1",
         description=(
             "Verify a signed protocol-v2 authorization or settlement receipt through the gateway."
@@ -2567,13 +2705,20 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         name="paybond_agent_receipt",
         title="Paybond Agent Receipt",
         description=(
-            "Signed paybond.agent_receipt_v1 JSON fetched tenant-bound from "
-            "Gateway GET /protocol/v2/agent-receipts/{receipt_id}."
+            "Agent-to-agent handoff of signed paybond.agent_receipt_v1 JSON. "
+            "Fetches tenant-bound from Gateway GET /protocol/v2/agent-receipts/{receipt_id} "
+            "and verifies at the operational tier before returning."
         ),
         mime_type=MCP_AGENT_RECEIPT_RESOURCE_MIME_TYPE,
     )
     async def paybond_agent_receipt_resource(receipt_id: str) -> str:
         receipt = await runtime.get_agent_receipt_v1(receipt_id)
+        try:
+            verify_agent_receipt_v1_from_json(receipt)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                f"agent receipt verification failed for {receipt_id}: {exc}"
+            ) from exc
         return json.dumps(receipt, indent=2, sort_keys=True)
 
     @paybond_tool(

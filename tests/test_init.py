@@ -167,6 +167,58 @@ def test_init_scaffolds_agent_middleware_crewai_framework(tmp_path) -> None:
     assert "paybond.policy.yaml" in body
 
 
+def test_init_scaffolds_agent_middleware_pydantic_ai_framework(tmp_path) -> None:
+    out = tmp_path / "paybond_pydantic_ai.py"
+
+    assert main(["--preset", "agent-middleware", "--framework", "pydantic-ai", "--out", str(out)]) == 0
+
+    body = out.read_text(encoding="utf-8")
+    assert "pydantic_ai" in body
+    assert "create_paybond_pydantic_ai_config" in body
+    assert 'framework="pydantic-ai"' in body
+    assert "agent demo pydantic-ai smoke" in body
+    assert "Paybond for paid tools" in body
+    assert "paybond.policy.yaml" in body
+
+
+def test_init_scaffolds_agent_middleware_google_adk_framework(tmp_path) -> None:
+    out = tmp_path / "paybond_google_adk.py"
+
+    assert main(["--preset", "agent-middleware", "--framework", "google-adk", "--out", str(out)]) == 0
+
+    body = out.read_text(encoding="utf-8")
+    assert "google_adk" in body
+    assert "create_paybond_google_adk_config" in body
+    assert 'framework="google-adk"' in body
+    assert "agent demo google-adk smoke" in body
+    assert "Paybond for paid tools" in body
+    assert "paybond.policy.yaml" in body
+
+
+def test_init_scaffolds_agent_middleware_microsoft_agent_framework(tmp_path) -> None:
+    out = tmp_path / "paybond_microsoft_agent_framework.py"
+
+    assert main(
+        [
+            "--preset",
+            "agent-middleware",
+            "--framework",
+            "microsoft-agent-framework",
+            "--out",
+            str(out),
+        ]
+    ) == 0
+
+    body = out.read_text(encoding="utf-8")
+    assert "microsoft_agent_framework" in body
+    assert "create_paybond_microsoft_agent_framework_config" in body
+    assert 'framework="microsoft-agent-framework"' in body
+    assert "agent demo microsoft-agent-framework smoke" in body
+    assert "never_require" in body
+    assert "Paybond for paid tools" in body
+    assert "paybond.policy.yaml" in body
+
+
 def test_init_scaffolds_agent_middleware_mcp_framework(tmp_path) -> None:
     out = tmp_path / "paybond_mcp.py"
 
@@ -186,8 +238,15 @@ def test_init_scaffolds_agent_middleware_openai_framework(tmp_path) -> None:
     assert main(["--preset", "agent-middleware", "--framework", "openai", "--out", str(out)]) == 0
 
     body = out.read_text(encoding="utf-8")
-    assert "create_tool_input_guard_adapter" in body
-    assert "wrap_openai_agent_tools" in body
+    assert "from agents import FunctionTool" in body
+    assert "create_paybond_openai_agents_config" in body
+    assert "create_guarded_agent" in body
+    assert "create_openai_agents_guarded_runner" in body
+    assert 'framework="openai-agents"' in body
+    assert "wrap_openai_agents_tools" in body
+    assert "agent demo openai smoke" in body
+    assert "Paybond for paid tools" in body
+    assert "paybond.policy.yaml" in body
 
 
 def test_init_scaffolds_agent_middleware_langgraph_framework(tmp_path) -> None:

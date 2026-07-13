@@ -11,7 +11,7 @@ from paybond_kit.completion_catalog import get_completion_preset
 FRAMEWORK_NOTES = {
     "generic": "Wrap the returned function around any side-effecting tool handler.",
     "provider-agnostic": "Use the guarded handler with OpenAI, Gemini, Claude/Anthropic, local models, or any custom runtime.",
-    "openai": "Call the guarded handler before the OpenAI tool call performs paid or external work.",
+    "openai": "Register guarded OpenAI Agents SDK FunctionTool instances on your Agent(tools=...).",
     "claude": "Call the guarded handler before the Claude tool-use action performs paid or external work.",
     "anthropic": "Call the guarded handler before the Anthropic tool-use action performs paid or external work.",
     "gemini": "Call the guarded handler before the Gemini function call performs paid or external work.",
@@ -19,6 +19,12 @@ FRAMEWORK_NOTES = {
     "vercel-ai": "Call the guarded handler from your Vercel AI SDK tool execute function.",
     "langgraph": "Call the guarded handler from the LangGraph node or tool wrapper that performs paid work.",
     "crewai": "Register guarded CrewAI @tool / BaseTool instances on your crew agents.",
+    "pydantic-ai": "Register guarded Pydantic AI Tool / callable instances on your Agent(tools=...).",
+    "google-adk": "Register guarded Google ADK FunctionTool instances on your LlmAgent(tools=...).",
+    "microsoft-agent-framework": (
+        "Attach Paybond function middleware on Agent(..., middleware=...); "
+        "use @tool(approval_mode='never_require') so Paybond is the sole spend authority."
+    ),
     "mcp": "Use the same operation name in your MCP tool handler before executing paid work.",
 }
 
@@ -27,6 +33,9 @@ AGENT_MIDDLEWARE_FRAMEWORKS = (
     "generic",
     "claude-agents",
     "crewai",
+    "pydantic-ai",
+    "google-adk",
+    "microsoft-agent-framework",
     "openai",
     "langgraph",
     "vercel-ai",
@@ -130,6 +139,18 @@ def _agent_middleware_header_comments(framework: str) -> str:
         "crewai": (
             "paybond agent demo crewai smoke --operation procurement.submit_po "
             "--requested-spend-cents 12000 --evidence-preset cost_and_completion --format json"
+        ),
+        "pydantic-ai": (
+            "paybond agent demo pydantic-ai smoke --operation paid-tool "
+            "--requested-spend-cents 100 --evidence-preset cost_and_completion --format json"
+        ),
+        "google-adk": (
+            "paybond agent demo google-adk smoke --operation paid-tool "
+            "--requested-spend-cents 100 --evidence-preset cost_and_completion --format json"
+        ),
+        "microsoft-agent-framework": (
+            "paybond agent demo microsoft-agent-framework smoke --operation paid-tool "
+            "--requested-spend-cents 100 --evidence-preset cost_and_completion --format json"
         ),
         "openai": (
             "paybond agent demo openai smoke --operation travel.book_hotel "
@@ -291,14 +312,277 @@ async def create_crewai_guarded_runner(paybond: Paybond) -> CreateGuardedAgentRe
 def wrap_crewai_tools(run: PaybondAgentRun, tools: list[Any]) -> list[Any]:
     """Wrap CrewAI @tool / BaseTool instances when you already bound a PaybondAgentRun."""
     return create_paybond_crewai_config(run, tools).tools'''
+    if framework == "pydantic-ai":
+        return '''from pydantic_ai import Tool
+
+from paybond_kit.agent.guarded_agent import (
+    CreateGuardedAgentInput,
+    CreateGuardedAgentResult,
+    create_guarded_agent,
+)
+from paybond_kit.pydantic_ai import create_paybond_pydantic_ai_config
+
+
+PAID_TOOL_AGENT_POLICY = {
+    "version": 1,
+    "name": "pydantic-ai-agent-v1",
+    "default_deny": True,
+    "tools": {
+        "paid-tool": {
+            "side_effecting": True,
+            "max_spend_cents": DEFAULT_REQUESTED_SPEND_CENTS,
+            "evidence_preset": COMPLETION_PRESET_ID,
+        },
+        "search.catalog": {
+            "side_effecting": False,
+        },
+    },
+    "intent": {
+        "allowed_tools": ["paid-tool"],
+        "budget": {"currency": "usd", "max_spend_usd": 500},
+    },
+}
+
+
+def paid_tool(estimated_price_cents: int) -> dict[str, Any]:
+    return {"status": "completed", "cost_cents": estimated_price_cents}
+
+
+async def create_pydantic_ai_guarded_runner(paybond: Paybond) -> CreateGuardedAgentResult:
+    """Policy-driven Pydantic AI wiring: bind run, wrap Tool handlers, return guarded tools."""
+
+    tools = [
+        Tool(paid_tool, name="paid-tool", description="Execute a paid sandbox operation."),
+    ]
+    result = await create_guarded_agent(
+        paybond,
+        CreateGuardedAgentInput(
+            policy=PAID_TOOL_AGENT_POLICY,
+            framework="pydantic-ai",
+            tools=tools,
+            bootstrap={
+                "operation": "paid-tool",
+                "requested_spend_cents": DEFAULT_REQUESTED_SPEND_CENTS,
+                "completion_preset": COMPLETION_PRESET_ID,
+            },
+        ),
+    )
+    return result
+
+
+def wrap_pydantic_ai_tools(run: PaybondAgentRun, tools: list[Any]) -> list[Any]:
+    """Wrap Pydantic AI Tool / callable instances when you already bound a PaybondAgentRun."""
+    return create_paybond_pydantic_ai_config(run, tools).tools'''
+    if framework == "google-adk":
+        return '''from google.adk.tools import FunctionTool
+
+from paybond_kit.agent.guarded_agent import (
+    CreateGuardedAgentInput,
+    CreateGuardedAgentResult,
+    create_guarded_agent,
+)
+from paybond_kit.google_adk import create_paybond_google_adk_config
+
+
+PAID_TOOL_AGENT_POLICY = {
+    "version": 1,
+    "name": "google-adk-agent-v1",
+    "default_deny": True,
+    "tools": {
+        "paid-tool": {
+            "side_effecting": True,
+            "max_spend_cents": DEFAULT_REQUESTED_SPEND_CENTS,
+            "evidence_preset": COMPLETION_PRESET_ID,
+        },
+        "search.catalog": {
+            "side_effecting": False,
+        },
+    },
+    "intent": {
+        "allowed_tools": ["paid-tool"],
+        "budget": {"currency": "usd", "max_spend_usd": 500},
+    },
+}
+
+
+def paid_tool(estimated_price_cents: int) -> dict[str, Any]:
+    """Execute a paid sandbox operation."""
+    return {"status": "completed", "cost_cents": estimated_price_cents}
+
+
+async def create_google_adk_guarded_runner(paybond: Paybond) -> CreateGuardedAgentResult:
+    """Policy-driven Google ADK wiring: bind run, wrap FunctionTool handlers, return guarded tools."""
+
+    paid_tool.__name__ = "paid-tool"
+    tools = [
+        FunctionTool(paid_tool),
+    ]
+    result = await create_guarded_agent(
+        paybond,
+        CreateGuardedAgentInput(
+            policy=PAID_TOOL_AGENT_POLICY,
+            framework="google-adk",
+            tools=tools,
+            bootstrap={
+                "operation": "paid-tool",
+                "requested_spend_cents": DEFAULT_REQUESTED_SPEND_CENTS,
+                "completion_preset": COMPLETION_PRESET_ID,
+            },
+        ),
+    )
+    return result
+
+
+def wrap_google_adk_tools(run: PaybondAgentRun, tools: list[Any]) -> list[Any]:
+    """Wrap Google ADK FunctionTool / callable instances when you already bound a PaybondAgentRun."""
+    return create_paybond_google_adk_config(run, tools).tools'''
+    if framework == "microsoft-agent-framework":
+        return '''from agent_framework import tool
+
+from paybond_kit.agent.guarded_agent import (
+    CreateGuardedAgentInput,
+    CreateGuardedAgentResult,
+    create_guarded_agent,
+)
+from paybond_kit.microsoft_agent_framework import (
+    create_paybond_microsoft_agent_framework_config,
+)
+
+
+PAID_TOOL_AGENT_POLICY = {
+    "version": 1,
+    "name": "microsoft-agent-framework-agent-v1",
+    "default_deny": True,
+    "tools": {
+        "paid-tool": {
+            "side_effecting": True,
+            "max_spend_cents": DEFAULT_REQUESTED_SPEND_CENTS,
+            "evidence_preset": COMPLETION_PRESET_ID,
+        },
+        "search.catalog": {
+            "side_effecting": False,
+        },
+    },
+    "intent": {
+        "allowed_tools": ["paid-tool"],
+        "budget": {"currency": "usd", "max_spend_usd": 500},
+    },
+}
+
+
+# Paybond middleware is the sole spend authority — do not compose MAF always_require HITL here.
+@tool(approval_mode="never_require")
+def paid_tool(estimated_price_cents: int) -> dict[str, Any]:
+    """Execute a paid sandbox operation."""
+    return {"status": "completed", "cost_cents": estimated_price_cents}
+
+
+async def create_microsoft_agent_framework_guarded_runner(
+    paybond: Paybond,
+) -> CreateGuardedAgentResult:
+    """Policy-driven MAF wiring: bind run, return tools + required function middleware."""
+
+    tools = [paid_tool]
+    result = await create_guarded_agent(
+        paybond,
+        CreateGuardedAgentInput(
+            policy=PAID_TOOL_AGENT_POLICY,
+            framework="microsoft-agent-framework",
+            tools=tools,
+            bootstrap={
+                "operation": "paid-tool",
+                "requested_spend_cents": DEFAULT_REQUESTED_SPEND_CENTS,
+                "completion_preset": COMPLETION_PRESET_ID,
+            },
+        ),
+    )
+    # Attach on Agent(..., tools=result.agent_tools, middleware=result.microsoft_agent_framework_config.middleware)
+    return result
+
+
+def create_microsoft_agent_framework_config(run: PaybondAgentRun, tools: list[Any]):
+    """Build MAF middleware + passthrough tools when you already bound a PaybondAgentRun."""
+    return create_paybond_microsoft_agent_framework_config(run, tools)'''
     if framework == "openai":
-        return '''from paybond_kit.agent import create_tool_input_guard_adapter
+        return '''import json
+
+from agents import FunctionTool
+
+from paybond_kit.agent.guarded_agent import (
+    CreateGuardedAgentInput,
+    CreateGuardedAgentResult,
+    create_guarded_agent,
+)
+from paybond_kit.openai_agents import create_paybond_openai_agents_config
 
 
-def wrap_openai_agent_tools(run: PaybondAgentRun, tools: list[dict[str, Any]]) -> list[Any]:
-    """Wrap provider-agnostic tool executors for OpenAI-style agent runtimes."""
-    guard = create_tool_input_guard_adapter(run)
-    return guard.wrap_executors(tools)'''
+TRAVEL_AGENT_POLICY = {
+    "version": 1,
+    "name": "travel-agent-v1",
+    "default_deny": True,
+    "tools": {
+        "travel.book_hotel": {
+            "side_effecting": True,
+            "max_spend_cents": DEFAULT_REQUESTED_SPEND_CENTS,
+            "evidence_preset": COMPLETION_PRESET_ID,
+        },
+        "search.web": {
+            "side_effecting": False,
+        },
+    },
+    "intent": {
+        "allowed_tools": ["travel.book_hotel"],
+        "budget": {"currency": "usd", "max_spend_usd": 200},
+    },
+}
+
+
+async def book_hotel_handler(_ctx: Any, input_json: str) -> str:
+    args = json.loads(input_json)
+    payload = await book_hotel(args)
+    return json.dumps(payload)
+
+
+async def create_openai_agents_guarded_runner(paybond: Paybond) -> CreateGuardedAgentResult:
+    """Policy-driven OpenAI Agents SDK wiring: bind run, wrap FunctionTool handlers, return guarded tools."""
+
+    sdk_tools = [
+        FunctionTool(
+            name="travel.book_hotel",
+            description="Book a hotel room",
+            params_json_schema={
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"},
+                    "estimated_price_cents": {"type": "integer", "minimum": 0},
+                },
+                "required": ["city", "estimated_price_cents"],
+                "additionalProperties": False,
+            },
+            on_invoke_tool=book_hotel_handler,
+            strict_json_schema=False,
+            needs_approval=False,
+        ),
+    ]
+    result = await create_guarded_agent(
+        paybond,
+        CreateGuardedAgentInput(
+            policy=TRAVEL_AGENT_POLICY,
+            framework="openai-agents",
+            tools=sdk_tools,
+            bootstrap={
+                "operation": DEFAULT_OPERATION,
+                "requested_spend_cents": DEFAULT_REQUESTED_SPEND_CENTS,
+                "completion_preset": COMPLETION_PRESET_ID,
+            },
+        ),
+    )
+    return result
+
+
+def wrap_openai_agents_tools(run: PaybondAgentRun, tools: list[Any]) -> list[Any]:
+    """Wrap OpenAI Agents SDK FunctionTool instances when you already bound a PaybondAgentRun."""
+    return create_paybond_openai_agents_config(run, tools).tools'''
     if framework == "langgraph":
         return '''from paybond_kit.langgraph_hooks import paybond_awrap_tool_call
 

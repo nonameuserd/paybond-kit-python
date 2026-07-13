@@ -28,6 +28,7 @@ from paybond_kit.agent.generic_runner import (
     create_paybond_generic_input_guard,
 )
 from paybond_kit.agent.interceptor import (
+    AgentReceiptComposeResult,
     PaybondAutoEvidenceSubmitError,
     PaybondEvidenceSubmitError,
     PaybondInterceptEvidenceResult,
@@ -80,6 +81,7 @@ __all__ = [
     "PaybondAutoEvidenceSubmitError",
     "PaybondEvidenceSubmitError",
     "PaybondToolDeniedResolution",
+    "AgentReceiptComposeResult",
     "PaybondInterceptEvidenceResult",
     "PaybondInterceptWrapExecuteResult",
     "PaybondRunAgentContext",

@@ -323,6 +323,7 @@ class PaybondAgentRun:
         "policy_file_path",
         "_reload_controller",
         "_reload_listeners",
+        "_approval_tokens",
     )
 
     def __init__(
@@ -344,6 +345,9 @@ class PaybondAgentRun:
             "policy_reloaded": [],
             "policy_reload_failed": [],
         }
+        # Run-scoped map: tool_call_id → operator approval token for Harbor hold retries.
+        # Tokens never leave this run; do not share PaybondAgentRun across concurrent tasks.
+        self._approval_tokens: dict[str, str] = {}
         self.interceptor = PaybondToolInterceptor(binding, host)
 
     @property
@@ -451,6 +455,27 @@ class PaybondAgentRun:
         if self._reload_controller is not None:
             self._reload_controller.stop()
             self._reload_controller = None
+
+    def store_approval_token(self, tool_call_id: str, token: str) -> None:
+        """Store an operator approval token for retry after a Harbor approval hold.
+
+        Tokens are keyed by ``tool_call_id`` and scoped to this run (and therefore
+        the authenticated tenant binding). Empty ids or tokens raise ``ValueError``.
+        """
+        call_id = tool_call_id.strip()
+        value = token.strip()
+        if not call_id:
+            raise ValueError("tool_call_id must be non-empty")
+        if not value:
+            raise ValueError("approval token must be non-empty")
+        self._approval_tokens[call_id] = value
+
+    def get_approval_token(self, tool_call_id: str) -> str | None:
+        """Read a stored approval token for a tool-call retry.
+
+        Returns ``None`` when no token was stored for the trimmed ``tool_call_id``.
+        """
+        return self._approval_tokens.get(tool_call_id.strip())
 
     @classmethod
     async def bind(cls, paybond: PaybondAgentRunHost, config: PaybondAgentRunBindConfig) -> PaybondAgentRun:

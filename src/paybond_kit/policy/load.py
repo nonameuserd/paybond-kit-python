@@ -44,7 +44,10 @@ from paybond_kit.policy.validate_remote import (
     validate_policy_remote,
     validate_policy_payload_remote,
 )
-from paybond_kit.agent.types import PaybondRunBindingSandboxBootstrapInput
+from paybond_kit.policy.adapter_options import (
+    PaybondPolicyAdapterOptions,
+    policy_to_adapter_options,
+)
 
 PaybondPolicyLoadSource = str | Path | dict[str, Any] | PaybondPolicyDocumentV1 | PaybondPolicyDocumentV2
 
@@ -71,6 +74,20 @@ class PaybondPolicy:
     @property
     def intent(self) -> PaybondPolicyIntentSection | None:
         return self.document.intent
+
+    @property
+    def adapter(self):
+        return self.document.adapter
+
+    @property
+    def deny_provider_executed_tools(self) -> bool:
+        return (
+            self.document.adapter is not None
+            and self.document.adapter.deny_provider_executed_tools is True
+        )
+
+    def to_adapter_options(self) -> PaybondPolicyAdapterOptions:
+        return policy_to_adapter_options(self.document)
 
     @classmethod
     def load(cls, source: PaybondPolicyLoadSource) -> PaybondPolicy:

@@ -21,6 +21,14 @@ AGENT_RECEIPT_SCOPE_ACTION = "action"
 AGENT_RECEIPT_SCOPE_INTENT_TERMINAL = "intent_terminal"
 AGENT_RECEIPT_WELL_KNOWN_PATH = "/.well-known/agent-receipt-v1.json"
 AGENT_RECEIPT_SIGNING_KEYS_WELL_KNOWN_PATH = "/.well-known/agent-receipt-signing-keys.json"
+AGENT_RECEIPT_VALIDITY_TIER_OPERATIONAL = "operational"
+AGENT_RECEIPT_VALIDITY_TIER_PRIMARY = "primary"
+AGENT_RECEIPT_VALIDITY_TIER_ATTESTED = "attested"
+EXTERNAL_ATTESTATION_KIND_AGENT_MANDATE_V1 = "agent_mandate_v1"
+SETTLEMENT_OUTCOME_SETTLED = "SETTLED"
+SETTLEMENT_OUTCOME_PENDING_FINALITY = "PENDING_FINALITY"
+SETTLEMENT_OUTCOME_REVERSED = "REVERSED"
+SETTLEMENT_OUTCOME_FAILED = "FAILED"
 
 FORBIDDEN_AGENT_RECEIPT_FIELDS: tuple[str, ...] = (
     "user_prompt",
@@ -65,6 +73,7 @@ def _agent_receipt_schema() -> dict[str, Any]:
 
         raw = (_AGENT_RECEIPT_DIR / "schema.json").read_text(encoding="utf-8")
         _AGENT_RECEIPT_SCHEMA = json.loads(raw)
+    assert _AGENT_RECEIPT_SCHEMA is not None
     return _AGENT_RECEIPT_SCHEMA
 
 
@@ -103,10 +112,23 @@ def verify_agent_receipt_v1_from_json(
     raw: bytes | str | Mapping[str, Any],
     *,
     expected_signing_public_keys: Sequence[str] | None = None,
+    verify_operator_against_registry: bool | None = None,
+    trusted_operator_public_keys: Sequence[str] | None = None,
+    trust_mode: str | None = None,
+    required_validity_tier: str | None = None,
+    expected_prior_message_digest_hex: str | None = None,
 ) -> dict[str, Any]:
     """Validate raw JSON (schema + forbidden fields) then verify signature."""
     doc = validate_agent_receipt_json(raw)
-    return verify_agent_receipt_v1(doc, expected_signing_public_keys=expected_signing_public_keys)
+    return verify_agent_receipt_v1(
+        doc,
+        expected_signing_public_keys=expected_signing_public_keys,
+        verify_operator_against_registry=verify_operator_against_registry,
+        trusted_operator_public_keys=trusted_operator_public_keys,
+        trust_mode=trust_mode,
+        required_validity_tier=required_validity_tier,
+        expected_prior_message_digest_hex=expected_prior_message_digest_hex,
+    )
 
 
 def _format_rfc3339_seconds(value: str) -> str:
@@ -219,11 +241,12 @@ def _normalize_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("agent receipt: tenant_id is required")
 
     authorization = _normalize_authorization(receipt["authorization"])
-    outcome = _normalize_outcome(receipt["outcome"])
     references = _normalize_references(receipt["references"])
     external_attestations = _normalize_external_attestations(
         receipt.get("external_attestations") or []
     )
+    _verify_mandate_authorization_consistency(authorization, external_attestations)
+    outcome = _normalize_outcome(receipt["outcome"], scope)
 
     execution: dict[str, Any] | None = None
     if scope == AGENT_RECEIPT_SCOPE_ACTION:
@@ -259,6 +282,10 @@ def _normalize_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
         normalized["evidence"] = _normalize_evidence(receipt["evidence"])
     if receipt.get("payment") is not None:
         normalized["payment"] = _normalize_payment(receipt["payment"])
+    if receipt.get("continuity") is not None:
+        normalized["continuity"] = _normalize_continuity(
+            receipt["continuity"], execution=execution
+        )
     if receipt.get("operator_attestation") is not None:
         normalized["operator_attestation"] = _normalize_operator_attestation(
             receipt["operator_attestation"]
@@ -266,6 +293,36 @@ def _normalize_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
 
     _verify_receipt_id(normalized)
     return normalized
+
+
+def _normalize_continuity(
+    value: Mapping[str, Any],
+    *,
+    execution: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    run_id = str(value["run_id"]).strip().lower()
+    if not _UUID_RE.fullmatch(run_id):
+        raise ValueError("agent receipt: continuity.run_id must be a canonical UUID")
+    sequence_number = int(value["sequence_number"])
+    if sequence_number < 1:
+        raise ValueError("agent receipt: continuity.sequence_number must be >= 1")
+    prev = str(value.get("prev_message_digest_sha256_hex") or "").strip().lower()
+    if sequence_number == 1:
+        if prev:
+            raise ValueError(
+                "agent receipt: continuity.sequence_number 1 must not set prev_message_digest_sha256_hex"
+            )
+    else:
+        _require_hex64(prev, "continuity.prev_message_digest_sha256_hex")
+    if execution is not None and str(execution.get("run_id", "")).strip().lower() != run_id:
+        raise ValueError("agent receipt: continuity.run_id must match execution.run_id")
+    out: dict[str, Any] = {
+        "sequence_number": sequence_number,
+        "run_id": run_id,
+    }
+    if prev:
+        out["prev_message_digest_sha256_hex"] = prev
+    return out
 
 
 def _normalize_operator_attestation(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -313,6 +370,21 @@ def _normalize_authorization(value: Mapping[str, Any]) -> dict[str, Any]:
     }
     if value.get("audit_id"):
         out["audit_id"] = _parse_uuid(str(value["audit_id"]), "audit_id")
+    mandate_digest = str(value.get("mandate_digest_sha256_hex") or "").strip().lower()
+    mandate_reference_id = str(value.get("mandate_reference_id") or "").strip()
+    if mandate_digest:
+        _require_hex64(mandate_digest, "mandate_digest_sha256_hex")
+        out["mandate_digest_sha256_hex"] = mandate_digest
+    if mandate_reference_id:
+        if not mandate_digest:
+            raise ValueError(
+                "agent receipt: mandate_reference_id requires mandate_digest_sha256_hex"
+            )
+        out["mandate_reference_id"] = mandate_reference_id
+    zk_policy_proof = str(value.get("zk_policy_proof_digest_sha256_hex") or "").strip().lower()
+    if zk_policy_proof:
+        _require_hex64(zk_policy_proof, "zk_policy_proof_digest_sha256_hex")
+        out["zk_policy_proof_digest_sha256_hex"] = zk_policy_proof
     return out
 
 
@@ -382,6 +454,10 @@ def _normalize_execution(value: Mapping[str, Any]) -> dict[str, Any]:
         if duration_ms < 0:
             raise ValueError("agent receipt: duration_ms must be non-negative")
         out["duration_ms"] = duration_ms
+    tee_attestation = str(value.get("tee_attestation_digest_sha256_hex") or "").strip().lower()
+    if tee_attestation:
+        _require_hex64(tee_attestation, "tee_attestation_digest_sha256_hex")
+        out["tee_attestation_digest_sha256_hex"] = tee_attestation
     return out
 
 
@@ -438,7 +514,7 @@ def _normalize_payment(value: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _normalize_outcome(value: Mapping[str, Any]) -> dict[str, Any]:
+def _normalize_outcome(value: Mapping[str, Any], scope: str) -> dict[str, Any]:
     harbor_state = _normalize_scope_token(str(value["harbor_state"]), "harbor_state")
     out: dict[str, Any] = {"harbor_state": harbor_state}
     if value.get("spend_reservation_outcome"):
@@ -450,7 +526,57 @@ def _normalize_outcome(value: Mapping[str, Any]) -> dict[str, Any]:
         out["spend_reservation_outcome"] = spend_outcome
     if "predicate_passed" in value and value["predicate_passed"] is not None:
         out["predicate_passed"] = bool(value["predicate_passed"])
+    settlement_outcome = str(value.get("settlement_outcome") or "").strip()
+    if settlement_outcome:
+        if settlement_outcome not in {
+            SETTLEMENT_OUTCOME_SETTLED,
+            SETTLEMENT_OUTCOME_PENDING_FINALITY,
+            SETTLEMENT_OUTCOME_REVERSED,
+            SETTLEMENT_OUTCOME_FAILED,
+        }:
+            raise ValueError(
+                "agent receipt: settlement_outcome must be SETTLED, PENDING_FINALITY, REVERSED, or FAILED"
+            )
+        if scope != AGENT_RECEIPT_SCOPE_INTENT_TERMINAL:
+            raise ValueError(
+                "agent receipt: settlement_outcome is only valid for intent_terminal scope"
+            )
+        out["settlement_outcome"] = settlement_outcome
     return out
+
+
+def _verify_mandate_authorization_consistency(
+    authorization: Mapping[str, Any],
+    attestations: Sequence[Mapping[str, Any]],
+) -> None:
+    digest = str(authorization.get("mandate_digest_sha256_hex") or "").strip().lower()
+    ref_id = str(authorization.get("mandate_reference_id") or "").strip()
+    if not digest and not ref_id:
+        return
+    if not digest:
+        raise ValueError(
+            "agent receipt: mandate_reference_id requires mandate_digest_sha256_hex"
+        )
+    _require_hex64(digest, "mandate_digest_sha256_hex")
+    matched: Mapping[str, Any] | None = None
+    for entry in attestations:
+        if str(entry.get("kind") or "").strip() != EXTERNAL_ATTESTATION_KIND_AGENT_MANDATE_V1:
+            continue
+        if str(entry.get("digest_sha256_hex") or "").strip().lower() != digest:
+            continue
+        matched = entry
+        break
+    if matched is None:
+        raise ValueError(
+            "agent receipt: mandate_digest_sha256_hex must match an external_attestations "
+            f"entry of kind {EXTERNAL_ATTESTATION_KIND_AGENT_MANDATE_V1}"
+        )
+    attestation_ref = str(matched.get("reference_id") or "").strip()
+    if ref_id and ref_id != attestation_ref:
+        raise ValueError(
+            "agent receipt: mandate_reference_id must match the matching "
+            "external_attestations reference_id"
+        )
 
 
 def _normalize_references(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -559,6 +685,25 @@ def _marshal_canonical_agent_receipt(receipt: Mapping[str, Any]) -> bytes:
             if authorization.get("reason_codes")
             else {}
         ),
+        **(
+            {"mandate_digest_sha256_hex": authorization["mandate_digest_sha256_hex"]}
+            if authorization.get("mandate_digest_sha256_hex")
+            else {}
+        ),
+        **(
+            {"mandate_reference_id": authorization["mandate_reference_id"]}
+            if authorization.get("mandate_reference_id")
+            else {}
+        ),
+        **(
+            {
+                "zk_policy_proof_digest_sha256_hex": authorization[
+                    "zk_policy_proof_digest_sha256_hex"
+                ]
+            }
+            if authorization.get("zk_policy_proof_digest_sha256_hex")
+            else {}
+        ),
     }
 
     payload: dict[str, Any] = {
@@ -589,6 +734,15 @@ def _marshal_canonical_agent_receipt(receipt: Mapping[str, Any]) -> bytes:
             "started_at": execution["started_at"],
             "completed_at": execution["completed_at"],
             **({"duration_ms": execution["duration_ms"]} if execution.get("duration_ms") else {}),
+            **(
+                {
+                    "tee_attestation_digest_sha256_hex": execution[
+                        "tee_attestation_digest_sha256_hex"
+                    ]
+                }
+                if execution.get("tee_attestation_digest_sha256_hex")
+                else {}
+            ),
         }
 
     merchant = receipt.get("merchant")
@@ -649,6 +803,11 @@ def _marshal_canonical_agent_receipt(receipt: Mapping[str, Any]) -> bytes:
             if outcome.get("predicate_passed") is not None
             else {}
         ),
+        **(
+            {"settlement_outcome": outcome["settlement_outcome"]}
+            if outcome.get("settlement_outcome")
+            else {}
+        ),
     }
 
     references = receipt["references"]
@@ -660,6 +819,18 @@ def _marshal_canonical_agent_receipt(receipt: Mapping[str, Any]) -> bytes:
 
     external_attestations = receipt.get("external_attestations") or []
     payload["external_attestations"] = external_attestations if external_attestations else None
+
+    continuity = receipt.get("continuity")
+    if isinstance(continuity, Mapping):
+        payload["continuity"] = {
+            **(
+                {"prev_message_digest_sha256_hex": continuity["prev_message_digest_sha256_hex"]}
+                if continuity.get("prev_message_digest_sha256_hex")
+                else {}
+            ),
+            "sequence_number": continuity["sequence_number"],
+            "run_id": continuity["run_id"],
+        }
 
     return json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
@@ -691,16 +862,30 @@ def verify_agent_receipt_v1(
     receipt: Mapping[str, Any],
     *,
     expected_signing_public_keys: Sequence[str] | None = None,
-    verify_operator_against_registry: bool = False,
+    verify_operator_against_registry: bool | None = None,
     trusted_operator_public_keys: Sequence[str] | None = None,
+    trust_mode: str | None = None,
+    required_validity_tier: str | None = None,
+    expected_prior_message_digest_hex: str | None = None,
 ) -> dict[str, Any]:
     """Validate structure, receipt_id derivation, digest, and detached Ed25519 signature.
 
     The ``operator_did`` binding to ``authorization.agent.operator_did`` is always enforced
     when an ``operator_attestation`` is present. When ``verify_operator_against_registry`` is
     ``True``, the operator signing key must additionally appear in ``trusted_operator_public_keys``.
+
+    For ``trust_mode="tenant_registry"``, registry checks default on when an operator attestation
+    is present (empty trusted set rejects). Gateway JWKS / ``trust_mode="gateway"`` leave the
+    registry check opt-in unless ``verify_operator_against_registry`` is explicitly ``True``.
+
+    ``required_validity_tier`` may be ``operational`` (default), ``primary``, or ``attested``.
+    ``attested`` forces operator registry checks.
     """
+    required_tier = _normalize_validity_tier(required_validity_tier)
+    if required_tier == AGENT_RECEIPT_VALIDITY_TIER_ATTESTED:
+        verify_operator_against_registry = True
     normalized = _normalize_receipt(receipt)
+    _verify_continuity_expected_prior(normalized, expected_prior_message_digest_hex)
     if not _allows_signing_public_key_hex(
         str(normalized["signing_public_key_ed25519_hex"]),
         expected_signing_public_keys,
@@ -736,8 +921,216 @@ def verify_agent_receipt_v1(
         digest,
         verify_operator_against_registry=verify_operator_against_registry,
         trusted_operator_public_keys=trusted_operator_public_keys,
+        trust_mode=trust_mode,
+    )
+    _require_validity_tier(
+        normalized,
+        required_tier,
+        trusted_operator_public_keys=trusted_operator_public_keys,
     )
     return normalized
+
+
+def _normalize_validity_tier(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in ("", AGENT_RECEIPT_VALIDITY_TIER_OPERATIONAL):
+        return AGENT_RECEIPT_VALIDITY_TIER_OPERATIONAL
+    if normalized == AGENT_RECEIPT_VALIDITY_TIER_PRIMARY:
+        return AGENT_RECEIPT_VALIDITY_TIER_PRIMARY
+    if normalized == AGENT_RECEIPT_VALIDITY_TIER_ATTESTED:
+        return AGENT_RECEIPT_VALIDITY_TIER_ATTESTED
+    raise ValueError(f"agent receipt: unknown validity_tier {value!r}")
+
+
+def _require_primary_validity(receipt: Mapping[str, Any]) -> None:
+    evidence = receipt.get("evidence")
+    if not isinstance(evidence, Mapping):
+        raise ValueError("agent receipt: primary validity requires evidence")
+    digest = str(evidence.get("payee_signature_digest_sha256_hex") or "").strip().lower()
+    if not digest:
+        raise ValueError(
+            "agent receipt: primary validity requires evidence.payee_signature_digest_sha256_hex"
+        )
+    _require_hex64(digest, "evidence.payee_signature_digest_sha256_hex")
+    payment = receipt.get("payment")
+    if isinstance(payment, Mapping):
+        if str(payment.get("intent_id", "")).strip().lower() != str(
+            receipt["references"]["intent_id"]
+        ).strip().lower():
+            raise ValueError(
+                "agent receipt: primary validity: payment.intent_id must match references.intent_id"
+            )
+    merchant = receipt.get("merchant")
+    if isinstance(merchant, Mapping):
+        merchant_payee = str(merchant.get("payee_did") or "").strip()
+        evidence_payee = str(evidence.get("payee_did") or "").strip()
+        if merchant_payee and evidence_payee and merchant_payee != evidence_payee:
+            raise ValueError(
+                "agent receipt: primary validity: evidence.payee_did must match merchant.payee_did"
+            )
+
+
+def _require_attested_validity(
+    receipt: Mapping[str, Any],
+    *,
+    trusted_operator_public_keys: Sequence[str] | None,
+) -> None:
+    attestation = receipt.get("operator_attestation")
+    if not isinstance(attestation, Mapping):
+        raise ValueError("agent receipt: attested validity requires operator_attestation")
+    if not _allows_operator_public_key_hex(
+        str(attestation["signing_public_key_ed25519_hex"]),
+        trusted_operator_public_keys,
+    ):
+        raise ValueError(
+            "agent receipt: attested validity requires operator_attestation signing key in the configured tenant operator registry"
+        )
+
+
+def _require_validity_tier(
+    receipt: Mapping[str, Any],
+    tier: str,
+    *,
+    trusted_operator_public_keys: Sequence[str] | None,
+) -> None:
+    if tier == AGENT_RECEIPT_VALIDITY_TIER_OPERATIONAL:
+        return
+    if tier == AGENT_RECEIPT_VALIDITY_TIER_PRIMARY:
+        _require_primary_validity(receipt)
+        return
+    if tier == AGENT_RECEIPT_VALIDITY_TIER_ATTESTED:
+        _require_primary_validity(receipt)
+        _require_attested_validity(
+            receipt, trusted_operator_public_keys=trusted_operator_public_keys
+        )
+        return
+    raise ValueError(f"agent receipt: unknown validity_tier {tier!r}")
+
+
+def achieved_validity_tier(
+    receipt: Mapping[str, Any],
+    *,
+    trusted_operator_public_keys: Sequence[str] | None = None,
+) -> str:
+    """Return the highest validity tier met under the given registry options."""
+    try:
+        _require_primary_validity(receipt)
+    except ValueError:
+        return AGENT_RECEIPT_VALIDITY_TIER_OPERATIONAL
+    attestation = receipt.get("operator_attestation")
+    if isinstance(attestation, Mapping) and _allows_operator_public_key_hex(
+        str(attestation["signing_public_key_ed25519_hex"]),
+        trusted_operator_public_keys,
+    ):
+        return AGENT_RECEIPT_VALIDITY_TIER_ATTESTED
+    return AGENT_RECEIPT_VALIDITY_TIER_PRIMARY
+
+
+def continuity_from_prior(
+    run_id: str,
+    prior: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the next continuity link from a prior signed action receipt for the same run.
+
+    When ``prior`` is ``None``, returns sequence 1 with no prev digest.
+    """
+    normalized_run_id = run_id.strip().lower()
+    if not _UUID_RE.fullmatch(normalized_run_id):
+        raise ValueError("agent receipt: continuity.run_id must be a canonical UUID")
+    if prior is None:
+        return {"sequence_number": 1, "run_id": normalized_run_id}
+
+    prior_run_id = normalized_run_id
+    continuity = prior.get("continuity")
+    if isinstance(continuity, Mapping) and str(continuity.get("run_id") or "").strip():
+        prior_run_id = str(continuity["run_id"]).strip().lower()
+    else:
+        execution = prior.get("execution")
+        if isinstance(execution, Mapping) and str(execution.get("run_id") or "").strip():
+            prior_run_id = str(execution["run_id"]).strip().lower()
+    if prior_run_id != normalized_run_id:
+        raise ValueError("agent receipt: continuity prior run_id mismatch")
+
+    prev_digest = str(prior.get("message_digest_sha256_hex") or "").strip().lower()
+    _require_hex64(prev_digest, "prior message_digest_sha256_hex")
+    if isinstance(continuity, Mapping) and int(continuity.get("sequence_number") or 0) > 0:
+        seq = int(continuity["sequence_number"]) + 1
+    else:
+        seq = 2
+    return {
+        "prev_message_digest_sha256_hex": prev_digest,
+        "sequence_number": seq,
+        "run_id": normalized_run_id,
+    }
+
+
+def verify_continuity_chain(receipts: Sequence[Mapping[str, Any]]) -> None:
+    """Validate an ordered set of action receipts that declare continuity.
+
+    Receipts without continuity are ignored. Broken links fail closed.
+    """
+    linked: list[dict[str, Any]] = []
+    for receipt in receipts:
+        if receipt.get("continuity") is None:
+            continue
+        linked.append(_normalize_receipt(receipt))
+    if not linked:
+        return
+    linked.sort(
+        key=lambda item: (
+            str(item["continuity"]["run_id"]),
+            int(item["continuity"]["sequence_number"]),
+        )
+    )
+    prev_by_run: dict[str, dict[str, Any]] = {}
+    for item in linked:
+        continuity = item["continuity"]
+        run_id = str(continuity["run_id"])
+        prior = prev_by_run.get(run_id)
+        if prior is None:
+            if int(continuity["sequence_number"]) != 1 or continuity.get(
+                "prev_message_digest_sha256_hex"
+            ):
+                raise ValueError(
+                    f"agent receipt: continuity chain for run {run_id} must start at "
+                    "sequence_number 1 without prev digest"
+                )
+            prev_by_run[run_id] = item
+            continue
+        expected_seq = int(prior["continuity"]["sequence_number"]) + 1
+        if int(continuity["sequence_number"]) != expected_seq:
+            raise ValueError(
+                f"agent receipt: continuity chain sequence gap for run {run_id}: "
+                f"got {continuity['sequence_number']} want {expected_seq}"
+            )
+        if continuity.get("prev_message_digest_sha256_hex") != prior["message_digest_sha256_hex"]:
+            raise ValueError(
+                f"agent receipt: continuity chain digest mismatch for run {run_id} "
+                f"sequence {continuity['sequence_number']}"
+            )
+        prev_by_run[run_id] = item
+
+
+def _verify_continuity_expected_prior(
+    receipt: Mapping[str, Any],
+    expected_prior_message_digest_hex: str | None,
+) -> None:
+    expected = (expected_prior_message_digest_hex or "").strip().lower()
+    if not expected:
+        return
+    continuity = receipt.get("continuity")
+    if not isinstance(continuity, Mapping):
+        raise ValueError(
+            "agent receipt: continuity is required when an expected prior digest is configured"
+        )
+    if int(continuity["sequence_number"]) < 2:
+        raise ValueError(
+            "agent receipt: continuity: expected prior digest requires sequence_number > 1"
+        )
+    if str(continuity.get("prev_message_digest_sha256_hex") or "").strip().lower() != expected:
+        raise ValueError(
+            "agent receipt: continuity: prev_message_digest_sha256_hex does not match expected prior digest"
+        )
 
 
 def _allows_operator_public_key_hex(
@@ -754,8 +1147,9 @@ def _verify_operator_attestation(
     normalized: Mapping[str, Any],
     digest: bytes,
     *,
-    verify_operator_against_registry: bool = False,
+    verify_operator_against_registry: bool | None = None,
     trusted_operator_public_keys: Sequence[str] | None = None,
+    trust_mode: str | None = None,
 ) -> None:
     attestation = normalized.get("operator_attestation")
     if not attestation:
@@ -769,7 +1163,11 @@ def _verify_operator_attestation(
         raise ValueError(
             "agent receipt: operator_attestation message_digest_sha256_hex must match gateway digest"
         )
-    if verify_operator_against_registry and not _allows_operator_public_key_hex(
+    mode = (trust_mode or "").strip().lower()
+    enforce_registry = verify_operator_against_registry is True or (
+        verify_operator_against_registry is not False and mode == "tenant_registry"
+    )
+    if enforce_registry and not _allows_operator_public_key_hex(
         str(attestation["signing_public_key_ed25519_hex"]),
         trusted_operator_public_keys,
     ):

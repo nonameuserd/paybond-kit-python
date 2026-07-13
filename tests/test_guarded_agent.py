@@ -286,6 +286,189 @@ async def test_create_guarded_agent_crewai_wraps_tools() -> None:
     bootstrap.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_create_guarded_agent_pydantic_ai_wraps_tools() -> None:
+    bootstrap = AsyncMock(
+        return_value=SimpleNamespace(
+            tenant_id="tenant-a",
+            intent_id="intent-sandbox",
+            capability_token="cap-sandbox",
+            operation="paid-tool",
+            requested_spend_cents=100,
+            sandbox_lifecycle_status="funded",
+        )
+    )
+    host = _make_host(bootstrap=bootstrap)
+
+    class FakeTool:
+        def __init__(self, function: Any, *, name: str | None = None, description: str = "", **kwargs: Any) -> None:
+            self.function = function
+            self.name = name or getattr(function, "__name__", "tool")
+            self.description = description
+            self.takes_ctx = kwargs.get("takes_ctx", False)
+            self.max_retries = kwargs.get("max_retries")
+            self.prepare = kwargs.get("prepare")
+            self.args_validator = kwargs.get("args_validator")
+            self.docstring_format = kwargs.get("docstring_format", "auto")
+            self.require_parameter_descriptions = kwargs.get(
+                "require_parameter_descriptions", False
+            )
+            self.strict = kwargs.get("strict")
+            self.sequential = kwargs.get("sequential", False)
+            self.requires_approval = kwargs.get("requires_approval", False)
+            self.metadata = kwargs.get("metadata")
+            self.timeout = kwargs.get("timeout")
+            self.defer_loading = kwargs.get("defer_loading", False)
+            self.include_return_schema = kwargs.get("include_return_schema")
+
+    def paid_tool(estimated_price_cents: int) -> dict[str, Any]:
+        return {"status": "completed", "cost_cents": estimated_price_cents}
+
+    tools = [FakeTool(paid_tool, name="paid-tool", description="Paid tool")]
+    fake_module = MagicMock()
+    fake_module.Tool = FakeTool
+    fake_module.ModelRetry = type("ModelRetry", (Exception,), {})
+
+    with patch("paybond_kit.pydantic_ai.config._require_pydantic_ai", return_value=fake_module):
+        with patch(
+            "paybond_kit.pydantic_ai.config.is_pydantic_ai_tool",
+            side_effect=lambda v: isinstance(v, FakeTool),
+        ):
+            result = await create_guarded_agent(
+                host,  # type: ignore[arg-type]
+                CreateGuardedAgentInput(
+                    policy={
+                        "version": 1,
+                        "name": "pydantic-ai-agent-v1",
+                        "default_deny": True,
+                        "tools": {
+                            "paid-tool": {
+                                "side_effecting": True,
+                                "evidence_preset": "cost_and_completion",
+                            }
+                        },
+                    },
+                    framework="pydantic-ai",
+                    tools=tools,
+                ),
+            )
+
+    assert result.framework == "pydantic-ai"
+    assert result.pydantic_ai_config is not None
+    assert result.agent_tools is result.pydantic_ai_config.tools
+    bootstrap.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_guarded_agent_google_adk_wraps_tools() -> None:
+    bootstrap = AsyncMock(
+        return_value=SimpleNamespace(
+            tenant_id="tenant-a",
+            intent_id="intent-sandbox",
+            capability_token="cap-sandbox",
+            operation="paid-tool",
+            requested_spend_cents=100,
+            sandbox_lifecycle_status="funded",
+        )
+    )
+    host = _make_host(bootstrap=bootstrap)
+
+    class FakeFunctionTool:
+        def __init__(self, func: Any, *, require_confirmation: bool = False) -> None:
+            self.func = func
+            self.name = getattr(func, "__name__", "tool")
+            self.description = getattr(func, "__doc__", "") or f"Tool {self.name}"
+            self._require_confirmation = require_confirmation
+
+    def paid_tool(estimated_price_cents: int) -> dict[str, Any]:
+        return {"status": "completed", "cost_cents": estimated_price_cents}
+
+    paid_tool.__name__ = "paid-tool"
+    tools = [FakeFunctionTool(paid_tool)]
+
+    with patch(
+        "paybond_kit.google_adk.config._require_function_tool",
+        return_value=FakeFunctionTool,
+    ):
+        with patch(
+            "paybond_kit.google_adk.config.is_google_adk_function_tool",
+            side_effect=lambda v: isinstance(v, FakeFunctionTool),
+        ):
+            result = await create_guarded_agent(
+                host,  # type: ignore[arg-type]
+                CreateGuardedAgentInput(
+                    policy={
+                        "version": 1,
+                        "name": "google-adk-agent-v1",
+                        "default_deny": True,
+                        "tools": {
+                            "paid-tool": {
+                                "side_effecting": True,
+                                "evidence_preset": "cost_and_completion",
+                            }
+                        },
+                    },
+                    framework="google-adk",
+                    tools=tools,
+                ),
+            )
+
+    assert result.framework == "google-adk"
+    assert result.google_adk_config is not None
+    assert result.agent_tools is result.google_adk_config.tools
+    bootstrap.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_guarded_agent_microsoft_agent_framework_middleware() -> None:
+    bootstrap = AsyncMock(
+        return_value=SimpleNamespace(
+            tenant_id="tenant-a",
+            intent_id="intent-sandbox",
+            capability_token="cap-sandbox",
+            operation="paid-tool",
+            requested_spend_cents=100,
+            sandbox_lifecycle_status="funded",
+        )
+    )
+    host = _make_host(bootstrap=bootstrap)
+
+    def paid_tool(estimated_price_cents: int) -> dict[str, Any]:
+        return {"status": "completed", "cost_cents": estimated_price_cents}
+
+    class FakeFunctionMiddleware:
+        pass
+
+    with patch(
+        "paybond_kit.microsoft_agent_framework.config._require_function_middleware",
+        return_value=FakeFunctionMiddleware,
+    ):
+        result = await create_guarded_agent(
+            host,  # type: ignore[arg-type]
+            CreateGuardedAgentInput(
+                policy={
+                    "version": 1,
+                    "name": "microsoft-agent-framework-agent-v1",
+                    "default_deny": True,
+                    "tools": {
+                        "paid-tool": {
+                            "side_effecting": True,
+                            "evidence_preset": "cost_and_completion",
+                        }
+                    },
+                },
+                framework="microsoft-agent-framework",
+                tools=[paid_tool],
+            ),
+        )
+
+    assert result.framework == "microsoft-agent-framework"
+    assert result.microsoft_agent_framework_config is not None
+    assert result.agent_tools is result.microsoft_agent_framework_config.tools
+    assert len(result.microsoft_agent_framework_config.middleware) == 1
+    bootstrap.assert_awaited_once()
+
+
 def test_create_guarded_agent_runner_is_alias() -> None:
     assert create_guarded_agent_runner is create_guarded_agent
 

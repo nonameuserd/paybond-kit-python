@@ -54,6 +54,15 @@ PaybondAutoEvidenceSubmitError = PaybondEvidenceSubmitError
 
 
 @dataclass(frozen=True, slots=True)
+class AgentReceiptComposeResult:
+    compose_status: Literal["composed", "failed"]
+    receipt_id: str | None = None
+    scope: str | None = None
+    warning_code: str | None = None
+    warning_message: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PaybondInterceptEvidenceResult:
     submitted: Literal[True]
     intent_id: str
@@ -62,6 +71,26 @@ class PaybondInterceptEvidenceResult:
     intent_state: str | None = None
     payload_digest_sha256_hex: str | None = None
     artifacts_digest_sha256_hex: str | None = None
+    agent_receipt: AgentReceiptComposeResult | None = None
+
+
+def _parse_agent_receipt_compose_result(value: Any) -> AgentReceiptComposeResult | None:
+    if not isinstance(value, dict):
+        return None
+    compose_status = value.get("compose_status")
+    if compose_status not in ("composed", "failed"):
+        return None
+    receipt_id = value.get("receipt_id")
+    scope = value.get("scope")
+    warning_code = value.get("warning_code")
+    warning_message = value.get("warning_message")
+    return AgentReceiptComposeResult(
+        compose_status=compose_status,
+        receipt_id=str(receipt_id) if isinstance(receipt_id, str) else None,
+        scope=str(scope) if isinstance(scope, str) else None,
+        warning_code=str(warning_code) if isinstance(warning_code, str) else None,
+        warning_message=str(warning_message) if isinstance(warning_message, str) else None,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -633,6 +662,11 @@ class PaybondToolInterceptor:
                 )
                 payload_digest = getattr(result, "payload_digest", None)
                 artifacts_digest = getattr(result, "artifacts_digest", None)
+                agent_receipt_raw = (
+                    result.get("agent_receipt")
+                    if isinstance(result, dict)
+                    else getattr(result, "agent_receipt", None)
+                )
                 return PaybondInterceptEvidenceResult(
                     submitted=True,
                     intent_id=str(result.intent_id),
@@ -640,6 +674,7 @@ class PaybondToolInterceptor:
                     sandbox_lifecycle_status=result.sandbox_lifecycle_status,
                     payload_digest_sha256_hex=(payload_digest or "").strip().lower() or None,
                     artifacts_digest_sha256_hex=(artifacts_digest or "").strip().lower() or None,
+                    agent_receipt=_parse_agent_receipt_compose_result(agent_receipt_raw),
                 )
 
             production_evidence = self._binding.production_evidence
@@ -676,6 +711,7 @@ class PaybondToolInterceptor:
             predicate_passed = None
             payload_digest = None
             artifacts_digest = None
+            agent_receipt_raw = None
             if isinstance(result, dict):
                 intent_state = result.get("intent_state") or result.get("state")
                 if isinstance(result.get("predicate_passed"), bool):
@@ -684,6 +720,7 @@ class PaybondToolInterceptor:
                     payload_digest = result["payload_digest"].strip().lower() or None
                 if isinstance(result.get("artifacts_digest"), str):
                     artifacts_digest = result["artifacts_digest"].strip().lower() or None
+                agent_receipt_raw = result.get("agent_receipt")
 
             return PaybondInterceptEvidenceResult(
                 submitted=True,
@@ -692,6 +729,7 @@ class PaybondToolInterceptor:
                 predicate_passed=predicate_passed,
                 payload_digest_sha256_hex=payload_digest,
                 artifacts_digest_sha256_hex=artifacts_digest,
+                agent_receipt=_parse_agent_receipt_compose_result(agent_receipt_raw),
             )
         except PaybondEvidenceSubmitError:
             raise
@@ -868,6 +906,7 @@ class PaybondToolInterceptor:
 __all__ = [
     "PaybondAutoEvidenceSubmitError",
     "PaybondEvidenceSubmitError",
+    "AgentReceiptComposeResult",
     "PaybondInterceptEvidenceResult",
     "PaybondInterceptWrapExecuteResult",
     "PaybondToolInterceptor",

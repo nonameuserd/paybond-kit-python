@@ -19,6 +19,9 @@ GuardedAgentFramework = Literal[
     "langgraph",
     "claude-agents",
     "crewai",
+    "pydantic-ai",
+    "google-adk",
+    "microsoft-agent-framework",
     "vercel-ai",
     "openai-agents",
 ]
@@ -49,6 +52,9 @@ class CreateGuardedAgentResult:
     run_config: Mapping[str, Any] | None = None
     claude_agents_config: Any | None = None
     crewai_config: Any | None = None
+    pydantic_ai_config: Any | None = None
+    google_adk_config: Any | None = None
+    microsoft_agent_framework_config: Any | None = None
 
 
 async def _resolve_policy(source: PaybondPolicyLoadSource | PaybondPolicy) -> PaybondPolicy:
@@ -154,6 +160,49 @@ async def create_guarded_agent(
             framework="crewai",
             agent_tools=crewai_config.tools,
             crewai_config=crewai_config,
+        )
+
+    if framework == "pydantic-ai":
+        from paybond_kit.pydantic_ai import create_paybond_pydantic_ai_config
+
+        pydantic_ai_config = create_paybond_pydantic_ai_config(run, input_.tools)
+        return CreateGuardedAgentResult(
+            run=run,
+            policy=policy,
+            registry=registry,
+            framework="pydantic-ai",
+            agent_tools=pydantic_ai_config.tools,
+            pydantic_ai_config=pydantic_ai_config,
+        )
+
+    if framework == "google-adk":
+        from paybond_kit.google_adk import create_paybond_google_adk_config
+
+        google_adk_config = create_paybond_google_adk_config(run, input_.tools)
+        return CreateGuardedAgentResult(
+            run=run,
+            policy=policy,
+            registry=registry,
+            framework="google-adk",
+            agent_tools=google_adk_config.tools,
+            google_adk_config=google_adk_config,
+        )
+
+    if framework == "microsoft-agent-framework":
+        from paybond_kit.microsoft_agent_framework import (
+            create_paybond_microsoft_agent_framework_config,
+        )
+
+        microsoft_agent_framework_config = create_paybond_microsoft_agent_framework_config(
+            run, input_.tools
+        )
+        return CreateGuardedAgentResult(
+            run=run,
+            policy=policy,
+            registry=registry,
+            framework="microsoft-agent-framework",
+            agent_tools=microsoft_agent_framework_config.tools,
+            microsoft_agent_framework_config=microsoft_agent_framework_config,
         )
 
     if framework == "openai-agents":

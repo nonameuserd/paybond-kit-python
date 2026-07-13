@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from paybond_kit.policy.schema import (
+    PaybondPolicyAdapterSection,
     PaybondPolicyBinding,
     PaybondPolicyBindingOverride,
     PaybondPolicyDocument,
@@ -328,6 +329,41 @@ def _intersect_allowed_tools(
     return intersection
 
 
+def _merge_adapter_section(
+    base: PaybondPolicyAdapterSection | None,
+    overlay: PaybondPolicyAdapterSection | None,
+    override: PaybondPolicyAdapterSection | None,
+    denied: list[PolicyMergeDeniedWidening],
+    overrides_applied: list[str],
+) -> PaybondPolicyAdapterSection | None:
+    values = [
+        None if base is None else base.deny_provider_executed_tools,
+        None if overlay is None else overlay.deny_provider_executed_tools,
+        None if override is None else override.deny_provider_executed_tools,
+    ]
+    if all(value is None for value in values):
+        return None
+
+    if base is not None and base.deny_provider_executed_tools is True:
+        if (overlay is not None and overlay.deny_provider_executed_tools is False) or (
+            override is not None and override.deny_provider_executed_tools is False
+        ):
+            _deny(
+                denied,
+                path="adapter.deny_provider_executed_tools",
+                code="policy.cannot_relax_provider_executed_deny",
+                message="tenant cannot disable org-required deny_provider_executed_tools",
+            )
+
+    if override is not None and override.deny_provider_executed_tools is not None:
+        overrides_applied.append("overrides.adapter.deny_provider_executed_tools")
+
+    deny = _merge_stricter_default_deny(
+        *(False if value is None else value for value in values)
+    )
+    return PaybondPolicyAdapterSection(deny_provider_executed_tools=deny)
+
+
 def _base_document_to_effective_v1(
     document: PaybondPolicyDocumentV1 | PaybondPolicyDocumentV2,
 ) -> PaybondPolicyDocumentV1:
@@ -344,6 +380,7 @@ def _base_document_to_effective_v1(
         default_deny=document.default_deny,
         tools={name: _clone_tool_entry(entry) for name, entry in document.tools.items()},
         intent=intent,
+        adapter=document.adapter,
     )
 
 
@@ -496,6 +533,21 @@ def merge_paybond_policies(
                     allowed_tools=base.intent.allowed_tools,
                 ),
             )
+
+    effective = PaybondPolicyDocumentV1(
+        version=1,
+        name=effective.name,
+        default_deny=effective.default_deny,
+        tools=effective.tools,
+        intent=effective.intent,
+        adapter=_merge_adapter_section(
+            base.adapter,
+            overlay.adapter,
+            overlay.overrides.adapter if overlay.overrides else None,
+            denied,
+            overrides_applied,
+        ),
+    )
 
     if options and options.approved_evidence_presets:
         approved = set(options.approved_evidence_presets)

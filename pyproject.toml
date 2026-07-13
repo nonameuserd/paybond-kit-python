@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "paybond-kit"
-version = "0.12.5"
+version = "0.12.6"
 description = "Paybond Kit for Python: agent spend governance for paid tool calls with spend authorization, evidence receipts, refunds, disputes, hosted Gateway sessions, and settlement."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -82,6 +82,9 @@ langgraph = ["langgraph>=0.2.50", "langchain-core>=0.3.0"]
 claude-agents = ["claude-agent-sdk>=0.2.100"]
 openai-agents = ["openai-agents>=0.17.0"]
 crewai = ["crewai>=0.80.0"]
+pydantic-ai = ["pydantic-ai>=2.0,<3"]
+google-adk = ["google-adk>=1.0,<2"]
+microsoft-agent-framework = ["agent-framework-core>=1.0,<2"]
 mcp = ["mcp>=1.27,<2"]
 dev = [
   "maturin>=1.7,<2",

@@ -113,6 +113,7 @@ def paybond_awrap_tool_call(
                 tool_name=name,
                 tool_call_id=tool_call_id,
                 arguments=args,
+                approval_token=run.get_approval_token(tool_call_id),
                 execute=lambda: execute(request),
             )
             return wrapped.tool_result

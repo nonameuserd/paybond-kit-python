@@ -53,6 +53,11 @@ def _optional_extra_specs() -> tuple[OptionalExtraSpec, ...]:
     from paybond_kit.crewai._peer import crewai_runtime_available
     from paybond_kit.langgraph_hooks import langgraph_runtime_available
     from paybond_kit.openai_agents._peer import openai_agents_runtime_available
+    from paybond_kit.pydantic_ai._peer import pydantic_ai_runtime_available
+    from paybond_kit.google_adk._peer import google_adk_runtime_available
+    from paybond_kit.microsoft_agent_framework._peer import (
+        microsoft_agent_framework_runtime_available,
+    )
 
     return (
         OptionalExtraSpec(
@@ -78,6 +83,24 @@ def _optional_extra_specs() -> tuple[OptionalExtraSpec, ...]:
             available=crewai_runtime_available,
             inject_packages=("crewai",),
             smoke_command="agent demo crewai smoke",
+        ),
+        OptionalExtraSpec(
+            extra_id="pydantic-ai",
+            available=pydantic_ai_runtime_available,
+            inject_packages=("pydantic-ai",),
+            smoke_command="agent demo pydantic-ai smoke",
+        ),
+        OptionalExtraSpec(
+            extra_id="google-adk",
+            available=google_adk_runtime_available,
+            inject_packages=("google-adk",),
+            smoke_command="agent demo google-adk smoke",
+        ),
+        OptionalExtraSpec(
+            extra_id="microsoft-agent-framework",
+            available=microsoft_agent_framework_runtime_available,
+            inject_packages=("agent-framework-core",),
+            smoke_command="agent demo microsoft-agent-framework smoke",
         ),
         OptionalExtraSpec(
             extra_id="openai-agents",
@@ -167,7 +190,7 @@ def run_install_context_doctor_checks() -> list[DoctorCheck]:
             DoctorCheck(
                 name="optional_extras",
                 ok=True,
-                message="langgraph, mcp, claude-agents, and crewai optional extras are importable",
+                message="langgraph, mcp, claude-agents, crewai, pydantic-ai, google-adk, and microsoft-agent-framework optional extras are importable",
             )
         )
 

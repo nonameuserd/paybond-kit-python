@@ -4,14 +4,32 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 from paybond_kit.agent.interceptor import PaybondEvidenceSubmitError
 from paybond_kit.agent.run import PaybondAgentRun
 from paybond_kit.agent.types import PaybondUnregisteredSideEffectingToolError
 from paybond_kit.spend_guard import PaybondSpendApprovalRequiredError, PaybondSpendDeniedError
+
+_LOGGER = logging.getLogger(__name__)
+
+CLAUDE_AGENT_SDK_BUILTIN_TOOL_NAMES: Final[tuple[str, ...]] = (
+    "Read",
+    "Write",
+    "Edit",
+    "Bash",
+    "Glob",
+    "Grep",
+    "WebFetch",
+    "WebSearch",
+    "NotebookEdit",
+    "Task",
+)
+
+_claude_builtin_tools_warning_emitted = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +145,7 @@ def _wrap_claude_agent_sdk_tool(run: PaybondAgentRun, sdk_tool: Any) -> Any:
                 tool_name=tool_name,
                 tool_call_id=tool_call_id,
                 arguments=args if isinstance(args, dict) else {"value": args},
+                approval_token=run.get_approval_token(tool_call_id),
                 execute=execute,
             )
             return _to_call_tool_result(wrapped.tool_result)
@@ -149,12 +168,43 @@ def _wrap_claude_agent_sdk_tool(run: PaybondAgentRun, sdk_tool: Any) -> Any:
     return sdk_tool
 
 
+def find_unguarded_claude_builtin_tools(
+    query_allowed_tools: list[str] | tuple[str, ...] | None,
+) -> list[str]:
+    """Return built-in Claude SDK tool names still present in a query allowedTools list."""
+
+    if not query_allowed_tools:
+        return []
+    allowed = set(query_allowed_tools)
+    return [name for name in CLAUDE_AGENT_SDK_BUILTIN_TOOL_NAMES if name in allowed]
+
+
+def warn_on_unguarded_claude_builtin_tools(
+    query_allowed_tools: list[str] | tuple[str, ...] | None,
+) -> None:
+    """Emit a one-time warning when built-in Claude SDK tools remain enabled."""
+
+    global _claude_builtin_tools_warning_emitted
+    unguarded = find_unguarded_claude_builtin_tools(query_allowed_tools)
+    if not unguarded or _claude_builtin_tools_warning_emitted:
+        return
+    _claude_builtin_tools_warning_emitted = True
+    _LOGGER.warning(
+        "Unguarded Claude Agent SDK built-in tools remain enabled (%s). "
+        "Paybond governs only custom tools registered via tool() in the Paybond MCP server. "
+        "See https://docs.paybond.ai/kit/claude-agents#built-in-sdk-tools-unguarded",
+        ", ".join(unguarded),
+    )
+
+
 def create_paybond_claude_agents_config(
     run: PaybondAgentRun,
     tools: list[Any],
     *,
     server_name: str = "paybond",
     server_version: str | None = None,
+    warn_on_unguarded_builtins: bool = True,
+    query_allowed_tools: list[str] | tuple[str, ...] | None = None,
 ) -> ClaudeAgentsConfig:
     """
     Wrap Claude Agent SDK ``tool()`` handlers with Paybond middleware and bundle
@@ -163,6 +213,9 @@ def create_paybond_claude_agents_config(
     sdk = _require_claude_agent_sdk()
     sdk_tools = _assert_claude_agent_sdk_tools(tools)
     resolved_server_name = server_name.strip() or "paybond"
+
+    if warn_on_unguarded_builtins:
+        warn_on_unguarded_claude_builtin_tools(query_allowed_tools)
 
     for sdk_tool in sdk_tools:
         _wrap_claude_agent_sdk_tool(run, sdk_tool)

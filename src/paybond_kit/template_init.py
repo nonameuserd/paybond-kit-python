@@ -80,6 +80,7 @@ TEMPLATE_FRAMEWORK_ALIASES = {
     "claude-agents": "claude-agents",
     "mcp": "mcp",
     "mastra": "mastra",
+    "crewai": "crewai",
 }
 
 

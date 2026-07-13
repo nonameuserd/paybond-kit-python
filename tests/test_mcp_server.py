@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from uuid import uuid4
 
 import httpx
@@ -83,6 +84,8 @@ async def test_gateway_only_server_exposes_gateway_first_mutation_tools() -> Non
         assert "paybond_import_agent_mandate_v1" in names
         assert "paybond_get_settlement_receipt_v1" in names
         assert "paybond_verify_protocol_receipt_v1" in names
+        assert "paybond_get_agent_receipt_v1" in names
+        assert "paybond_verify_agent_receipt_v1" in names
         assert "paybond_authorize_agent_spend" in names
         assert "paybond_get_budget_remaining" in names
         assert "paybond_explain_policy" in names
@@ -1273,19 +1276,22 @@ def test_mcp_stdio_stdout_contract_is_mcp_pure(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_mcp_agent_receipt_resource_reads_gateway_receipt() -> None:
-    receipt_id = "0ab0f1c2b58543f4753b23fec340f16c931e43d102898606a08acbee37a1e484"
+    conformance_path = (
+        Path(__file__).resolve().parents[2]
+        / "agent-receipt"
+        / "conformance"
+        / "signed-action-receipt-v1.json"
+    )
+    receipt = json.loads(conformance_path.read_text(encoding="utf-8"))
+    receipt_id = receipt["receipt_id"]
     with respx.mock(assert_all_called=True) as router:
         router.get("https://gateway.test/v1/auth/principal").respond(
             200,
-            json={"tenant_id": "tenant-a", "roles": ["operator"], "subject": "svc"},
+            json={"tenant_id": receipt["tenant_id"], "roles": ["operator"], "subject": "svc"},
         )
         router.get(f"https://gateway.test/protocol/v2/agent-receipts/{receipt_id}").respond(
             200,
-            json={
-                "tenant_id": "tenant-a",
-                "receipt_id": receipt_id,
-                "kind": "paybond.agent_receipt_v1",
-            },
+            json=receipt,
         )
         server = build_mcp_server(
             PaybondMCPSettings(
@@ -1303,6 +1309,83 @@ async def test_mcp_agent_receipt_resource_reads_gateway_receipt() -> None:
             assert contents[0].mime_type == "application/json"
             body = json.loads(contents[0].content)
             assert body["receipt_id"] == receipt_id
+            assert body["message_digest_sha256_hex"] == receipt["message_digest_sha256_hex"]
+        finally:
+            await _close_server(server)
+
+
+@pytest.mark.asyncio
+async def test_mcp_agent_receipt_resource_rejects_tampered_receipt() -> None:
+    conformance_path = (
+        Path(__file__).resolve().parents[2]
+        / "agent-receipt"
+        / "conformance"
+        / "signed-action-receipt-v1.json"
+    )
+    receipt = json.loads(conformance_path.read_text(encoding="utf-8"))
+    receipt_id = receipt["receipt_id"]
+    tampered = dict(receipt)
+    tampered["outcome"] = {**receipt["outcome"], "harbor_state": "released"}
+    with respx.mock(assert_all_called=True) as router:
+        router.get("https://gateway.test/v1/auth/principal").respond(
+            200,
+            json={"tenant_id": receipt["tenant_id"], "roles": ["operator"], "subject": "svc"},
+        )
+        router.get(f"https://gateway.test/protocol/v2/agent-receipts/{receipt_id}").respond(
+            200,
+            json=tampered,
+        )
+        server = build_mcp_server(
+            PaybondMCPSettings(
+                gateway_base_url="https://gateway.test",
+                api_key=_api_key(),
+            )
+        )
+        try:
+            with pytest.raises(Exception, match="agent receipt verification failed"):
+                await server.read_resource(f"paybond://receipt/{receipt_id}")
+        finally:
+            await _close_server(server)
+
+
+@pytest.mark.asyncio
+async def test_mcp_get_and_verify_agent_receipt_tools() -> None:
+    conformance_path = (
+        Path(__file__).resolve().parents[2]
+        / "agent-receipt"
+        / "conformance"
+        / "signed-action-receipt-v1.json"
+    )
+    receipt = json.loads(conformance_path.read_text(encoding="utf-8"))
+    receipt_id = receipt["receipt_id"]
+    with respx.mock(assert_all_called=True) as router:
+        router.get("https://gateway.test/v1/auth/principal").respond(
+            200,
+            json={"tenant_id": receipt["tenant_id"], "roles": ["operator"], "subject": "svc"},
+        )
+        router.get(f"https://gateway.test/protocol/v2/agent-receipts/{receipt_id}").respond(
+            200,
+            json=receipt,
+        )
+        server = build_mcp_server(
+            PaybondMCPSettings(
+                gateway_base_url="https://gateway.test",
+                api_key=_api_key(),
+            )
+        )
+        try:
+            _, fetched = await server.call_tool(
+                "paybond_get_agent_receipt_v1",
+                {"receipt_id": receipt_id},
+            )
+            assert fetched["receipt_id"] == receipt_id
+            _, verified = await server.call_tool(
+                "paybond_verify_agent_receipt_v1",
+                {"receipt": receipt},
+            )
+            assert verified["valid"] is True
+            assert verified["validity_tier"] == "operational"
+            assert verified["receipt_id"] == receipt_id
         finally:
             await _close_server(server)
 

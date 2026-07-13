@@ -134,6 +134,7 @@ async def _guard_tool_execution(
             tool_name=tool_name,
             tool_call_id=tool_call_id,
             arguments=arguments,
+            approval_token=run.get_approval_token(tool_call_id),
             execute=execute,
         )
         return _serialize_tool_result(wrapped.tool_result)

@@ -45,6 +45,8 @@ class PaybondAgentHooks:
     openai_agents_adapter: Any | None = None
     mcp_server: Any | None = None
     allowed_tools: tuple[str, ...] | None = None
+    middleware: list[Any] | None = None
+    microsoft_agent_framework_config: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +100,16 @@ def to_paybond_agent_result(result: CreateGuardedAgentResult) -> PaybondAgentRes
         )
     elif result.framework == "crewai":
         hooks = PaybondAgentHooks()
+    elif result.framework == "pydantic-ai":
+        hooks = PaybondAgentHooks()
+    elif result.framework == "google-adk":
+        hooks = PaybondAgentHooks()
+    elif result.framework == "microsoft-agent-framework":
+        config = result.microsoft_agent_framework_config
+        hooks = PaybondAgentHooks(
+            middleware=list(config.middleware) if config is not None else None,
+            microsoft_agent_framework_config=config,
+        )
     else:
         raise ValueError(f"unsupported guarded agent framework: {result.framework}")
 
@@ -172,8 +184,22 @@ def wrap_paybond_tools(
         raise ValueError(
             'framework "langgraph" does not wrap tools in place; use instrument() or create_paybond_langgraph_hooks(run)'
         )
+    if framework == "microsoft-agent-framework":
+        raise ValueError(
+            'framework "microsoft-agent-framework" requires function middleware; '
+            "use instrument() or create_paybond_microsoft_agent_framework_config(run, tools) "
+            "and attach config.middleware on the Agent"
+        )
     if framework == "crewai":
         from paybond_kit.crewai import create_paybond_crewai_config
 
         return create_paybond_crewai_config(run, tools).tools
+    if framework == "pydantic-ai":
+        from paybond_kit.pydantic_ai import create_paybond_pydantic_ai_config
+
+        return create_paybond_pydantic_ai_config(run, tools).tools
+    if framework == "google-adk":
+        from paybond_kit.google_adk import create_paybond_google_adk_config
+
+        return create_paybond_google_adk_config(run, tools).tools
     raise ValueError(f"unsupported framework for wrap_tools: {framework}")

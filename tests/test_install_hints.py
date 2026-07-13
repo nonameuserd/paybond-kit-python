@@ -58,6 +58,22 @@ def test_run_install_context_doctor_checks_reports_missing_extras(
         "paybond_kit.claude_agents.config.claude_agents_runtime_available",
         lambda: True,
     )
+    monkeypatch.setattr(
+        "paybond_kit.pydantic_ai._peer.pydantic_ai_runtime_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "paybond_kit.google_adk._peer.google_adk_runtime_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "paybond_kit.microsoft_agent_framework._peer.microsoft_agent_framework_runtime_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "paybond_kit.openai_agents._peer.openai_agents_runtime_available",
+        lambda: True,
+    )
 
     checks = run_install_context_doctor_checks()
     by_name = {check.name: check for check in checks}
@@ -130,3 +146,34 @@ async def test_claude_agents_smoke_fails_fast_without_optional_extra(
     assert "claude-agents extra" in message
     assert 'paybond-kit[claude-agents]' in message
     assert "pipx inject paybond-kit claude-agent-sdk" in message
+
+
+@pytest.mark.asyncio
+async def test_microsoft_agent_framework_smoke_fails_fast_without_optional_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "paybond_kit.microsoft_agent_framework._peer.microsoft_agent_framework_runtime_available",
+        lambda: False,
+    )
+    stderr = io.StringIO()
+    code = await run_cli(
+        [
+            "agent",
+            "demo",
+            "microsoft-agent-framework",
+            "smoke",
+            "--operation",
+            "paid-tool",
+            "--requested-spend-cents",
+            "100",
+            "--evidence-preset",
+            "cost_and_completion",
+        ],
+        stderr=stderr,
+    )
+    assert code != 0
+    message = stderr.getvalue()
+    assert "microsoft-agent-framework extra" in message
+    assert 'paybond-kit[microsoft-agent-framework]' in message
+    assert "pipx inject paybond-kit agent-framework-core" in message

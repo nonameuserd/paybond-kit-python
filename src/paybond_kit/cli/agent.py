@@ -1474,6 +1474,225 @@ async def handle_agent_demo_crewai_smoke(ctx: CliContext, argv: list[str]) -> di
     return await with_paybond_agent_cli(ctx, production, _run)
 
 
+async def handle_agent_demo_pydantic_ai_smoke(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+    production, argv = consume_boolean_flag(argv, "--production")
+    _, runtime_flag, argv = consume_flag(argv, "--runtime")
+    _, operation_flag, argv = consume_flag(argv, "--operation")
+    _, spend_flag, argv = consume_flag(argv, "--requested-spend-cents")
+    _, preset_flag, _ = consume_flag(argv, "--evidence-preset")
+    if not operation_flag or not spend_flag or not preset_flag:
+        raise _agent_cli_error(
+            "agent demo pydantic-ai smoke requires --operation, --requested-spend-cents, and --evidence-preset",
+            code="cli.usage.missing_args",
+            category="usage",
+        )
+
+    runtime = (runtime_flag or "python").strip().lower()
+    if runtime != "python":
+        raise _agent_cli_error(
+            f"agent demo pydantic-ai smoke --runtime {runtime} is not supported in the Python CLI; Pydantic AI is Python-only",
+            code="cli.usage.unsupported_runtime",
+            category="usage",
+        )
+
+    requested_spend_cents = parse_required_non_negative_int(
+        spend_flag,
+        field="--requested-spend-cents",
+    )
+
+    from paybond_kit.cli.install_hints import format_missing_extra_message
+    from paybond_kit.pydantic_ai._peer import pydantic_ai_runtime_available
+
+    if not pydantic_ai_runtime_available():
+        raise _agent_cli_error(
+            format_missing_extra_message(
+                command="agent demo pydantic-ai smoke",
+                extra_id="pydantic-ai",
+                inject_packages=("pydantic-ai",),
+            ),
+            code="cli.usage.missing_extra",
+            category="usage",
+        )
+
+    async def _run(paybond: Paybond, _warnings: list[str]) -> dict[str, Any]:
+        from paybond_kit.pydantic_ai.sandbox_demo import run_pydantic_ai_sandbox_demo
+
+        demo = await run_pydantic_ai_sandbox_demo(
+            paybond,
+            operation=operation_flag,
+            requested_spend_cents=requested_spend_cents,
+            evidence_preset=preset_flag,
+        )
+
+        if not demo.get("evidence", {}).get("submitted"):
+            raise _agent_cli_error(
+                "Pydantic AI sandbox demo did not submit evidence",
+                code="cli.agent.evidence_failed",
+                exit_code=5,
+                category="gateway",
+                details={"tool_result": demo.get("tool_result")},
+            )
+
+        if not demo.get("authorization", {}).get("allow"):
+            raise _agent_cli_error(
+                "Pydantic AI sandbox demo authorization was denied",
+                code="cli.agent.authorization_denied",
+                details={"tool_result": demo.get("tool_result")},
+            )
+
+        return demo
+
+    return await with_paybond_agent_cli(ctx, production, _run)
+
+
+async def handle_agent_demo_google_adk_smoke(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+    production, argv = consume_boolean_flag(argv, "--production")
+    _, runtime_flag, argv = consume_flag(argv, "--runtime")
+    _, operation_flag, argv = consume_flag(argv, "--operation")
+    _, spend_flag, argv = consume_flag(argv, "--requested-spend-cents")
+    _, preset_flag, _ = consume_flag(argv, "--evidence-preset")
+    if not operation_flag or not spend_flag or not preset_flag:
+        raise _agent_cli_error(
+            "agent demo google-adk smoke requires --operation, --requested-spend-cents, and --evidence-preset",
+            code="cli.usage.missing_args",
+            category="usage",
+        )
+
+    runtime = (runtime_flag or "python").strip().lower()
+    if runtime not in ("python", ""):
+        raise _agent_cli_error(
+            f"agent demo google-adk smoke --runtime {runtime} is not supported in the Python CLI; use @paybond/kit TypeScript CLI",
+            code="cli.usage.unsupported_runtime",
+            category="usage",
+        )
+
+    requested_spend_cents = parse_required_non_negative_int(
+        spend_flag,
+        field="--requested-spend-cents",
+    )
+
+    from paybond_kit.cli.install_hints import format_missing_extra_message
+    from paybond_kit.google_adk._peer import google_adk_runtime_available
+
+    if not google_adk_runtime_available():
+        raise _agent_cli_error(
+            format_missing_extra_message(
+                command="agent demo google-adk smoke",
+                extra_id="google-adk",
+                inject_packages=("google-adk",),
+            ),
+            code="cli.usage.missing_extra",
+            category="usage",
+        )
+
+    async def _run(paybond: Paybond, _warnings: list[str]) -> dict[str, Any]:
+        from paybond_kit.google_adk.sandbox_demo import run_google_adk_sandbox_demo
+
+        demo = await run_google_adk_sandbox_demo(
+            paybond,
+            operation=operation_flag,
+            requested_spend_cents=requested_spend_cents,
+            evidence_preset=preset_flag,
+        )
+
+        if not demo.get("evidence", {}).get("submitted"):
+            raise _agent_cli_error(
+                "Google ADK sandbox demo did not submit evidence",
+                code="cli.agent.evidence_failed",
+                exit_code=5,
+                category="gateway",
+                details={"tool_result": demo.get("tool_result")},
+            )
+
+        if not demo.get("authorization", {}).get("allow"):
+            raise _agent_cli_error(
+                "Google ADK sandbox demo authorization was denied",
+                code="cli.agent.authorization_denied",
+                details={"tool_result": demo.get("tool_result")},
+            )
+
+        return demo
+
+    return await with_paybond_agent_cli(ctx, production, _run)
+
+
+async def handle_agent_demo_microsoft_agent_framework_smoke(
+    ctx: CliContext, argv: list[str]
+) -> dict[str, Any]:
+    production, argv = consume_boolean_flag(argv, "--production")
+    _, runtime_flag, argv = consume_flag(argv, "--runtime")
+    _, operation_flag, argv = consume_flag(argv, "--operation")
+    _, spend_flag, argv = consume_flag(argv, "--requested-spend-cents")
+    _, preset_flag, _ = consume_flag(argv, "--evidence-preset")
+    if not operation_flag or not spend_flag or not preset_flag:
+        raise _agent_cli_error(
+            "agent demo microsoft-agent-framework smoke requires --operation, --requested-spend-cents, and --evidence-preset",
+            code="cli.usage.missing_args",
+            category="usage",
+        )
+
+    runtime = (runtime_flag or "python").strip().lower()
+    if runtime != "python":
+        raise _agent_cli_error(
+            f"agent demo microsoft-agent-framework smoke --runtime {runtime} is not supported in the Python CLI; Microsoft Agent Framework is Python-only",
+            code="cli.usage.unsupported_runtime",
+            category="usage",
+        )
+
+    requested_spend_cents = parse_required_non_negative_int(
+        spend_flag,
+        field="--requested-spend-cents",
+    )
+
+    from paybond_kit.cli.install_hints import format_missing_extra_message
+    from paybond_kit.microsoft_agent_framework._peer import (
+        microsoft_agent_framework_runtime_available,
+    )
+
+    if not microsoft_agent_framework_runtime_available():
+        raise _agent_cli_error(
+            format_missing_extra_message(
+                command="agent demo microsoft-agent-framework smoke",
+                extra_id="microsoft-agent-framework",
+                inject_packages=("agent-framework-core",),
+            ),
+            code="cli.usage.missing_extra",
+            category="usage",
+        )
+
+    async def _run(paybond: Paybond, _warnings: list[str]) -> dict[str, Any]:
+        from paybond_kit.microsoft_agent_framework.sandbox_demo import (
+            run_microsoft_agent_framework_sandbox_demo,
+        )
+
+        demo = await run_microsoft_agent_framework_sandbox_demo(
+            paybond,
+            operation=operation_flag,
+            requested_spend_cents=requested_spend_cents,
+            evidence_preset=preset_flag,
+        )
+
+        if not demo.get("evidence", {}).get("submitted"):
+            raise _agent_cli_error(
+                "Microsoft Agent Framework sandbox demo did not submit evidence",
+                code="cli.agent.evidence_failed",
+                exit_code=5,
+                category="gateway",
+                details={"tool_result": demo.get("tool_result")},
+            )
+
+        if not demo.get("authorization", {}).get("allow"):
+            raise _agent_cli_error(
+                "Microsoft Agent Framework sandbox demo authorization was denied",
+                code="cli.agent.authorization_denied",
+                details={"tool_result": demo.get("tool_result")},
+            )
+
+        return demo
+
+    return await with_paybond_agent_cli(ctx, production, _run)
+
+
 async def handle_agent_demo_openai_agents_smoke(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     production, argv = consume_boolean_flag(argv, "--production")
     _, runtime_flag, argv = consume_flag(argv, "--runtime")
@@ -1682,6 +1901,30 @@ async def handle_agent(ctx: CliContext, group: str, subcommand: str, argv: list[
                 category="usage",
             )
         return await handle_agent_demo_crewai_smoke(ctx, argv[1:])
+    if group == "demo" and subcommand == "pydantic-ai":
+        if not argv or argv[0] != "smoke":
+            raise _agent_cli_error(
+                "agent demo pydantic-ai requires smoke subcommand",
+                code="cli.usage.unknown_command",
+                category="usage",
+            )
+        return await handle_agent_demo_pydantic_ai_smoke(ctx, argv[1:])
+    if group == "demo" and subcommand == "google-adk":
+        if not argv or argv[0] != "smoke":
+            raise _agent_cli_error(
+                "agent demo google-adk requires smoke subcommand",
+                code="cli.usage.unknown_command",
+                category="usage",
+            )
+        return await handle_agent_demo_google_adk_smoke(ctx, argv[1:])
+    if group == "demo" and subcommand == "microsoft-agent-framework":
+        if not argv or argv[0] != "smoke":
+            raise _agent_cli_error(
+                "agent demo microsoft-agent-framework requires smoke subcommand",
+                code="cli.usage.unknown_command",
+                category="usage",
+            )
+        return await handle_agent_demo_microsoft_agent_framework_smoke(ctx, argv[1:])
     if group == "demo" and subcommand == "openai-agents":
         if not argv or argv[0] != "smoke":
             raise _agent_cli_error(

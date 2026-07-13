@@ -58,12 +58,18 @@ class PaybondPolicyIntentSection:
 
 
 @dataclass(frozen=True, slots=True)
+class PaybondPolicyAdapterSection:
+    deny_provider_executed_tools: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PaybondPolicyDocumentV1:
     version: Literal[1]
     name: str
     default_deny: bool
     tools: dict[str, PaybondPolicyToolEntry]
     intent: PaybondPolicyIntentSection | None = None
+    adapter: PaybondPolicyAdapterSection | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +109,7 @@ class PaybondPolicyOverrides:
     default_deny: bool | None = None
     tools: dict[str, PaybondPolicyToolOverrideEntry] | None = None
     intent: PaybondPolicyIntentOverrideSection | None = None
+    adapter: PaybondPolicyAdapterSection | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +121,7 @@ class PaybondPolicyDocumentV2:
     extends: PaybondPolicyExtends | None = None
     overrides: PaybondPolicyOverrides | None = None
     intent: PaybondPolicyIntentSection | None = None
+    adapter: PaybondPolicyAdapterSection | None = None
 
 
 PaybondPolicyDocument = PaybondPolicyDocumentV1 | PaybondPolicyDocumentV2
@@ -551,9 +559,31 @@ def _parse_extends(raw: Any, *, path: str) -> PaybondPolicyExtends:
     )
 
 
+def _parse_adapter(raw: Any, *, path: str) -> PaybondPolicyAdapterSection:
+    adapter = _expect_mapping(raw, path=path)
+    unknown = set(adapter) - {"deny_provider_executed_tools"}
+    if unknown:
+        joined = ", ".join(sorted(unknown))
+        raise PaybondPolicyValidationError(f"{path} has unknown fields: {joined}", path=path)
+
+    deny_provider_executed_tools: bool | None = None
+    if "deny_provider_executed_tools" in adapter:
+        deny_provider_executed_tools = _expect_bool(
+            adapter["deny_provider_executed_tools"],
+            path=f"{path}.deny_provider_executed_tools",
+        )
+
+    if deny_provider_executed_tools is None:
+        raise PaybondPolicyValidationError(f"{path} must set at least one field", path=path)
+
+    return PaybondPolicyAdapterSection(
+        deny_provider_executed_tools=deny_provider_executed_tools,
+    )
+
+
 def _parse_overrides(raw: Any, *, path: str) -> PaybondPolicyOverrides:
     overrides = _expect_mapping(raw, path=path)
-    unknown = set(overrides) - {"default_deny", "tools", "intent"}
+    unknown = set(overrides) - {"default_deny", "tools", "intent", "adapter"}
     if unknown:
         joined = ", ".join(sorted(unknown))
         raise PaybondPolicyValidationError(f"{path} has unknown fields: {joined}", path=path)
@@ -580,13 +610,22 @@ def _parse_overrides(raw: Any, *, path: str) -> PaybondPolicyOverrides:
     if "intent" in overrides:
         intent = _parse_intent_override(overrides["intent"], path=f"{path}.intent")
 
-    if default_deny is None and not tools and intent is None:
+    adapter = None
+    if "adapter" in overrides:
+        adapter = _parse_adapter(overrides["adapter"], path=f"{path}.adapter")
+
+    if default_deny is None and not tools and intent is None and adapter is None:
         raise PaybondPolicyValidationError(
-            f"{path} must set default_deny, tools, and/or intent",
+            f"{path} must set default_deny, tools, intent, and/or adapter",
             path=path,
         )
 
-    return PaybondPolicyOverrides(default_deny=default_deny, tools=tools, intent=intent)
+    return PaybondPolicyOverrides(
+        default_deny=default_deny,
+        tools=tools,
+        intent=intent,
+        adapter=adapter,
+    )
 
 
 def _parse_tools_map(raw: Any, *, path: str, min_entries: int) -> dict[str, PaybondPolicyToolEntry]:
@@ -612,7 +651,7 @@ def _parse_tools_map(raw: Any, *, path: str, min_entries: int) -> dict[str, Payb
 def parse_paybond_policy_document_v1(raw: Any) -> PaybondPolicyDocumentV1:
     """Parse and validate a v1 policy document."""
     doc = _expect_mapping(raw, path="(root)")
-    unknown = set(doc) - {"version", "name", "default_deny", "tools", "intent", "$schema"}
+    unknown = set(doc) - {"version", "name", "default_deny", "tools", "intent", "adapter", "$schema"}
     if unknown:
         joined = ", ".join(sorted(unknown))
         raise PaybondPolicyValidationError(f"(root) has unknown fields: {joined}", path="(root)")
@@ -635,12 +674,17 @@ def parse_paybond_policy_document_v1(raw: Any) -> PaybondPolicyDocumentV1:
     if "intent" in doc:
         intent = _parse_intent(doc["intent"], path="intent")
 
+    adapter = None
+    if "adapter" in doc:
+        adapter = _parse_adapter(doc["adapter"], path="adapter")
+
     return PaybondPolicyDocumentV1(
         version=PAYBOND_POLICY_SCHEMA_VERSION,
         name=name,
         default_deny=default_deny,
         tools=tools,
         intent=intent,
+        adapter=adapter,
     )
 
 
@@ -653,6 +697,7 @@ def parse_paybond_policy_document_v2(raw: Any) -> PaybondPolicyDocumentV2:
         "default_deny",
         "tools",
         "intent",
+        "adapter",
         "extends",
         "overrides",
         "$schema",
@@ -689,6 +734,10 @@ def parse_paybond_policy_document_v2(raw: Any) -> PaybondPolicyDocumentV2:
     if "intent" in doc:
         intent = _parse_intent(doc["intent"], path="intent")
 
+    adapter = None
+    if "adapter" in doc:
+        adapter = _parse_adapter(doc["adapter"], path="adapter")
+
     return PaybondPolicyDocumentV2(
         version=PAYBOND_POLICY_SCHEMA_VERSION_V2,
         name=name,
@@ -697,6 +746,7 @@ def parse_paybond_policy_document_v2(raw: Any) -> PaybondPolicyDocumentV2:
         extends=extends,
         overrides=overrides,
         intent=intent,
+        adapter=adapter,
     )
 
 
@@ -772,5 +822,10 @@ def policy_document_to_dict(doc: PaybondPolicyDocumentV1) -> dict[str, Any]:
         if doc.intent.allowed_tools:
             intent_payload["allowed_tools"] = list(doc.intent.allowed_tools)
         payload["intent"] = intent_payload
+
+    if doc.adapter is not None and doc.adapter.deny_provider_executed_tools is not None:
+        payload["adapter"] = {
+            "deny_provider_executed_tools": doc.adapter.deny_provider_executed_tools,
+        }
 
     return payload

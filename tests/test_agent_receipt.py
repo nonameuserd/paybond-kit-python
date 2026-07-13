@@ -10,9 +10,11 @@ from paybond_kit.agent_receipt import (
     action_receipt_id,
     attach_operator_attestation_v1,
     config_hash_sha256_hex,
+    continuity_from_prior,
     value_digest_sha256_hex,
     verify_agent_receipt_v1,
     verify_agent_receipt_v1_from_json,
+    verify_continuity_chain,
     ConfigHashInput,
 )
 
@@ -34,6 +36,29 @@ def test_signed_intent_terminal_conformance_vector_verifies() -> None:
     assert verified["receipt_id"] == "660e8400-e29b-41d4-a716-446655440001"
     assert verified["scope"] == "intent_terminal"
     assert "execution" not in receipt
+    assert verified["outcome"]["settlement_outcome"] == "SETTLED"
+
+
+def test_mandate_digest_mismatch_rejected() -> None:
+    receipt = json.loads((CONFORMANCE_DIR / "signed-action-receipt-v1.json").read_text(encoding="utf-8"))
+    receipt["authorization"]["mandate_digest_sha256_hex"] = "aa" * 32
+    receipt["external_attestations"] = [
+        {
+            "source": "ap2",
+            "kind": "agent_mandate_v1",
+            "digest_sha256_hex": "bb" * 32,
+            "reference_id": "ext-auth-1",
+        }
+    ]
+    with pytest.raises(ValueError, match="mandate_digest_sha256_hex must match"):
+        verify_agent_receipt_v1(receipt)
+
+
+def test_settlement_outcome_rejected_on_action_scope() -> None:
+    receipt = json.loads((CONFORMANCE_DIR / "signed-action-receipt-v1.json").read_text(encoding="utf-8"))
+    receipt["outcome"]["settlement_outcome"] = "SETTLED"
+    with pytest.raises(ValueError, match="settlement_outcome is only valid for intent_terminal scope"):
+        verify_agent_receipt_v1(receipt)
 
 
 def test_action_receipt_id_derivation() -> None:
@@ -164,3 +189,73 @@ def test_operator_registry_enforced_when_enabled() -> None:
             verify_operator_against_registry=True,
             trusted_operator_public_keys=["00" * 32],
         )
+
+
+def test_operator_registry_defaults_on_for_tenant_registry_trust_mode() -> None:
+    receipt = _load_conformance_receipt()
+    operator_did = receipt["authorization"]["agent"]["operator_did"]
+    attested = attach_operator_attestation_v1(
+        receipt, operator_private_key_seed=OPERATOR_SEED, operator_did=operator_did
+    )
+    operator_pub_hex = attested["operator_attestation"]["signing_public_key_ed25519_hex"]
+
+    verify_agent_receipt_v1(
+        attested,
+        trust_mode="tenant_registry",
+        trusted_operator_public_keys=[operator_pub_hex],
+    )
+
+    with pytest.raises(ValueError, match="tenant operator registry"):
+        verify_agent_receipt_v1(
+            attested,
+            trust_mode="tenant_registry",
+            trusted_operator_public_keys=[],
+        )
+
+
+def test_validity_tiers_and_continuity() -> None:
+    receipt = _load_conformance_receipt()
+    verify_agent_receipt_v1(receipt, required_validity_tier="primary")
+    with pytest.raises(ValueError, match="attested validity requires operator_attestation"):
+        verify_agent_receipt_v1(receipt, required_validity_tier="attested")
+    with pytest.raises(ValueError, match="continuity is required"):
+        verify_agent_receipt_v1(
+            receipt, expected_prior_message_digest_hex="cd" * 32
+        )
+
+    operator_did = receipt["authorization"]["agent"]["operator_did"]
+    attested = attach_operator_attestation_v1(
+        receipt, operator_private_key_seed=OPERATOR_SEED, operator_did=operator_did
+    )
+    operator_pub_hex = attested["operator_attestation"]["signing_public_key_ed25519_hex"]
+    verify_agent_receipt_v1(
+        attested,
+        required_validity_tier="attested",
+        trusted_operator_public_keys=[operator_pub_hex],
+    )
+
+    # Gateway JWKS / gateway trust mode remains opt-in.
+    verify_agent_receipt_v1(
+        attested,
+        trust_mode="gateway",
+        trusted_operator_public_keys=[],
+    )
+
+
+def test_continuity_hash_chain_accepts_intact_rejects_broken() -> None:
+    base = _load_conformance_receipt()
+    run_id = base["execution"]["run_id"]
+    first = dict(base)
+    first["continuity"] = continuity_from_prior(run_id)
+    second = dict(base)
+    second["execution"] = dict(base["execution"])
+    second["execution"]["tool_call_id"] = "call_cont_002"
+    second["receipt_id"] = action_receipt_id(base["references"]["intent_id"], "call_cont_002")
+    second["continuity"] = continuity_from_prior(run_id, first)
+    verify_continuity_chain([first, second])
+
+    broken = dict(second)
+    broken["continuity"] = dict(second["continuity"])
+    broken["continuity"]["prev_message_digest_sha256_hex"] = "ab" * 32
+    with pytest.raises(ValueError, match="digest mismatch"):
+        verify_continuity_chain([first, broken])

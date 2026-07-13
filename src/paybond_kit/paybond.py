@@ -604,6 +604,23 @@ class Paybond:
 
         return await instrument_paybond_crewai(self, kwargs)
 
+    async def instrument_pydantic_ai(self, **kwargs: Any) -> "PaybondInstrumented | PaybondInstrumentRuntime":
+        from paybond_kit.agent.instrument import instrument_paybond_pydantic_ai
+
+        return await instrument_paybond_pydantic_ai(self, kwargs)
+
+    async def instrument_google_adk(self, **kwargs: Any) -> "PaybondInstrumented | PaybondInstrumentRuntime":
+        from paybond_kit.agent.instrument import instrument_paybond_google_adk
+
+        return await instrument_paybond_google_adk(self, kwargs)
+
+    async def instrument_microsoft_agent_framework(
+        self, **kwargs: Any
+    ) -> "PaybondInstrumented | PaybondInstrumentRuntime":
+        from paybond_kit.agent.instrument import instrument_paybond_microsoft_agent_framework
+
+        return await instrument_paybond_microsoft_agent_framework(self, kwargs)
+
     async def instrument_mcp(self, **kwargs: Any) -> "PaybondInstrumented | PaybondInstrumentRuntime":
         from paybond_kit.agent.instrument import instrument_paybond_mcp
 

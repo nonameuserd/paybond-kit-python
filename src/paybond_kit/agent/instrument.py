@@ -87,10 +87,20 @@ def _wrap_tools_for_framework(
         return create_paybond_claude_agents_config(run, tools).agent_tools
     if framework == "langgraph":
         return tools
+    if framework == "microsoft-agent-framework":
+        return tools
     if framework == "crewai":
         from paybond_kit.crewai import create_paybond_crewai_config
 
         return create_paybond_crewai_config(run, tools).tools
+    if framework == "pydantic-ai":
+        from paybond_kit.pydantic_ai import create_paybond_pydantic_ai_config
+
+        return create_paybond_pydantic_ai_config(run, tools).tools
+    if framework == "google-adk":
+        from paybond_kit.google_adk import create_paybond_google_adk_config
+
+        return create_paybond_google_adk_config(run, tools).tools
     raise ValueError(f"unsupported framework for wrap_tools: {framework}")
 
 
@@ -520,6 +530,47 @@ async def _create_bound_runtime(
         "attach": attach,
     }
     run = await PaybondAgentRun.bind(paybond, bind_config)
+    if framework == "microsoft-agent-framework":
+        from paybond_kit.microsoft_agent_framework import (
+            create_paybond_microsoft_agent_framework_config,
+        )
+
+        maf_config = create_paybond_microsoft_agent_framework_config(run, raw_tools)
+        result = CreateGuardedAgentResult(
+            run=run,
+            policy=policy,
+            registry=policy.to_tool_registry(),
+            framework=framework,
+            agent_tools=maf_config.tools,
+            microsoft_agent_framework_config=maf_config,
+        )
+        return PaybondInstrumentRuntime(
+            tools=maf_config.tools,
+            run=run,
+            policy=policy,
+            hooks=_hooks_from_result(result),
+            binding=_binding_from_run(run, "attach", context.user_id),
+        )
+    if framework == "langgraph":
+        from paybond_kit.langgraph_hooks import create_paybond_langgraph_hooks
+
+        hooks = create_paybond_langgraph_hooks(run)
+        result = CreateGuardedAgentResult(
+            run=run,
+            policy=policy,
+            registry=policy.to_tool_registry(),
+            framework=framework,
+            agent_tools=raw_tools,
+            awrap_tool_call=hooks.awrap_tool_call,
+            create_tool_node=hooks.create_tool_node,
+        )
+        return PaybondInstrumentRuntime(
+            tools=raw_tools,
+            run=run,
+            policy=policy,
+            hooks=_hooks_from_result(result),
+            binding=_binding_from_run(run, "attach", context.user_id),
+        )
     tools = _wrap_tools_for_framework(run, raw_tools, framework)
     result = CreateGuardedAgentResult(
         run=run,
@@ -757,6 +808,29 @@ async def instrument_paybond_crewai(
     return await instrument_paybond_agent(paybond, input_, framework="crewai")
 
 
+async def instrument_paybond_pydantic_ai(
+    paybond: PaybondAgentRunHost,
+    input_: Mapping[str, Any],
+) -> PaybondInstrumented | PaybondInstrumentRuntime:
+    return await instrument_paybond_agent(paybond, input_, framework="pydantic-ai")
+
+
+async def instrument_paybond_google_adk(
+    paybond: PaybondAgentRunHost,
+    input_: Mapping[str, Any],
+) -> PaybondInstrumented | PaybondInstrumentRuntime:
+    return await instrument_paybond_agent(paybond, input_, framework="google-adk")
+
+
+async def instrument_paybond_microsoft_agent_framework(
+    paybond: PaybondAgentRunHost,
+    input_: Mapping[str, Any],
+) -> PaybondInstrumented | PaybondInstrumentRuntime:
+    return await instrument_paybond_agent(
+        paybond, input_, framework="microsoft-agent-framework"
+    )
+
+
 async def instrument_paybond_mcp(
     paybond: PaybondAgentRunHost,
     input_: Mapping[str, Any],
@@ -782,9 +856,13 @@ __all__ = [
     "inline_policy_to_document",
     "instrument_paybond_agent",
     "instrument_paybond_claude_agents",
+    "instrument_paybond_crewai",
     "instrument_paybond_langgraph",
     "instrument_paybond_mcp",
     "instrument_paybond_openai",
+    "instrument_paybond_pydantic_ai",
+    "instrument_paybond_google_adk",
+    "instrument_paybond_microsoft_agent_framework",
     "instrument_paybond_vercel",
     "is_context_provider",
     "is_inline_policy",

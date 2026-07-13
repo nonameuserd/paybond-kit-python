@@ -282,6 +282,37 @@ def test_wrap_paybond_tools_rejects_langgraph() -> None:
         wrap_paybond_tools(run, [], framework="langgraph")
 
 
+def test_wrap_paybond_tools_rejects_microsoft_agent_framework() -> None:
+    run = MagicMock()
+    with pytest.raises(ValueError, match="microsoft-agent-framework"):
+        wrap_paybond_tools(run, [], framework="microsoft-agent-framework")
+
+
+def test_to_paybond_agent_result_exposes_microsoft_agent_framework_middleware() -> None:
+    from paybond_kit.agent.facade import to_paybond_agent_result
+    from paybond_kit.agent.guarded_agent import CreateGuardedAgentResult
+    from paybond_kit.microsoft_agent_framework.config import PaybondMicrosoftAgentFrameworkConfig
+
+    middleware = object()
+    config = PaybondMicrosoftAgentFrameworkConfig(
+        tools=["tool-a"],
+        middleware=[middleware],
+        wrap_tool=lambda tool: tool,
+    )
+    result = CreateGuardedAgentResult(
+        run=MagicMock(),
+        policy=MagicMock(),
+        registry=MagicMock(),
+        framework="microsoft-agent-framework",
+        agent_tools=config.tools,
+        microsoft_agent_framework_config=config,
+    )
+    agent_result = to_paybond_agent_result(result)
+    assert agent_result.hooks.middleware == [middleware]
+    assert agent_result.hooks.microsoft_agent_framework_config is config
+    assert agent_result.tools == ["tool-a"]
+
+
 @pytest.mark.parametrize(
     ("framework", "docs_path"),
     [

@@ -90,6 +90,9 @@ COMMAND_PATHS: list[str] = [
     "agent demo generic smoke",
     "agent demo claude-agents smoke",
     "agent demo crewai smoke",
+    "agent demo pydantic-ai smoke",
+    "agent demo google-adk smoke",
+    "agent demo microsoft-agent-framework smoke",
     "agent demo openai-agents smoke",
     "agent demo mastra smoke",
     "agent demo cloudflare-agents smoke",
@@ -384,7 +387,10 @@ COMMAND_EXAMPLES: dict[str, list[str]] = {
         "paybond init agent-middleware --framework mastra --out paybond-mastra.ts",
         "paybond init agent-middleware --framework cloudflare-agents --out paybond-cloudflare-agents.ts",
         "paybond init agent-middleware --framework mcp --out paybond-mcp.ts",
-        "paybond init agent-middleware --framework crewai --out paybond_crewai.py"
+        "paybond init agent-middleware --framework crewai --out paybond_crewai.py",
+        "paybond init agent-middleware --framework pydantic-ai --out paybond_pydantic_ai.py",
+        "paybond init agent-middleware --framework google-adk --out paybond_google_adk.py",
+        "paybond init agent-middleware --framework microsoft-agent-framework --out paybond_microsoft_agent_framework.py"
     ],
     "agent run bind": [
         "paybond agent run bind --policy-file paybond.policy.yaml --format json",
@@ -435,6 +441,15 @@ COMMAND_EXAMPLES: dict[str, list[str]] = {
     ],
     "agent demo crewai smoke": [
         "paybond agent demo crewai smoke --operation procurement.submit_po --requested-spend-cents 12000 --evidence-preset cost_and_completion --format json"
+    ],
+    "agent demo pydantic-ai smoke": [
+        "paybond agent demo pydantic-ai smoke --operation paid-tool --requested-spend-cents 100 --evidence-preset cost_and_completion --format json"
+    ],
+    "agent demo google-adk smoke": [
+        "paybond agent demo google-adk smoke --operation paid-tool --requested-spend-cents 100 --evidence-preset cost_and_completion --format json"
+    ],
+    "agent demo microsoft-agent-framework smoke": [
+        "paybond agent demo microsoft-agent-framework smoke --operation paid-tool --requested-spend-cents 100 --evidence-preset cost_and_completion --format json"
     ],
     "agent demo openai-agents smoke": [
         "paybond agent demo openai-agents smoke --operation paid-tool --requested-spend-cents 100 --evidence-preset cost_and_completion --format json"
