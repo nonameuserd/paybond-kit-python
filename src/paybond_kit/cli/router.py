@@ -42,6 +42,7 @@ from paybond_kit.cli.policy import (
     handle_policy_validate_tools,
 )
 from paybond_kit.cli.agent import handle_agent
+from paybond_kit.cli.adyen import handle_adyen
 from paybond_kit.cli.dev import handle_dev
 from paybond_kit.cli.shopify import handle_shopify
 from paybond_kit.cli.suggest import format_unknown_command_message
@@ -105,6 +106,8 @@ async def _dispatch(ctx: CliContext, command: list[str]) -> tuple[str, dict[str,
             parts.append(fourth)
         argv_start = 4 if is_payments_session_show else (3 if third else 2)
         return " ".join(parts), await handle_shopify(ctx, second, third, fourth, command[argv_start:])
+    if head == "adyen" and second:
+        return f"adyen {second}", await handle_adyen(ctx, second, command[2:])
     if head == "dev" and second:
         return f"dev {second}", await handle_dev(ctx, second, command[2:])
     if head == "version":

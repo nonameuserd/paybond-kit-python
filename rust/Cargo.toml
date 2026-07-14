@@ -1,6 +1,6 @@
 [package]
 name = "paybond_kit_native"
-version = "0.12.6"
+version = "0.12.7"
 edition = "2021"
 publish = false
 description = "Native signing extension for paybond-kit Python releases."

@@ -647,8 +647,11 @@ def write_success_output(
         "shopify doctor",
         "shopify checkout smoke",
         "shopify capture ready",
+        "shopify payments doctor",
         "shopify dev",
         "shopify link",
+        "adyen ready",
+        "adyen doctor",
     ) and isinstance(data.get("checklist_lines"), list):
         if canonical == "dev loop" and isinstance(data.get("banner_lines"), list):
             for line in data["banner_lines"]:

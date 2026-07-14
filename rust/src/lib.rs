@@ -166,12 +166,14 @@ fn build_signed_create_intent_json(
         return Err(PyValueError::new_err("allowed_tools must be non-empty"));
     }
     let settlement_rail = match settlement_rail.trim() {
-        "stripe_connect" | "stripe_ach_debit" | "stripe_mpp" | "x402_usdc_base" => {
-            settlement_rail.trim().to_string()
-        }
+        "stripe_connect"
+        | "stripe_ach_debit"
+        | "stripe_mpp"
+        | "adyen_manual_capture"
+        | "x402_usdc_base" => settlement_rail.trim().to_string(),
         _ => {
             return Err(PyValueError::new_err(
-                "settlement_rail must be one of stripe_connect, stripe_ach_debit, stripe_mpp, x402_usdc_base",
+                "settlement_rail must be one of stripe_connect, stripe_ach_debit, stripe_mpp, adyen_manual_capture, x402_usdc_base",
             ))
         }
     };
@@ -303,12 +305,14 @@ fn build_signed_create_intent_with_policy_binding_json(
         return Err(PyValueError::new_err("allowed_tools must be non-empty"));
     }
     let settlement_rail = match settlement_rail.trim() {
-        "stripe_connect" | "stripe_ach_debit" | "stripe_mpp" | "x402_usdc_base" => {
-            settlement_rail.trim().to_string()
-        }
+        "stripe_connect"
+        | "stripe_ach_debit"
+        | "stripe_mpp"
+        | "adyen_manual_capture"
+        | "x402_usdc_base" => settlement_rail.trim().to_string(),
         _ => {
             return Err(PyValueError::new_err(
-                "settlement_rail must be one of stripe_connect, stripe_ach_debit, stripe_mpp, x402_usdc_base",
+                "settlement_rail must be one of stripe_connect, stripe_ach_debit, stripe_mpp, adyen_manual_capture, x402_usdc_base",
             ))
         }
     };

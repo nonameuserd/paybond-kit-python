@@ -28,8 +28,12 @@ from paybond_kit.payment_transport import (
     read_fund_payment_transport_headers,
 )
 
-SettlementRail: TypeAlias = Literal["stripe_connect", "stripe_ach_debit", "stripe_mpp", "x402_usdc_base"]
-_SETTLEMENT_RAIL_VALUES = frozenset({"stripe_connect", "stripe_ach_debit", "stripe_mpp", "x402_usdc_base"})
+SettlementRail: TypeAlias = Literal[
+    "stripe_connect", "stripe_ach_debit", "stripe_mpp", "adyen_manual_capture", "x402_usdc_base"
+]
+_SETTLEMENT_RAIL_VALUES = frozenset(
+    {"stripe_connect", "stripe_ach_debit", "stripe_mpp", "adyen_manual_capture", "x402_usdc_base"}
+)
 
 
 def validate_settlement_rail(value: str, *, field: str = "settlement_rail") -> SettlementRail:

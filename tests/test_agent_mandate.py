@@ -113,6 +113,24 @@ def test_rejects_tenant_scoped_mandates_with_principal_fields() -> None:
         normalize_agent_mandate_v1(mandate)
 
 
+def test_normalize_agent_mandate_v1_accepts_adyen_manual_capture() -> None:
+    mandate = _test_agent_mandate("2030-01-02T03:04:05Z")
+    mandate["settlement"] = {
+        "default_rail": "adyen_manual_capture",
+        "allowed_rails": ["adyen_manual_capture", "stripe_connect"],
+    }
+    normalized = normalize_agent_mandate_v1(mandate)
+    assert normalized["settlement"]["default_rail"] == "adyen_manual_capture"
+    assert normalized["settlement"]["allowed_rails"] == ["adyen_manual_capture", "stripe_connect"]
+
+
+def test_normalize_agent_mandate_v1_rejects_unknown_settlement_rail() -> None:
+    mandate = _test_agent_mandate("2030-01-02T03:04:05Z")
+    mandate["settlement"]["allowed_rails"] = ["stripe_connect", "not_a_rail"]
+    with pytest.raises(ValueError, match="unknown settlement rail"):
+        normalize_agent_mandate_v1(mandate)
+
+
 def test_sign_and_verify_round_trip() -> None:
     seed = _ed25519_seed("agent-mandate-sign-roundtrip")
     now = datetime(2026, 5, 17, 16, 0, 0, tzinfo=UTC)
