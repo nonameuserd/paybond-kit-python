@@ -652,6 +652,10 @@ def write_success_output(
         "shopify link",
         "adyen ready",
         "adyen doctor",
+        "flutterwave ready",
+        "flutterwave doctor",
+        "paystack ready",
+        "paystack doctor",
     ) and isinstance(data.get("checklist_lines"), list):
         if canonical == "dev loop" and isinstance(data.get("banner_lines"), list):
             for line in data["banner_lines"]:
