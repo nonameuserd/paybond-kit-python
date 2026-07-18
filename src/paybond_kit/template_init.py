@@ -20,6 +20,7 @@ TemplateId = Literal[
     "procurement-agent",
     "invoice-agent",
     "crewai-procurement-agent",
+    "microsoft-agent-framework-procurement-agent",
     "aws-operator",
     "shopify-shopping-agent",
 ]
@@ -44,6 +45,8 @@ TEMPLATE_ALIASES: dict[str, TemplateId] = {
     "paybond-invoice-agent": "invoice-agent",
     "crewai-procurement-agent": "crewai-procurement-agent",
     "paybond-crewai-procurement-agent": "crewai-procurement-agent",
+    "microsoft-agent-framework-procurement-agent": "microsoft-agent-framework-procurement-agent",
+    "paybond-microsoft-agent-framework-procurement-agent": "microsoft-agent-framework-procurement-agent",
     "aws-operator": "aws-operator",
     "paybond-aws-operator": "aws-operator",
     "shopify-shopping-agent": "shopify-shopping-agent",
@@ -81,6 +84,8 @@ TEMPLATE_FRAMEWORK_ALIASES = {
     "mcp": "mcp",
     "mastra": "mastra",
     "crewai": "crewai",
+    "microsoft-agent-framework": "microsoft-agent-framework",
+    "maf": "microsoft-agent-framework",
 }
 
 
@@ -233,7 +238,8 @@ def template_init_usage() -> str:
             "",
             "Templates:",
             "  travel-agent, mastra-travel-agent, vercel-shopping-agent, openai-agents-demo, openai-shopping-agent,",
-            "  claude-agents-demo, mcp-coding-agent, procurement-agent, invoice-agent, crewai-procurement-agent, aws-operator",
+            "  claude-agents-demo, mcp-coding-agent, procurement-agent, invoice-agent, crewai-procurement-agent,",
+            "  microsoft-agent-framework-procurement-agent, aws-operator",
             "",
             "Examples:",
             "  paybond init --template travel-agent --framework langgraph",

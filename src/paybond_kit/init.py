@@ -279,19 +279,29 @@ PROCUREMENT_AGENT_POLICY = {
 }
 
 
-def submit_po(vendor_id: str, amount_cents: int) -> dict[str, Any]:
-    return {"status": "completed", "cost_cents": amount_cents, "vendor_id": vendor_id}
+def submit_po(sku: str, quantity: int = 1) -> dict[str, Any]:
+    """Submit a PO. Unit price comes from an authoritative catalog — not the LLM."""
+    catalog = {"LAP-14": {"vendor_id": "vendor-acme", "unit_cents": DEFAULT_REQUESTED_SPEND_CENTS}}
+    item = catalog[sku]
+    cost_cents = item["unit_cents"] * quantity
+    return {
+        "status": "completed",
+        "sku": sku,
+        "vendor_id": item["vendor_id"],
+        "quantity": quantity,
+        "cost_cents": cost_cents,
+    }
 
 
 async def create_crewai_guarded_runner(paybond: Paybond) -> CreateGuardedAgentResult:
     """Policy-driven CrewAI wiring: bind run, wrap @tool handlers, return guarded tools."""
 
     @tool("procurement.submit_po")
-    def submit_po_tool(vendor_id: str, amount_cents: int) -> str:
-        """Submit a purchase order to a vendor."""
+    def submit_po_tool(sku: str, quantity: int = 1) -> str:
+        """Submit a purchase order. Pass sku + quantity only — never invent dollars."""
         import json
 
-        return json.dumps(submit_po(vendor_id, amount_cents))
+        return json.dumps(submit_po(sku, quantity))
 
     result = await create_guarded_agent(
         paybond,
@@ -344,8 +354,15 @@ PAID_TOOL_AGENT_POLICY = {
 }
 
 
-def paid_tool(estimated_price_cents: int) -> dict[str, Any]:
-    return {"status": "completed", "cost_cents": estimated_price_cents}
+def paid_tool(sku: str, quantity: int = 1) -> dict[str, Any]:
+    """Execute a paid sandbox operation. Price from a fixed catalog, not the LLM."""
+    catalog = {"SKU-1": DEFAULT_REQUESTED_SPEND_CENTS}
+    return {
+        "status": "completed",
+        "sku": sku,
+        "quantity": quantity,
+        "cost_cents": catalog[sku] * quantity,
+    }
 
 
 async def create_pydantic_ai_guarded_runner(paybond: Paybond) -> CreateGuardedAgentResult:
@@ -405,9 +422,15 @@ PAID_TOOL_AGENT_POLICY = {
 }
 
 
-def paid_tool(estimated_price_cents: int) -> dict[str, Any]:
-    """Execute a paid sandbox operation."""
-    return {"status": "completed", "cost_cents": estimated_price_cents}
+def paid_tool(sku: str, quantity: int = 1) -> dict[str, Any]:
+    """Execute a paid sandbox operation. Price from a fixed catalog, not the LLM."""
+    catalog = {"SKU-1": DEFAULT_REQUESTED_SPEND_CENTS}
+    return {
+        "status": "completed",
+        "sku": sku,
+        "quantity": quantity,
+        "cost_cents": catalog[sku] * quantity,
+    }
 
 
 async def create_google_adk_guarded_runner(paybond: Paybond) -> CreateGuardedAgentResult:
@@ -471,10 +494,16 @@ PAID_TOOL_AGENT_POLICY = {
 
 
 # Paybond middleware is the sole spend authority — do not compose MAF always_require HITL here.
-@tool(approval_mode="never_require")
-def paid_tool(estimated_price_cents: int) -> dict[str, Any]:
-    """Execute a paid sandbox operation."""
-    return {"status": "completed", "cost_cents": estimated_price_cents}
+@tool(name="paid-tool", approval_mode="never_require")
+def paid_tool(sku: str, quantity: int = 1) -> dict[str, Any]:
+    """Execute a paid sandbox operation. Price from a fixed catalog, not the LLM."""
+    catalog = {"SKU-1": DEFAULT_REQUESTED_SPEND_CENTS}
+    return {
+        "status": "completed",
+        "sku": sku,
+        "quantity": quantity,
+        "cost_cents": catalog[sku] * quantity,
+    }
 
 
 async def create_microsoft_agent_framework_guarded_runner(

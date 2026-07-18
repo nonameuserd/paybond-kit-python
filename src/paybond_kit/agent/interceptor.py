@@ -512,6 +512,13 @@ class PaybondToolInterceptor:
                 auth=auth,
                 evidence_id=evidence_id,
             )
+            reported_cost_cents = (
+                tool_result.get("cost_cents")
+                if isinstance(tool_result, dict)
+                and isinstance(tool_result.get("cost_cents"), int)
+                and not isinstance(tool_result.get("cost_cents"), bool)
+                else None
+            )
             self._emit_trace(
                 {
                     "type": "evidence_submitted",
@@ -521,6 +528,7 @@ class PaybondToolInterceptor:
                     "evidence_id": evidence_id,
                     "preset_id": resolved["entry"].evidence_preset,
                     "evidence_preset": resolved["entry"].evidence_preset,
+                    "reported_cost_cents": reported_cost_cents,
                     "sandbox_lifecycle_status": evidence.sandbox_lifecycle_status,
                     "predicate_passed": evidence.predicate_passed,
                     "external_attestations": external_attestations,

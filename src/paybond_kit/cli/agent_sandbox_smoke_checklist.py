@@ -13,6 +13,10 @@ def _format_usd_from_cents(cents: int) -> str:
     return f"${cents / 100:.2f}"
 
 
+def _format_cents_count(cents: int) -> str:
+    return f"{cents:,} cents"
+
+
 def format_agent_sandbox_smoke_checklist(
     *,
     preset_id: str | None,
@@ -44,12 +48,28 @@ def format_agent_sandbox_smoke_checklist(
 
     authorization = execute.get("authorization")
     if isinstance(authorization, dict) and authorization.get("allow"):
-        cost_cents = result_body.get("cost_cents")
-        if not isinstance(cost_cents, int):
-            requested = bind.get("requested_spend_cents")
-            cost_cents = requested if isinstance(requested, int) else None
-        spend_label = _format_usd_from_cents(cost_cents) if isinstance(cost_cents, int) else "approved"
-        lines.append(mark(f"✓ Spend approved ({spend_label})"))
+        requested = bind.get("requested_spend_cents")
+        authorized_cents = (
+            requested if isinstance(requested, int) and not isinstance(requested, bool) else None
+        )
+        lines.append(
+            mark(
+                "✓ Spend authorized"
+                if authorized_cents is None
+                else (
+                    f"✓ Spend authorized up to {_format_usd_from_cents(authorized_cents)} "
+                    f"({_format_cents_count(authorized_cents)})"
+                )
+            )
+        )
+        reported = result_body.get("cost_cents")
+        if isinstance(reported, int) and not isinstance(reported, bool):
+            lines.append(
+                mark(
+                    f"✓ Reported cost {_format_usd_from_cents(reported)} "
+                    f"({_format_cents_count(reported)})"
+                )
+            )
 
     evidence = execute.get("evidence")
     if isinstance(evidence, dict) and evidence.get("submitted"):

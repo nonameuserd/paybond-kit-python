@@ -26,13 +26,24 @@ def test_record_smoke_trace_event_includes_steps() -> None:
             "run_id": "run-test-1",
             "operation": "travel.book_hotel",
             "intent_id": "intent-1",
-            "requested_spend_cents": 18_700,
+            "requested_spend_cents": 20_000,
         },
         execute={"evidence_submitted": True, "sandbox_lifecycle_status": "released"},
         result_body={"status": "completed", "cost_cents": 18_700},
     )
     assert event["id"] == "run-test-1"
     assert event["steps"]
+    labels = {step["label"] for step in event["steps"]}
+    assert "Paybond authorized up to $200.00 (20,000 cents)" in labels
+    assert (
+        "Evidence submitted (reported cost $187.00 (18,700 cents); predicate evaluated)"
+        in labels
+    )
+    assert (
+        "Settlement: released — captured $187.00 (18,700 cents); unused $13.00 "
+        "(1,300 cents) released"
+        in labels
+    )
     assert len(list_dev_trace_events()) == before + 1
 
 
@@ -70,7 +81,7 @@ def test_dev_trace_collector_builds_dashboard_event() -> None:
             "tool_call_id": "call-1",
             "operation": "travel.book_hotel",
             "audit_id": "audit-1",
-            "amount_cents": 18_700,
+            "amount_cents": 20_000,
             "recorded_at": "2026-07-01T12:00:01.000Z",
         }
     )
@@ -91,6 +102,7 @@ def test_dev_trace_collector_builds_dashboard_event() -> None:
             "tool_call_id": "call-1",
             "operation": "travel.book_hotel",
             "sandbox_lifecycle_status": "released",
+            "reported_cost_cents": 18_700,
             "recorded_at": "2026-07-01T12:00:03.000Z",
         }
     )
@@ -106,6 +118,17 @@ def test_dev_trace_collector_builds_dashboard_event() -> None:
         "result",
     ]
     assert dev_trace_steps_from_events(event["trace_events"])
+    labels = {step["label"] for step in event["steps"]}
+    assert "Paybond authorized up to $200.00 (20,000 cents)" in labels
+    assert (
+        "Evidence submitted (reported cost $187.00 (18,700 cents); predicate evaluated)"
+        in labels
+    )
+    assert (
+        "Settlement: released — captured $187.00 (18,700 cents); unused $13.00 "
+        "(1,300 cents) released"
+        in labels
+    )
 
 
 def test_ring_buffer_drops_oldest_events() -> None:

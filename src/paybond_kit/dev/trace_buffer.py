@@ -143,6 +143,7 @@ def append_dev_audit_log(cwd: Path, entry: dict[str, Any]) -> str:
 def dev_trace_steps_from_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     steps: list[dict[str, Any]] = []
     first_at = str(events[0].get("recorded_at") or datetime.now(timezone.utc).isoformat())
+    authorized_ceiling_cents: int | None = None
 
     for event in events:
         event_type = event.get("type")
@@ -161,10 +162,14 @@ def dev_trace_steps_from_events(events: list[dict[str, Any]]) -> list[dict[str, 
             )
         elif event_type == "spend_authorized":
             amount_cents = int(event.get("amount_cents") or 0)
+            authorized_ceiling_cents = amount_cents
             steps.append(
                 {
                     "phase": "authorize",
-                    "label": f"Paybond approved ${amount_cents / 100:.2f}",
+                    "label": (
+                        f"Paybond authorized up to ${amount_cents / 100:.2f} "
+                        f"({amount_cents:,} cents)"
+                    ),
                     "recorded_at": recorded_at,
                     "detail": {
                         "audit_id": event.get("audit_id"),
@@ -203,11 +208,19 @@ def dev_trace_steps_from_events(events: list[dict[str, Any]]) -> list[dict[str, 
             )
         elif event_type == "evidence_submitted":
             predicate_passed = event.get("predicate_passed")
-            label = (
-                "Evidence submitted (predicate failed)"
-                if predicate_passed is False
-                else "Evidence submitted"
-            )
+            reported_cost_cents = event.get("reported_cost_cents")
+            if isinstance(reported_cost_cents, int) and not isinstance(reported_cost_cents, bool):
+                outcome = "predicate failed" if predicate_passed is False else "predicate evaluated"
+                label = (
+                    f"Evidence submitted (reported cost ${reported_cost_cents / 100:.2f} "
+                    f"({reported_cost_cents:,} cents); {outcome})"
+                )
+            else:
+                label = (
+                    "Evidence submitted (predicate failed)"
+                    if predicate_passed is False
+                    else "Evidence submitted"
+                )
             steps.append(
                 {
                     "phase": "evidence",
@@ -215,6 +228,7 @@ def dev_trace_steps_from_events(events: list[dict[str, Any]]) -> list[dict[str, 
                     "recorded_at": recorded_at,
                     "detail": {
                         "evidence_preset": event.get("evidence_preset"),
+                        "reported_cost_cents": reported_cost_cents,
                         "sandbox_lifecycle_status": event.get("sandbox_lifecycle_status"),
                         "predicate_passed": predicate_passed,
                     },
@@ -222,12 +236,45 @@ def dev_trace_steps_from_events(events: list[dict[str, Any]]) -> list[dict[str, 
             )
             lifecycle_status = event.get("sandbox_lifecycle_status")
             if lifecycle_status:
+                # Variable-cost settlement resizes to the validated reported cost: capture the
+                # reported cost and release the unused authorization. A failed predicate releases
+                # the full authorization. Absent reported cost or ceiling preserves fixed-price
+                # wording.
+                captured_cents: int | None
+                if authorized_ceiling_cents is None:
+                    captured_cents = None
+                elif predicate_passed is False:
+                    captured_cents = 0
+                elif isinstance(reported_cost_cents, int) and not isinstance(
+                    reported_cost_cents, bool
+                ):
+                    captured_cents = min(reported_cost_cents, authorized_ceiling_cents)
+                else:
+                    captured_cents = None
+                unused_cents = (
+                    None
+                    if authorized_ceiling_cents is None or captured_cents is None
+                    else authorized_ceiling_cents - captured_cents
+                )
+                if captured_cents is None or unused_cents is None:
+                    label = f"Settlement: {lifecycle_status}"
+                else:
+                    label = (
+                        f"Settlement: {lifecycle_status} — captured "
+                        f"${captured_cents / 100:.2f} ({captured_cents:,} cents); unused "
+                        f"${unused_cents / 100:.2f} ({unused_cents:,} cents) released"
+                    )
                 steps.append(
                     {
                         "phase": "result",
-                        "label": f"Settlement: {lifecycle_status}",
+                        "label": label,
                         "recorded_at": recorded_at,
-                        "detail": {"sandbox_lifecycle_status": lifecycle_status},
+                        "detail": {
+                            "sandbox_lifecycle_status": lifecycle_status,
+                            "authorized_amount_cents": authorized_ceiling_cents,
+                            "captured_released_amount_cents": captured_cents,
+                            "unused_authorization_cents": unused_cents,
+                        },
                     }
                 )
         elif event_type == "spend_finalized" and event.get("status") == "consumed":
@@ -378,6 +425,7 @@ def record_smoke_trace_event(
                 "tool_call_id": "smoke-1",
                 "operation": operation,
                 "sandbox_lifecycle_status": execute.get("sandbox_lifecycle_status"),
+                "reported_cost_cents": result_body.get("cost_cents"),
                 "recorded_at": recorded_at,
             }
         )

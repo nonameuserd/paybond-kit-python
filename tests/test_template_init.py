@@ -23,6 +23,10 @@ def test_normalize_template_id_accepts_repo_slug() -> None:
     assert normalize_template_id("paybond-travel-agent") == "travel-agent"
     assert normalize_template_id("paybond-invoice-agent") == "invoice-agent"
     assert normalize_template_id("paybond-crewai-procurement-agent") == "crewai-procurement-agent"
+    assert (
+        normalize_template_id("paybond-microsoft-agent-framework-procurement-agent")
+        == "microsoft-agent-framework-procurement-agent"
+    )
 
 
 def test_copy_travel_agent_template(tmp_path: Path) -> None:

@@ -76,6 +76,8 @@ async def test_agent_sandbox_smoke_preset_travel_cli(monkeypatch: pytest.MonkeyP
             "smoke",
             "--preset",
             "travel",
+            "--requested-spend-cents",
+            "20000",
             "--result-body",
             '{"status":"completed","cost_cents":18700}',
         ],
@@ -90,7 +92,8 @@ async def test_agent_sandbox_smoke_preset_travel_cli(monkeypatch: pytest.MonkeyP
         "✓ Policy loaded (travel)",
         "✓ Sandbox intent created",
         "✓ Tool call: travel.book_hotel",
-        "✓ Spend approved ($187.00)",
+        "✓ Spend authorized up to $200.00 (20,000 cents)",
+        "✓ Reported cost $187.00 (18,700 cents)",
         "✓ Evidence validated (cost_and_completion)",
         "✓ Settlement simulated",
         "✓ Trace → http://localhost:9477/runs/" + payload["data"]["bind"]["run_id"],
@@ -163,6 +166,8 @@ async def test_agent_sandbox_smoke_preset_travel_table_output(
             "smoke",
             "--preset",
             "travel",
+            "--requested-spend-cents",
+            "20000",
             "--result-body",
             '{"status":"completed","cost_cents":18700}',
         ],
@@ -172,7 +177,8 @@ async def test_agent_sandbox_smoke_preset_travel_table_output(
     assert code == 0
     assert "Policy loaded (travel)" in output
     assert "Tool call: travel.book_hotel" in output
-    assert "Spend approved ($187.00)" in output
+    assert "Spend authorized up to $200.00 (20,000 cents)" in output
+    assert "Reported cost $187.00 (18,700 cents)" in output
     assert "Evidence validated (cost_and_completion)" in output
     assert "Settlement simulated" in output
     assert "Success" in output

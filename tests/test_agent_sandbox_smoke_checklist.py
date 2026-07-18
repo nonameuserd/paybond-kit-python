@@ -17,7 +17,7 @@ def test_format_agent_sandbox_smoke_checklist_travel_preset() -> None:
             "intent_id": "intent-1",
             "operation": "travel.book_hotel",
             "completion_preset": "cost_and_completion",
-            "requested_spend_cents": 18700,
+            "requested_spend_cents": 20000,
         },
         execute={
             "authorization": {"allow": True},
@@ -30,7 +30,8 @@ def test_format_agent_sandbox_smoke_checklist_travel_preset() -> None:
         "✓ Policy loaded (travel)",
         "✓ Sandbox intent created",
         "✓ Tool call: travel.book_hotel",
-        "✓ Spend approved ($187.00)",
+        "✓ Spend authorized up to $200.00 (20,000 cents)",
+        "✓ Reported cost $187.00 (18,700 cents)",
         "✓ Evidence validated (cost_and_completion)",
         "✓ Settlement simulated",
         "Success",

@@ -51,6 +51,10 @@ def test_run_install_context_doctor_checks_reports_missing_extras(
         lambda: False,
     )
     monkeypatch.setattr(
+        "paybond_kit.crewai._peer.crewai_runtime_available",
+        lambda: False,
+    )
+    monkeypatch.setattr(
         "paybond_kit.cli.mcp_install.mcp_runtime_available",
         lambda: True,
     )
