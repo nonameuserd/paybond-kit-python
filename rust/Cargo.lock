@@ -351,7 +351,7 @@ dependencies = [
 
 [[package]]
 name = "paybond_kit_native"
-version = "0.12.9"
+version = "0.12.10"
 dependencies = [
  "base64",
  "ed25519-dalek",
