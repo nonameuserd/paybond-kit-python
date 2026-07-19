@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from paybond_kit.agent.interceptor import PaybondAutoEvidenceSubmitError
+from paybond_kit.agent.interceptor import AgentReceiptComposeResult, PaybondAutoEvidenceSubmitError
 from paybond_kit.agent.registry import create_paybond_tool_registry
 from paybond_kit.agent.registry_file import (
     AgentRegistryValidationResult,
@@ -709,6 +709,24 @@ async def handle_agent_run_reload_policy(ctx: CliContext, argv: list[str]) -> di
     return await with_paybond_agent_cli(ctx, production, _reload)
 
 
+def _agent_receipt_compose_result_wire(result: AgentReceiptComposeResult | None) -> dict[str, Any] | None:
+    """Serialize an ``AgentReceiptComposeResult`` for ``--format json`` CLI output.
+
+    Mirrors the Gateway's ``agent_receipt``/``agent_receipt_intent_terminal`` wire shape
+    (``compose_status``, ``receipt_id``, ``scope``, ``warning_code``, ``warning_message``) so
+    downstream tooling can resolve a receipt by ID without deriving its SHA-256 digest.
+    """
+    if result is None:
+        return None
+    return {
+        "compose_status": result.compose_status,
+        "receipt_id": result.receipt_id,
+        "scope": result.scope,
+        "warning_code": result.warning_code,
+        "warning_message": result.warning_message,
+    }
+
+
 async def handle_agent_tool_execute(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     production, argv = consume_boolean_flag(argv, "--production")
     _, run_id, argv = consume_flag(argv, "--run-id")
@@ -764,6 +782,10 @@ async def handle_agent_tool_execute(ctx: CliContext, argv: list[str]) -> dict[st
                     "intent_state": evidence.intent_state,
                     "predicate_passed": evidence.predicate_passed,
                     "sandbox_lifecycle_status": evidence.sandbox_lifecycle_status,
+                    "agent_receipt": _agent_receipt_compose_result_wire(evidence.agent_receipt),
+                    "agent_receipt_intent_terminal": _agent_receipt_compose_result_wire(
+                        evidence.agent_receipt_intent_terminal
+                    ),
                 }
                 if evidence is not None
                 else None,

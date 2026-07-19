@@ -419,7 +419,9 @@ def _resolve_interactive_options(options: ProjectInitOptions) -> tuple[
 ]:
     cwd = Path(options.cwd)
     prompt = options.prompt or (lambda question: input(question).strip())
-    interactive = not options.non_interactive and sys.stdin.isatty() and sys.stdout.isatty()
+    interactive = not options.non_interactive and (
+        options.prompt is not None or (sys.stdin.isatty() and sys.stdout.isatty())
+    )
     language = options.language or _detect_language(cwd)
 
     solution = options.solution
@@ -458,13 +460,24 @@ def run_project_init(options: ProjectInitOptions) -> dict[str, object]:
     solution, max_spend_usd, framework, language = _resolve_interactive_options(options)
     preset_id = _preset_id_for_solution(solution)
     files: list[str] = []
+    force = options.force
+    policy_path = cwd / "paybond.policy.yaml"
+
+    if policy_path.exists() and not force and not options.non_interactive and (
+        options.prompt is not None or (sys.stdin.isatty() and sys.stdout.isatty())
+    ):
+        prompt = options.prompt or (lambda question: input(question).strip())
+        answer = prompt(f"{policy_path} already exists. Overwrite it? [y/N] ")
+        if answer.strip().lower() not in {"y", "yes"}:
+            raise RuntimeError(f"{policy_path} already exists; not overwritten")
+        force = True
 
     scaffold_policy_from_preset(
         ScaffoldPolicyFromPresetOptions(
-            out=cwd / "paybond.policy.yaml",
+            out=policy_path,
             preset_id=preset_id,
             max_spend_usd=max_spend_usd,
-            force=options.force,
+            force=force,
         )
     )
     files.append("paybond.policy.yaml")
@@ -474,7 +487,7 @@ def run_project_init(options: ProjectInitOptions) -> dict[str, object]:
     _write_file_if_allowed(
         cwd / config_name,
         _python_config_template() if language == "python" else _typescript_config_template(),
-        options.force,
+        force,
     )
     files.append(config_name)
     _write_file_if_allowed(
@@ -482,15 +495,15 @@ def run_project_init(options: ProjectInitOptions) -> dict[str, object]:
         _python_instrument_template(solution, framework, max_spend_usd)
         if language == "python"
         else _typescript_instrument_template(solution, framework, max_spend_usd),
-        options.force,
+        force,
     )
     files.append(instrument_name)
-    _write_file_if_allowed(cwd / ".env.example", _env_example_body(), options.force)
+    _write_file_if_allowed(cwd / ".env.example", _env_example_body(), force)
     files.append(".env.example")
 
     smoke_command = _smoke_command(preset_id)
     if language == "typescript":
-        _upsert_package_json_smoke_script(cwd, smoke_command, options.force)
+        _upsert_package_json_smoke_script(cwd, smoke_command, force)
         files.append("package.json")
 
     write_stdout = options.write_stdout or (lambda line: sys.stdout.write(f"{line}\n"))

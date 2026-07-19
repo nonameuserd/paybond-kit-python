@@ -52,6 +52,15 @@ class SandboxGuardrailEvidenceResult:
     artifacts_digest: str | None = None
     schema_validation: SandboxGuardrailSchemaValidation | None = None
     simulator_event: Mapping[str, Any] | None = None
+    # Structured Agent Receipt Standard compose outcome for this evidence submission's
+    # action-scope receipt (``compose_status`` is ``"composed"``/``"failed"``), or ``None``
+    # when agent-receipt signing is not configured on the Gateway. Mirrors the shape the
+    # production Harbor evidence-forward path returns under the same key so sandbox and
+    # production callers can share parsing.
+    agent_receipt: Mapping[str, Any] | None = None
+    # Structured compose outcome for the intent-terminal receipt, present only once Harbor
+    # reports a protocol-terminal state (released/refunded/resolved_split/escalated_external).
+    agent_receipt_intent_terminal: Mapping[str, Any] | None = None
 
 
 class GatewaySandboxGuardrailsClient:
@@ -316,6 +325,8 @@ def _parse_sandbox_evidence_result(
         artifacts_digest=_optional_string(body.get("artifacts_digest")),
         schema_validation=_parse_schema_validation(body.get("schema_validation")),
         simulator_event=simulator_event if isinstance(simulator_event, Mapping) else None,
+        agent_receipt=_optional_mapping(body.get("agent_receipt")),
+        agent_receipt_intent_terminal=_optional_mapping(body.get("agent_receipt_intent_terminal")),
     )
 
 
@@ -366,6 +377,10 @@ def _optional_string(value: Any) -> str | None:
     if isinstance(value, str) and value.strip():
         return value
     return None
+
+
+def _optional_mapping(value: Any) -> Mapping[str, Any] | None:
+    return value if isinstance(value, Mapping) else None
 
 
 def _required_int(

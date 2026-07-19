@@ -1033,16 +1033,45 @@ def handle_signal(ctx: CliContext, subcommand: str, argv: list[str]) -> dict[str
 
 
 def handle_receipts(ctx: CliContext, subcommand: str, argv: list[str]) -> dict[str, Any]:
-    receipt_id = argv[0] if argv else ""
-    if not receipt_id:
-        raise CliError(f"receipts {subcommand} requires <receipt_id>", code="cli.usage.missing_receipt_id")
-    _, kind, rest = consume_flag(argv[1:], "--kind")
+    # <receipt_id> is a positional SHA-256 digest the caller must already have. Most callers only
+    # know the intent_id and (for action receipts) tool_call_id from their own request, so agent
+    # receipts also resolve by --intent-id [--tool-call-id] without forcing callers to derive the
+    # digest themselves (Gateway's GET /protocol/v2/agent-receipts query endpoint).
+    has_receipt_id = bool(argv) and not argv[0].startswith("-")
+    receipt_id = argv[0] if has_receipt_id else ""
+    flag_argv = argv[1:] if has_receipt_id else argv
+    _, kind, rest = consume_flag(flag_argv, "--kind")
+    _, intent_id, rest = consume_flag(rest, "--intent-id")
+    _, tool_call_id, rest = consume_flag(rest, "--tool-call-id")
     receipt_kind = (kind or "protocol").strip().lower()
+
+    if tool_call_id and not intent_id:
+        raise CliError(
+            f"receipts {subcommand} --tool-call-id requires --intent-id",
+            code="cli.usage.tool_call_id_requires_intent_id",
+        )
+    if not receipt_id and not intent_id:
+        raise CliError(
+            f"receipts {subcommand} requires <receipt_id> or --intent-id <id>",
+            code="cli.usage.missing_receipt_id",
+        )
+    if intent_id and receipt_kind != "agent":
+        raise CliError(
+            f"receipts {subcommand} --intent-id is only supported with --kind agent",
+            code="cli.usage.intent_id_requires_agent_kind",
+        )
+
     if receipt_kind == "agent":
+        if receipt_id:
+            path = f"/protocol/v2/agent-receipts/{receipt_id}"
+        else:
+            path = f"/protocol/v2/agent-receipts?intent_id={quote(intent_id, safe='')}"
+            if tool_call_id:
+                path += f"&tool_call_id={quote(tool_call_id, safe='')}"
         if subcommand == "get":
-            return gateway_request(ctx, "GET", f"/protocol/v2/agent-receipts/{receipt_id}")
+            return gateway_request(ctx, "GET", path)
         if subcommand == "verify":
-            fetched = gateway_request(ctx, "GET", f"/protocol/v2/agent-receipts/{receipt_id}")
+            fetched = gateway_request(ctx, "GET", path)
             return gateway_request(ctx, "POST", "/protocol/v2/agent-receipts/verify", fetched)
     if subcommand == "get":
         return gateway_request(ctx, "GET", f"/protocol/v2/receipts/{receipt_id}")

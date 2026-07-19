@@ -72,6 +72,10 @@ class PaybondInterceptEvidenceResult:
     payload_digest_sha256_hex: str | None = None
     artifacts_digest_sha256_hex: str | None = None
     agent_receipt: AgentReceiptComposeResult | None = None
+    # Compose outcome for the intent-terminal Agent Receipt, present only once the
+    # intent reaches a protocol-terminal Harbor state (released/refunded/resolved_split/
+    # escalated_external) on this evidence submission, for both sandbox and production.
+    agent_receipt_intent_terminal: AgentReceiptComposeResult | None = None
 
 
 def _parse_agent_receipt_compose_result(value: Any) -> AgentReceiptComposeResult | None:
@@ -675,6 +679,11 @@ class PaybondToolInterceptor:
                     if isinstance(result, dict)
                     else getattr(result, "agent_receipt", None)
                 )
+                agent_receipt_terminal_raw = (
+                    result.get("agent_receipt_intent_terminal")
+                    if isinstance(result, dict)
+                    else getattr(result, "agent_receipt_intent_terminal", None)
+                )
                 return PaybondInterceptEvidenceResult(
                     submitted=True,
                     intent_id=str(result.intent_id),
@@ -683,6 +692,7 @@ class PaybondToolInterceptor:
                     payload_digest_sha256_hex=(payload_digest or "").strip().lower() or None,
                     artifacts_digest_sha256_hex=(artifacts_digest or "").strip().lower() or None,
                     agent_receipt=_parse_agent_receipt_compose_result(agent_receipt_raw),
+                    agent_receipt_intent_terminal=_parse_agent_receipt_compose_result(agent_receipt_terminal_raw),
                 )
 
             production_evidence = self._binding.production_evidence
@@ -720,6 +730,7 @@ class PaybondToolInterceptor:
             payload_digest = None
             artifacts_digest = None
             agent_receipt_raw = None
+            agent_receipt_terminal_raw = None
             if isinstance(result, dict):
                 intent_state = result.get("intent_state") or result.get("state")
                 if isinstance(result.get("predicate_passed"), bool):
@@ -729,6 +740,7 @@ class PaybondToolInterceptor:
                 if isinstance(result.get("artifacts_digest"), str):
                     artifacts_digest = result["artifacts_digest"].strip().lower() or None
                 agent_receipt_raw = result.get("agent_receipt")
+                agent_receipt_terminal_raw = result.get("agent_receipt_intent_terminal")
 
             return PaybondInterceptEvidenceResult(
                 submitted=True,
@@ -738,6 +750,7 @@ class PaybondToolInterceptor:
                 payload_digest_sha256_hex=payload_digest,
                 artifacts_digest_sha256_hex=artifacts_digest,
                 agent_receipt=_parse_agent_receipt_compose_result(agent_receipt_raw),
+                agent_receipt_intent_terminal=_parse_agent_receipt_compose_result(agent_receipt_terminal_raw),
             )
         except PaybondEvidenceSubmitError:
             raise
