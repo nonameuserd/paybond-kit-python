@@ -125,7 +125,8 @@ GLOBAL_FLAG_NAMES: list[str] = [
     "--yes",
     "--no-open",
     "--color",
-    "--no-color"
+    "--no-color",
+    "--debug"
 ]
 
 COMMAND_EXAMPLES: dict[str, list[str]] = {

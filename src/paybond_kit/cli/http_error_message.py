@@ -133,6 +133,32 @@ def format_sdk_http_error_message(
   return f"{operation} HTTP {status_code}: {summary_message}"
 
 
+GATEWAY_AUTH_RECOVERY_HINT = (
+    "run paybond login, then paybond doctor (or paybond doctor --agent)"
+)
+
+
+def format_gateway_auth_cli_message(
+    raw_message: str,
+    status_code: int | None,
+    body_text: str | None,
+) -> str:
+  """Operator-facing message for GatewayAuthError with login/doctor recovery guidance."""
+  hint = GATEWAY_AUTH_RECOVERY_HINT
+  if status_code is None:
+    base = (raw_message or "").strip() or "gateway authentication failed"
+    if hint in base:
+      return base
+    return f"{base}; {hint}"
+
+  summary_message, _ = summarize_gateway_http_error(status_code, body_text or "")
+  if summary_message == f"Gateway HTTP {status_code}":
+    base = f"gateway authentication failed (HTTP {status_code})"
+  else:
+    base = f"gateway authentication failed (HTTP {status_code}): {summary_message}"
+  return f"{base}; {hint}"
+
+
 def _parse_embedded_http_error_body(message: str) -> tuple[int, str] | None:
   marker = " HTTP "
   if marker not in message:

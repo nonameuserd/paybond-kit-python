@@ -3,15 +3,20 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import traceback
 from pathlib import Path
 from typing import Any
 
 from paybond_kit.cli import commands
 from paybond_kit.cli.core import (
+    EXIT_AUTH,
     EXIT_SUCCESS,
     EXIT_INTERRUPT,
+    EXIT_FAILURE,
+    EXIT_ENVIRONMENT,
     CliContext,
     CliError,
+    cli_debug_from_argv,
     default_globals,
     exit_code_for_http_status,
     failure_envelope,
@@ -22,9 +27,12 @@ from paybond_kit.cli.core import (
     write_success_output,
 )
 from paybond_kit.cli.http_error_message import (
+    format_gateway_auth_cli_message,
     format_sdk_http_error_message,
     summarize_gateway_http_error,
+    resolve_cli_gateway_error_message,
 )
+from paybond_kit.credentials import GatewayAuthError
 from paybond_kit.harbor import HarborHttpError
 from paybond_kit.cli.automation import deprecated_alias_warning
 from paybond_kit.cli.help_text import help_for_command
@@ -191,6 +199,67 @@ def _cli_error_from_harbor_http_error(err: HarborHttpError) -> CliError:
     )
 
 
+def _cli_error_from_gateway_auth_error(err: GatewayAuthError) -> CliError:
+    """Convert SDK principal failures into stable, non-secret CLI errors."""
+    message = format_gateway_auth_cli_message(str(err), err.status_code, err.body_text)
+    if err.status_code is None:
+        return CliError(
+            message,
+            category="auth",
+            code="cli.auth.gateway_principal_invalid",
+            exit_code=EXIT_AUTH,
+        )
+    exit_code, category = exit_code_for_http_status(err.status_code)
+    body_text = err.body_text or ""
+    _, details = summarize_gateway_http_error(err.status_code, body_text)
+    gateway_code = details.get("gateway_code")
+    return CliError(
+        message,
+        category=category,
+        code=str(gateway_code or f"cli.gateway.http_{err.status_code}"),
+        exit_code=exit_code,
+        details=details,
+    )
+
+
+# head -> (code, category, actionable hint) for validation-style errors that
+# reach the CLI boundary from library helpers without a CliError of their own.
+_COMMAND_BOUNDARY_HINTS: dict[str, tuple[str, str, str]] = {
+    "agent": ("cli.agent.validation", "validation", "check the command flags or run paybond doctor --agent"),
+    "doctor": ("cli.doctor.validation", "validation", "run paybond doctor"),
+    "diagnose": ("cli.diagnose.validation", "validation", "run paybond diagnose --redacted"),
+    "whoami": ("cli.whoami.validation", "validation", "run paybond login, then paybond whoami"),
+    "login": ("cli.login.validation", "validation", "run paybond login --help"),
+    "init": ("cli.init.validation", "validation", "check the flags or run paybond init --help"),
+    "policy": ("cli.policy.validation", "validation", "check your policy file or run paybond policy validate-tools"),
+    "mcp": ("cli.mcp.validation", "validation", "run paybond mcp verify-config"),
+    "spend": ("cli.spend.validation", "validation", "check spend flags or run paybond spend explain-policy"),
+    "intents": ("cli.intents.validation", "validation", "check the command flags or run paybond doctor"),
+    "keys": ("cli.keys.validation", "validation", "check the command flags"),
+}
+
+
+def _boundary_validation_cli_error(canonical: str, exc: BaseException) -> CliError:
+    """Map an unconverted validation-style error to an actionable CLI error.
+
+    Handlers convert their own known failures to :class:`CliError`; this covers
+    the residual ``ValueError``/``TypeError``/``RuntimeError`` that bubble from
+    shared library helpers, attaching a per-command recovery hint.
+    """
+    message = str(exc) or "invalid input"
+    head = canonical.split(" ", 1)[0] if canonical else ""
+    code, category, hint = _COMMAND_BOUNDARY_HINTS.get(head, ("cli.validation", "validation", ""))
+    if hint and hint not in message:
+        message = f"{message}; {hint}"
+    return CliError(message, category=category, code=code, exit_code=EXIT_FAILURE)
+
+
+def _write_debug_traceback(stderr: Any, enabled: bool) -> None:
+    """Emit the active exception's traceback to stderr when debug mode is on."""
+    if enabled:
+        stderr.write(traceback.format_exc())
+
+
 async def run_cli(argv: list[str] | None = None, *, stdout: Any = None, stderr: Any = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     stdout = stdout or sys.stdout
@@ -198,6 +267,7 @@ async def run_cli(argv: list[str] | None = None, *, stdout: Any = None, stderr: 
     try:
         globals_, command = parse_cli_argv(argv)
     except CliError as exc:
+        _write_debug_traceback(stderr, cli_debug_from_argv(argv))
         if output_format_from_argv(argv) == "json":
             globals_ = default_globals()
             globals_.format = "json"
@@ -229,13 +299,70 @@ async def run_cli(argv: list[str] | None = None, *, stdout: Any = None, stderr: 
         if exc.message == "help":
             ctx.stdout.write(f"{help_for_command(help_path)}\n")
             return EXIT_SUCCESS
+        _write_debug_traceback(ctx.stderr, globals_.debug)
         if globals_.format == "json":
             ctx.stdout.write(f"{json.dumps(failure_envelope(canonical, globals_, exc), indent=2)}\n")
         else:
             ctx.stderr.write(f"{exc.message}\n")
         return exc.exit_code
     except HarborHttpError as exc:
+        _write_debug_traceback(ctx.stderr, globals_.debug)
         cli_exc = _cli_error_from_harbor_http_error(exc)
+        if globals_.format == "json":
+            ctx.stdout.write(f"{json.dumps(failure_envelope(canonical, globals_, cli_exc), indent=2)}\n")
+        else:
+            ctx.stderr.write(f"{cli_exc.message}\n")
+        return cli_exc.exit_code
+    except GatewayAuthError as exc:
+        _write_debug_traceback(ctx.stderr, globals_.debug)
+        cli_exc = _cli_error_from_gateway_auth_error(exc)
+        if globals_.format == "json":
+            ctx.stdout.write(f"{json.dumps(failure_envelope(canonical, globals_, cli_exc), indent=2)}\n")
+        else:
+            ctx.stderr.write(f"{cli_exc.message}\n")
+        return cli_exc.exit_code
+    except SystemExit as exc:
+        # argparse/usage exits raise SystemExit with an int (or None) code after
+        # already printing their own message. Preserve that behavior — the caller
+        # exits with that status — instead of emitting a bare numeric message.
+        if exc.code is None or isinstance(exc.code, int):
+            raise
+        _write_debug_traceback(ctx.stderr, globals_.debug)
+        # Otherwise the code carries a human-readable message from a lower-level
+        # helper (e.g. MCP tooling); map it to a structured CLI error.
+        text = str(exc.code) or "process exited"
+        # Special-case missing API key messages produced by MCP helpers.
+        if "PAYBOND_API_KEY" in text:
+            message = f"{text}; run paybond login"
+            cli_exc = CliError(message, category="auth", code="cli.auth.missing_api_key", exit_code=EXIT_AUTH)
+        else:
+            cli_exc = CliError(text, category="environment", code="cli.environment.exit", exit_code=EXIT_ENVIRONMENT)
+        if globals_.format == "json":
+            ctx.stdout.write(f"{json.dumps(failure_envelope(canonical, globals_, cli_exc), indent=2)}\n")
+        else:
+            ctx.stderr.write(f"{cli_exc.message}\n")
+        return cli_exc.exit_code
+    except (ValueError, TypeError, RuntimeError) as exc:
+        _write_debug_traceback(ctx.stderr, globals_.debug)
+        # Map residual validation-style exceptions from library helpers to a
+        # friendly, command-aware CLI validation error.
+        cli_exc = _boundary_validation_cli_error(canonical, exc)
+        if globals_.format == "json":
+            ctx.stdout.write(f"{json.dumps(failure_envelope(canonical, globals_, cli_exc), indent=2)}\n")
+        else:
+            ctx.stderr.write(f"{cli_exc.message}\n")
+        return cli_exc.exit_code
+    except Exception as exc:  # Catch-all for unexpected errors — sanitize output.
+        _write_debug_traceback(ctx.stderr, globals_.debug)
+        # Prefer to extract a safe gateway message when available.
+        try:
+            safe = resolve_cli_gateway_error_message(exc)
+        except Exception:
+            safe = None
+        base = safe or "unexpected internal error"
+        hint = "run paybond doctor"
+        message = f"{base}; {hint}"
+        cli_exc = CliError(message, category="internal", code="cli.internal", exit_code=EXIT_FAILURE)
         if globals_.format == "json":
             ctx.stdout.write(f"{json.dumps(failure_envelope(canonical, globals_, cli_exc), indent=2)}\n")
         else:

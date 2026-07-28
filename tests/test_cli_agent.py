@@ -9,6 +9,7 @@ import pytest
 
 from paybond_kit.agent.registry_file import parse_agent_registry_text, validate_agent_registry_document
 from paybond_kit.cli.router import run_cli
+from paybond_kit.credentials import GatewayAuthError
 from .cli_agent_gateway_mock import (
     ATTACH_INTENT_ID,
     LIVE_RAW_KEY,
@@ -251,6 +252,54 @@ async def test_agent_sandbox_smoke_rejects_policy_file_with_evidence_preset(
     assert payload["ok"] is False
     assert payload["error"]["code"] == "cli.usage.conflicting_args"
     assert "--policy-file or --evidence-preset, not both" in payload["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_agent_run_bind_principal_401_returns_json_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PAYBOND_API_KEY", SANDBOX_RAW_KEY)
+
+    async def reject_principal(**_kwargs: object) -> object:
+        raise GatewayAuthError(
+            "gateway principal HTTP 401",
+            status_code=401,
+            body_text='{"error":{"code":"invalid_api_key","message":"API key invalid or revoked"}}',
+        )
+
+    monkeypatch.setattr("paybond_kit.cli.agent_paybond.Paybond.open", reject_principal)
+    stdout = io.StringIO()
+    code = await run_cli(
+        [
+            "--format",
+            "json",
+            "agent",
+            "run",
+            "bind",
+            "--sandbox",
+            "--operation",
+            "travel.book_hotel",
+            "--requested-spend-cents",
+            "20000",
+            "--completion-preset",
+            "cost_and_completion",
+        ],
+        stdout=stdout,
+    )
+
+    payload = json.loads(stdout.getvalue())
+    assert code == 2
+    assert payload["ok"] is False
+    assert payload["error"]["category"] == "auth"
+    assert payload["error"]["code"] == "invalid_api_key"
+    assert payload["error"]["details"]["gateway_status"] == 401
+    message = payload["error"]["message"]
+    assert "invalid or revoked" in message
+    assert "paybond login" in message
+    assert "paybond doctor" in message
+    assert "GatewayAuthError" not in message
 
 
 @pytest.mark.asyncio

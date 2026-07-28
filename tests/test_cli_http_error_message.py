@@ -1,4 +1,6 @@
 from paybond_kit.cli.http_error_message import (
+    GATEWAY_AUTH_RECOVERY_HINT,
+    format_gateway_auth_cli_message,
     format_sdk_http_error_message,
     resolve_cli_gateway_error_message,
     summarize_gateway_http_error,
@@ -95,3 +97,17 @@ def test_resolve_cli_gateway_error_message_from_legacy_embedded_body() -> None:
     message = resolve_cli_gateway_error_message(legacy)
     assert message.startswith("sandbox guardrail Harbor evidence rejected")
     assert "Bad gateway" not in message
+
+
+def test_format_gateway_auth_cli_message_includes_login_and_doctor() -> None:
+    body = '{"error":{"code":"invalid_api_key","message":"API key invalid or revoked"}}'
+    message = format_gateway_auth_cli_message("gateway principal HTTP 401", 401, body)
+    assert message == (
+        "gateway authentication failed (HTTP 401): API key invalid or revoked; "
+        f"{GATEWAY_AUTH_RECOVERY_HINT}"
+    )
+
+
+def test_format_gateway_auth_cli_message_without_status() -> None:
+    message = format_gateway_auth_cli_message("gateway principal JSON missing tenant_id", None, None)
+    assert message == f"gateway principal JSON missing tenant_id; {GATEWAY_AUTH_RECOVERY_HINT}"

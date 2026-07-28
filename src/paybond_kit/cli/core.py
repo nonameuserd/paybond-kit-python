@@ -42,8 +42,34 @@ GLOBAL_FLAGS = frozenset(
         "--no-open",
         "--color",
         "--no-color",
+        "--debug",
     }
 )
+
+CLI_DEBUG_ENV = "PAYBOND_CLI_DEBUG"
+
+
+def _is_truthy_flag_value(value: str) -> bool:
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def cli_debug_enabled_from_env() -> bool:
+    """Return True when PAYBOND_CLI_DEBUG requests stack-trace diagnostics."""
+
+    return _is_truthy_flag_value(os.environ.get(CLI_DEBUG_ENV, ""))
+
+
+def cli_debug_from_argv(argv: list[str]) -> bool:
+    """Resolve --debug/PAYBOND_CLI_DEBUG before globals are parsed (argv errors)."""
+
+    if cli_debug_enabled_from_env():
+        return True
+    for arg in argv:
+        if arg == "--debug":
+            return True
+        if arg.startswith("--debug="):
+            return _is_truthy_flag_value(arg[len("--debug=") :])
+    return False
 
 TENANT_OVERRIDE_FLAGS = ("--tenant-id", "--tenant", "--tenant_id")
 
@@ -96,6 +122,7 @@ class GlobalOptions:
     request_id: str = field(default_factory=lambda: f"01{uuid.uuid4().hex[:24].upper()}")
     yes: bool = False
     no_open: bool = False
+    debug: bool = False
     json_fields: str | None = None
     jq_expr: str | None = None
     credential_warnings: list[str] = field(default_factory=list)
@@ -116,7 +143,11 @@ def generate_request_id() -> str:
 
 
 def default_globals() -> GlobalOptions:
-    return GlobalOptions(request_id=generate_request_id(), color=resolve_color_mode_from_env())
+    return GlobalOptions(
+        request_id=generate_request_id(),
+        color=resolve_color_mode_from_env(),
+        debug=cli_debug_enabled_from_env(),
+    )
 
 
 def output_format_from_argv(argv: list[str]) -> str:
@@ -184,6 +215,14 @@ def parse_cli_argv(argv: list[str]) -> tuple[GlobalOptions, list[str]]:
             continue
         if arg == "--no-open":
             globals_.no_open = True
+            index += 1
+            continue
+        if arg == "--debug":
+            globals_.debug = True
+            index += 1
+            continue
+        if arg.startswith("--debug="):
+            globals_.debug = _is_truthy_flag_value(arg[len("--debug=") :])
             index += 1
             continue
         if arg == "--no-color":
