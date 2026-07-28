@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import threading
+import urllib.error
 import urllib.request
+
+import pytest
 
 from paybond_kit.dev.trace_buffer import dev_trace_has_credentials, record_smoke_trace_event
 from paybond_kit.dev.trace_security_headers import DEV_TRACE_SECURITY_HEADERS
@@ -66,6 +69,27 @@ def test_dev_trace_has_credentials_reads_env_file(tmp_path, monkeypatch) -> None
     env_path = tmp_path / ".env.local"
     env_path.write_text("PAYBOND_API_KEY=sk_test_from_file\n", encoding="utf-8")
     assert dev_trace_has_credentials(cwd=tmp_path, env_file=".env.local") is True
+
+
+def test_dev_trace_server_rejects_non_loopback_host() -> None:
+    server = start_dev_trace_server(port=0)
+    host, port, *_ = server.server_address
+    assert isinstance(port, int)
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        request = urllib.request.Request(
+            f"http://{host}:{port}/api/events",
+            headers={"Host": "evil.example:9477"},
+        )
+        with pytest.raises(urllib.error.HTTPError) as raised:
+            urllib.request.urlopen(request, timeout=5)
+        assert raised.value.code == 403
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def test_dev_trace_server_reports_env_file_credentials(tmp_path, monkeypatch) -> None:

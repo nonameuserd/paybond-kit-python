@@ -1,5 +1,11 @@
 {
   "include": ["src", "tests"],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    ".venv",
+    "src/paybond_kit/data/templates"
+  ],
   "extraPaths": ["src"],
   "pythonVersion": "3.11",
   "venvPath": ".",

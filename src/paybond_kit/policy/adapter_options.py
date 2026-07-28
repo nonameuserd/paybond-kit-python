@@ -19,7 +19,17 @@ class PaybondPolicyAdapterOptions:
 
 
 def policy_to_adapter_options(document: PaybondPolicyDocumentV1) -> PaybondPolicyAdapterOptions:
-    """Map policy adapter.deny_provider_executed_tools to AI SDK adapter options."""
-    if document.adapter is None or document.adapter.deny_provider_executed_tools is not True:
+    """Map adapter / default_deny posture to AI SDK adapter options.
+
+    When ``default_deny`` is true and the adapter flag is unset, provider-executed
+    tools are denied so policy posture matches runtime (they never reach the
+    interceptor). Explicit ``adapter.deny_provider_executed_tools: false`` opts out.
+    """
+    deny = None if document.adapter is None else document.adapter.deny_provider_executed_tools
+    if deny is True:
+        return PaybondPolicyAdapterOptions(deny_provider_executed_tools=True)
+    if deny is False:
         return PaybondPolicyAdapterOptions()
-    return PaybondPolicyAdapterOptions(deny_provider_executed_tools=True)
+    if document.default_deny is True:
+        return PaybondPolicyAdapterOptions(deny_provider_executed_tools=True)
+    return PaybondPolicyAdapterOptions()

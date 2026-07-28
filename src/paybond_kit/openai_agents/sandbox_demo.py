@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from typing import Any
 
@@ -17,9 +18,8 @@ def _require_openai_agents_demo_deps() -> Any:
             "openai-agents is required for paybond_kit.openai_agents.sandbox_demo. "
             'Install with `pip install "paybond-kit[openai-agents]"`.'
         )
-    from agents import FunctionTool
-
-    return FunctionTool
+    # Optional dependency resolved dynamically (see paybond_kit.openai_agents._peer).
+    return importlib.import_module("agents").FunctionTool
 
 
 async def run_openai_agents_sandbox_demo(

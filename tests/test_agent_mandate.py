@@ -19,7 +19,7 @@ from paybond_kit.agent_mandate import (
 
 FIXTURE_PATH = (
     Path(__file__).resolve().parents[3]
-    / "go/gateway/internal/protocolv2/testdata/agent_mandate_canonical_v1.json"
+    / "go/gateway/internal/protocol/protocolv2/testdata/agent_mandate_canonical_v1.json"
 )
 
 

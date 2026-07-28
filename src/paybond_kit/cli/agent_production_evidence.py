@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from paybond_kit.agent.types import PaybondRunProductionEvidenceCredentials
 from paybond_kit.cli.core import CliError, read_env_file_value
@@ -81,7 +81,7 @@ def resolve_production_evidence_from_cli(
         )
     if not resolved_payee_seed_hex:
         raise CliError(
-            "production attach requires --payee-signing-seed-hex or APP_PAYEE_SEED_HEX",
+            "production attach requires --payee-signing-seed-file or APP_PAYEE_SEED_HEX",
             category="usage",
             code="cli.agent.production_evidence_incomplete",
         )
@@ -93,7 +93,7 @@ def resolve_production_evidence_from_cli(
         )
     if not resolved_agent_seed_hex:
         raise CliError(
-            "production attach requires --agent-recognition-signing-seed-hex or "
+            "production attach requires --agent-recognition-signing-seed-file or "
             "APP_AGENT_RECOGNITION_SEED_HEX",
             category="usage",
             code="cli.agent.production_evidence_incomplete",
@@ -137,7 +137,7 @@ def resolve_agent_recognition_from_cli(
         )
     if not resolved_agent_seed_hex:
         raise CliError(
-            "Harbor intent mutation requires --agent-recognition-signing-seed-hex or "
+            "Harbor intent mutation requires --agent-recognition-signing-seed-file or "
             "APP_AGENT_RECOGNITION_SEED_HEX",
             category="usage",
             code="cli.agent.recognition_incomplete",
@@ -191,13 +191,13 @@ def resolve_production_evidence_for_reattach(
     )
     if not resolved_payee_seed_hex:
         raise CliError(
-            f"{command} requires --payee-signing-seed-hex or APP_PAYEE_SEED_HEX for production runs",
+            f"{command} requires --payee-signing-seed-file or APP_PAYEE_SEED_HEX for production runs",
             category="usage",
             code="cli.agent.production_signing_seed_required",
         )
     if not resolved_agent_seed_hex:
         raise CliError(
-            f"{command} requires --agent-recognition-signing-seed-hex or "
+            f"{command} requires --agent-recognition-signing-seed-file or "
             "APP_AGENT_RECOGNITION_SEED_HEX for production runs",
             category="usage",
             code="cli.agent.production_signing_seed_required",

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from paybond_kit.agent.registry import PaybondToolRegistry
 from paybond_kit.policy.intent_spec import (
@@ -49,6 +49,9 @@ from paybond_kit.policy.adapter_options import (
     policy_to_adapter_options,
 )
 
+if TYPE_CHECKING:
+    from paybond_kit.agent.types import PaybondRunBindingSandboxBootstrapInput
+
 PaybondPolicyLoadSource = str | Path | dict[str, Any] | PaybondPolicyDocumentV1 | PaybondPolicyDocumentV2
 
 
@@ -81,10 +84,7 @@ class PaybondPolicy:
 
     @property
     def deny_provider_executed_tools(self) -> bool:
-        return (
-            self.document.adapter is not None
-            and self.document.adapter.deny_provider_executed_tools is True
-        )
+        return self.to_adapter_options().deny_provider_executed_tools is True
 
     def to_adapter_options(self) -> PaybondPolicyAdapterOptions:
         return policy_to_adapter_options(self.document)

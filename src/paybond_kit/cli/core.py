@@ -521,8 +521,18 @@ def gateway_request(ctx: CliContext, method: str, path: str, payload: dict[str, 
             body = {}
         if not response.is_success:
             nested = body.get("error")
-            gateway_code = nested.get("code") if isinstance(nested, dict) else str(body.get("code") or "")
-            gateway_message = nested.get("message") if isinstance(nested, dict) else str(body.get("message") or "gateway request failed")
+            if isinstance(nested, dict):
+                # Nested envelope: {"error": {"code": ..., "message": ...}}.
+                gateway_code = str(nested.get("code") or "")
+                gateway_message = str(nested.get("message") or "")
+            elif isinstance(nested, str) and nested.strip():
+                # Flat envelope used by writeJSONError: {"error": "<code>", "message": "..."}.
+                gateway_code = nested.strip()
+                gateway_message = str(body.get("message") or "")
+            else:
+                gateway_code = str(body.get("code") or "")
+                gateway_message = str(body.get("message") or "")
+            gateway_message = gateway_message or "gateway request failed"
             exit_code, category = exit_code_for_http_status(response.status_code)
             raise CliError(
                 str(gateway_message or f"Gateway HTTP {response.status_code}"),
@@ -656,6 +666,8 @@ def write_success_output(
         "flutterwave doctor",
         "paystack ready",
         "paystack doctor",
+        "plaid ready",
+        "plaid doctor",
     ) and isinstance(data.get("checklist_lines"), list):
         if canonical == "dev loop" and isinstance(data.get("banner_lines"), list):
             for line in data["banner_lines"]:

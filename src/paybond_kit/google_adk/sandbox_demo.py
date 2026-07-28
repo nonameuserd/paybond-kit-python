@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from typing import Any
 
 from paybond_kit import Paybond
@@ -16,9 +17,8 @@ def _require_google_adk_demo_deps() -> Any:
             "google-adk is required for paybond_kit.google_adk.sandbox_demo. "
             'Install with `pip install "paybond-kit[google-adk]"`.'
         )
-    from google.adk.tools import FunctionTool
-
-    return FunctionTool
+    # Optional dependency resolved dynamically (see paybond_kit.google_adk._peer).
+    return importlib.import_module("google.adk.tools").FunctionTool
 
 
 async def run_google_adk_sandbox_demo(

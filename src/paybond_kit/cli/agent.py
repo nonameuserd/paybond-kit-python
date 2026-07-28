@@ -37,6 +37,7 @@ from paybond_kit.cli.http_error_message import resolve_cli_gateway_error_message
 from paybond_kit.cli.agent_env_write import append_agent_run_env_vars
 from paybond_kit.cli.agent_paybond import with_paybond_agent_cli
 from paybond_kit.cli.agent_policy_file import resolve_agent_policy_bind, resolve_agent_policy_bind_from_content
+from paybond_kit.cli.secret_argv import resolve_secret_from_file_or_env
 from paybond_kit.cli.agent_production_evidence import (
     production_evidence_to_persisted,
     resolve_production_evidence_for_reattach,
@@ -212,9 +213,27 @@ async def _attach_agent_run_from_store(
     return run
 
 
-def _parse_production_signing_seed_flags(argv: list[str]) -> tuple[str | None, str | None, list[str]]:
-    _, payee_seed_hex, argv = consume_flag(argv, "--payee-signing-seed-hex")
-    _, recognition_seed_hex, argv = consume_flag(argv, "--agent-recognition-signing-seed-hex")
+def _parse_production_signing_seed_flags(
+    argv: list[str],
+    *,
+    cwd: Path,
+) -> tuple[str | None, str | None, list[str]]:
+    payee_seed_hex, argv = resolve_secret_from_file_or_env(
+        argv=argv,
+        cwd=cwd,
+        rejected_flag="--payee-signing-seed-hex",
+        file_flag="--payee-signing-seed-file",
+        env_name="APP_PAYEE_SEED_HEX",
+        alternatives="--payee-signing-seed-file or APP_PAYEE_SEED_HEX",
+    )
+    recognition_seed_hex, argv = resolve_secret_from_file_or_env(
+        argv=argv,
+        cwd=cwd,
+        rejected_flag="--agent-recognition-signing-seed-hex",
+        file_flag="--agent-recognition-signing-seed-file",
+        env_name="APP_AGENT_RECOGNITION_SEED_HEX",
+        alternatives="--agent-recognition-signing-seed-file or APP_AGENT_RECOGNITION_SEED_HEX",
+    )
     return payee_seed_hex, recognition_seed_hex, argv
 
 
@@ -339,11 +358,33 @@ async def handle_agent_run_bind(ctx: CliContext, argv: list[str]) -> dict[str, A
     _, registry_file, argv = consume_flag(argv, "--registry-file")
     _, run_id, argv = consume_flag(argv, "--run-id")
     _, attach_intent_id, argv = consume_flag(argv, "--attach-intent-id")
-    _, capability_token, argv = consume_flag(argv, "--capability-token")
+    from paybond_kit.agent.attach_bundle import PAYBOND_CAPABILITY_TOKEN_ENV
+    capability_token, argv = resolve_secret_from_file_or_env(
+        argv=argv,
+        cwd=ctx.cwd,
+        rejected_flag="--capability-token",
+        file_flag="--capability-token-file",
+        env_name=PAYBOND_CAPABILITY_TOKEN_ENV,
+        alternatives=f"--capability-token-file or {PAYBOND_CAPABILITY_TOKEN_ENV}",
+    )
     _, payee_did, argv = consume_flag(argv, "--payee-did")
-    _, payee_seed_hex, argv = consume_flag(argv, "--payee-signing-seed-hex")
+    payee_seed_hex, argv = resolve_secret_from_file_or_env(
+        argv=argv,
+        cwd=ctx.cwd,
+        rejected_flag="--payee-signing-seed-hex",
+        file_flag="--payee-signing-seed-file",
+        env_name="APP_PAYEE_SEED_HEX",
+        alternatives="--payee-signing-seed-file or APP_PAYEE_SEED_HEX",
+    )
     _, recognition_key_id, argv = consume_flag(argv, "--agent-recognition-key-id")
-    _, recognition_seed_hex, argv = consume_flag(argv, "--agent-recognition-signing-seed-hex")
+    recognition_seed_hex, argv = resolve_secret_from_file_or_env(
+        argv=argv,
+        cwd=ctx.cwd,
+        rejected_flag="--agent-recognition-signing-seed-hex",
+        file_flag="--agent-recognition-signing-seed-file",
+        env_name="APP_AGENT_RECOGNITION_SEED_HEX",
+        alternatives="--agent-recognition-signing-seed-file or APP_AGENT_RECOGNITION_SEED_HEX",
+    )
     write_env, argv = consume_boolean_flag(argv, "--write-env")
     _, env_out, argv = consume_flag(argv, "--env-file")
     watch, argv = consume_boolean_flag(argv, "--watch")
@@ -351,7 +392,8 @@ async def handle_agent_run_bind(ctx: CliContext, argv: list[str]) -> dict[str, A
     has_attach = bool((attach_intent_id or "").strip() or (capability_token or "").strip())
     if has_attach and (not attach_intent_id or not capability_token):
         raise _agent_cli_error(
-            "attach requires both --attach-intent-id and --capability-token",
+            f"attach requires both --attach-intent-id and a capability token "
+            f"(--capability-token-file or {PAYBOND_CAPABILITY_TOKEN_ENV})",
             code="cli.agent.attach_incomplete",
             category="usage",
         )
@@ -412,7 +454,7 @@ async def handle_agent_run_bind(ctx: CliContext, argv: list[str]) -> dict[str, A
         elif not has_attach:
             if not operation:
                 raise _agent_cli_error(
-                    "agent run bind requires --operation, --policy-file, or --attach-intent-id with --capability-token",
+                    "agent run bind requires --operation, --policy-file, or --attach-intent-id with a capability token",
                     code="cli.usage.missing_args",
                     category="usage",
                 )
@@ -615,7 +657,7 @@ async def handle_agent_run_reload_policy(ctx: CliContext, argv: list[str]) -> di
     remote, argv = consume_boolean_flag(argv, "--remote")
     resolve_inheritance, argv = consume_boolean_flag(argv, "--resolve-inheritance")
     allow_loosen, argv = consume_boolean_flag(argv, "--allow-loosen")
-    payee_seed_hex, recognition_seed_hex, _ = _parse_production_signing_seed_flags(argv)
+    payee_seed_hex, recognition_seed_hex, _ = _parse_production_signing_seed_flags(argv, cwd=ctx.cwd)
 
     if not run_id:
         raise _agent_cli_error(
@@ -741,7 +783,7 @@ async def handle_agent_tool_execute(ctx: CliContext, argv: list[str]) -> dict[st
 
     args, argv = _parse_inline_json(argv, "--arguments", "--arguments-file")
     result_body, argv = _parse_inline_json(argv, "--result-body", "--result-file")
-    payee_seed_hex, recognition_seed_hex, _ = _parse_production_signing_seed_flags(argv)
+    payee_seed_hex, recognition_seed_hex, _ = _parse_production_signing_seed_flags(argv, cwd=ctx.cwd)
     if not result_body:
         raise _agent_cli_error(
             "agent tool execute requires --result-body or --result-file",
@@ -813,7 +855,7 @@ async def handle_agent_tool_validate(ctx: CliContext, argv: list[str]) -> dict[s
         else parse_optional_non_negative_int(None, field="--requested-spend-cents")
     )
     args, argv = _parse_inline_json(argv, "--arguments", "--arguments-file")
-    payee_seed_hex, recognition_seed_hex, _ = _parse_production_signing_seed_flags(argv)
+    payee_seed_hex, recognition_seed_hex, _ = _parse_production_signing_seed_flags(argv, cwd=ctx.cwd)
 
     async def _validate(paybond: Any, _warnings: list[str]) -> dict[str, Any]:
         run = await _attach_agent_run_from_store(
@@ -1023,9 +1065,23 @@ async def handle_agent_harbor_evidence_smoke(ctx: CliContext, argv: list[str]) -
 
     _, intent_id, argv = consume_flag(argv, "--intent-id")
     _, payee_did, argv = consume_flag(argv, "--payee-did")
-    _, payee_seed, argv = consume_flag(argv, "--payee-signing-seed-hex")
+    payee_seed, argv = resolve_secret_from_file_or_env(
+        argv=argv,
+        cwd=ctx.cwd,
+        rejected_flag="--payee-signing-seed-hex",
+        file_flag="--payee-signing-seed-file",
+        env_name="APP_PAYEE_SEED_HEX",
+        alternatives="--payee-signing-seed-file or APP_PAYEE_SEED_HEX",
+    )
     _, recognition_key_id, argv = consume_flag(argv, "--agent-recognition-key-id")
-    _, recognition_seed, argv = consume_flag(argv, "--agent-recognition-signing-seed-hex")
+    recognition_seed, argv = resolve_secret_from_file_or_env(
+        argv=argv,
+        cwd=ctx.cwd,
+        rejected_flag="--agent-recognition-signing-seed-hex",
+        file_flag="--agent-recognition-signing-seed-file",
+        env_name="APP_AGENT_RECOGNITION_SEED_HEX",
+        alternatives="--agent-recognition-signing-seed-file or APP_AGENT_RECOGNITION_SEED_HEX",
+    )
     _, idempotency_key, argv = consume_flag(argv, "--idempotency-key")
 
     import os
@@ -1107,31 +1163,52 @@ async def handle_agent_harbor_evidence_smoke(ctx: CliContext, argv: list[str]) -
 
 
 async def handle_agent_production_attach_smoke(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
+    import os
+
     from paybond_kit.agent.attach_bundle import (
         PAYBOND_ATTACH_INTENT_ID_ENV,
         PAYBOND_CAPABILITY_TOKEN_ENV,
     )
 
     _, attach_intent_id, argv = consume_flag(argv, "--attach-intent-id")
-    _, capability_token, argv = consume_flag(argv, "--capability-token")
+    capability_token, argv = resolve_secret_from_file_or_env(
+        argv=argv,
+        cwd=ctx.cwd,
+        rejected_flag="--capability-token",
+        file_flag="--capability-token-file",
+        env_name=PAYBOND_CAPABILITY_TOKEN_ENV,
+        alternatives=f"--capability-token-file or {PAYBOND_CAPABILITY_TOKEN_ENV}",
+    )
     _, operation, argv = consume_flag(argv, "--operation")
     _, spend_raw, argv = consume_flag(argv, "--requested-spend-cents")
     _, policy_file, argv = consume_flag(argv, "--policy-file")
     _, payee_did, argv = consume_flag(argv, "--payee-did")
-    _, payee_seed, argv = consume_flag(argv, "--payee-signing-seed-hex")
+    payee_seed, argv = resolve_secret_from_file_or_env(
+        argv=argv,
+        cwd=ctx.cwd,
+        rejected_flag="--payee-signing-seed-hex",
+        file_flag="--payee-signing-seed-file",
+        env_name="APP_PAYEE_SEED_HEX",
+        alternatives="--payee-signing-seed-file or APP_PAYEE_SEED_HEX",
+    )
     _, recognition_key_id, argv = consume_flag(argv, "--agent-recognition-key-id")
-    _, recognition_seed, argv = consume_flag(argv, "--agent-recognition-signing-seed-hex")
+    recognition_seed, argv = resolve_secret_from_file_or_env(
+        argv=argv,
+        cwd=ctx.cwd,
+        rejected_flag="--agent-recognition-signing-seed-hex",
+        file_flag="--agent-recognition-signing-seed-file",
+        env_name="APP_AGENT_RECOGNITION_SEED_HEX",
+        alternatives="--agent-recognition-signing-seed-file or APP_AGENT_RECOGNITION_SEED_HEX",
+    )
 
     resolved_intent_id = (attach_intent_id or "").strip() or (
-        __import__("os").environ.get(PAYBOND_ATTACH_INTENT_ID_ENV, "").strip()
+        os.environ.get(PAYBOND_ATTACH_INTENT_ID_ENV, "").strip()
     )
-    resolved_capability = (capability_token or "").strip() or (
-        __import__("os").environ.get(PAYBOND_CAPABILITY_TOKEN_ENV, "").strip()
-    )
+    resolved_capability = (capability_token or "").strip()
     if not resolved_intent_id or not resolved_capability:
         raise _agent_cli_error(
-            "agent production attach smoke requires --attach-intent-id and --capability-token "
-            "(or PAYBOND_ATTACH_INTENT_ID and PAYBOND_CAPABILITY_TOKEN)",
+            "agent production attach smoke requires --attach-intent-id and a capability token "
+            f"(--capability-token-file or {PAYBOND_ATTACH_INTENT_ID_ENV}/{PAYBOND_CAPABILITY_TOKEN_ENV})",
             code="cli.usage.missing_args",
             category="usage",
         )
@@ -1159,12 +1236,19 @@ async def handle_agent_production_attach_smoke(ctx: CliContext, argv: list[str])
     stripped_recognition_key_id = (recognition_key_id or "").strip()
     stripped_recognition_seed = (recognition_seed or "").strip()
 
+    prev_cap = os.environ.get(PAYBOND_CAPABILITY_TOKEN_ENV)
+    prev_payee = os.environ.get("APP_PAYEE_SEED_HEX")
+    prev_recognition = os.environ.get("APP_AGENT_RECOGNITION_SEED_HEX")
+    os.environ[PAYBOND_CAPABILITY_TOKEN_ENV] = resolved_capability
+    if stripped_payee_seed:
+        os.environ["APP_PAYEE_SEED_HEX"] = stripped_payee_seed
+    if stripped_recognition_seed:
+        os.environ["APP_AGENT_RECOGNITION_SEED_HEX"] = stripped_recognition_seed
+
     bind_argv = [
         "--production",
         "--attach-intent-id",
         resolved_intent_id,
-        "--capability-token",
-        resolved_capability,
         "--operation",
         resolved_operation,
     ]
@@ -1174,54 +1258,66 @@ async def handle_agent_production_attach_smoke(ctx: CliContext, argv: list[str])
         bind_argv.extend(["--policy-file", stripped_policy_file])
     if stripped_payee_did:
         bind_argv.extend(["--payee-did", stripped_payee_did])
-    if stripped_payee_seed:
-        bind_argv.extend(["--payee-signing-seed-hex", stripped_payee_seed])
     if stripped_recognition_key_id:
         bind_argv.extend(["--agent-recognition-key-id", stripped_recognition_key_id])
-    if stripped_recognition_seed:
-        bind_argv.extend(["--agent-recognition-signing-seed-hex", stripped_recognition_seed])
-
-    bind_data = await handle_agent_run_bind(ctx, bind_argv)
-    run_id = str(bind_data["run_id"])
-    stored_for_execute = load_agent_run_context(ctx.cwd, run_id)
-    execute_argv = [
-        "--production",
-        "--run-id",
-        run_id,
-        "--operation",
-        resolved_operation,
-        "--tool-call-id",
-        "prod-attach-smoke-1",
-        "--result-body",
-        json.dumps(result_body),
-    ]
-    bind_spend = stored_for_execute.get("requested_spend_cents")
-    if bind_spend is not None:
-        execute_argv.extend(["--requested-spend-cents", str(bind_spend)])
-    elif stripped_spend_raw:
-        execute_argv.extend(["--requested-spend-cents", stripped_spend_raw])
-    if stripped_payee_seed:
-        execute_argv.extend(["--payee-signing-seed-hex", stripped_payee_seed])
-    if stripped_recognition_seed:
-        execute_argv.extend(["--agent-recognition-signing-seed-hex", stripped_recognition_seed])
 
     try:
-        execute_data = await handle_agent_tool_execute(ctx, execute_argv)
-    except CliError as exc:
-        details = dict(exc.details or {})
-        details["bind"] = bind_data
-        raise CliError(exc.message, category=exc.category, code=exc.code, exit_code=exc.exit_code, details=details) from exc
+        bind_data = await handle_agent_run_bind(ctx, bind_argv)
+        run_id = str(bind_data["run_id"])
+        stored_for_execute = load_agent_run_context(ctx.cwd, run_id)
+        execute_argv = [
+            "--production",
+            "--run-id",
+            run_id,
+            "--operation",
+            resolved_operation,
+            "--tool-call-id",
+            "prod-attach-smoke-1",
+            "--result-body",
+            json.dumps(result_body),
+        ]
+        bind_spend = stored_for_execute.get("requested_spend_cents")
+        if bind_spend is not None:
+            execute_argv.extend(["--requested-spend-cents", str(bind_spend)])
+        elif stripped_spend_raw:
+            execute_argv.extend(["--requested-spend-cents", stripped_spend_raw])
 
-    from paybond_kit.cli.agent_production_attach_smoke_checklist import (
-        format_agent_production_attach_smoke_checklist,
-    )
+        try:
+            execute_data = await handle_agent_tool_execute(ctx, execute_argv)
+        except CliError as exc:
+            details = dict(exc.details or {})
+            details["bind"] = bind_data
+            raise CliError(
+                exc.message,
+                category=exc.category,
+                code=exc.code,
+                exit_code=exc.exit_code,
+                details=details,
+            ) from exc
 
-    checklist_lines = format_agent_production_attach_smoke_checklist(
-        bind=bind_data,
-        execute=execute_data,
-        globals_=ctx.globals,
-    )
-    return {"bind": bind_data, "execute": execute_data, "checklist_lines": checklist_lines}
+        from paybond_kit.cli.agent_production_attach_smoke_checklist import (
+            format_agent_production_attach_smoke_checklist,
+        )
+
+        checklist_lines = format_agent_production_attach_smoke_checklist(
+            bind=bind_data,
+            execute=execute_data,
+            globals_=ctx.globals,
+        )
+        return {"bind": bind_data, "execute": execute_data, "checklist_lines": checklist_lines}
+    finally:
+        if prev_cap is None:
+            os.environ.pop(PAYBOND_CAPABILITY_TOKEN_ENV, None)
+        else:
+            os.environ[PAYBOND_CAPABILITY_TOKEN_ENV] = prev_cap
+        if prev_payee is None:
+            os.environ.pop("APP_PAYEE_SEED_HEX", None)
+        else:
+            os.environ["APP_PAYEE_SEED_HEX"] = prev_payee
+        if prev_recognition is None:
+            os.environ.pop("APP_AGENT_RECOGNITION_SEED_HEX", None)
+        else:
+            os.environ["APP_AGENT_RECOGNITION_SEED_HEX"] = prev_recognition
 
 
 async def handle_agent_demo_langgraph_smoke(ctx: CliContext, argv: list[str]) -> dict[str, Any]:

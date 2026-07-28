@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 from typing import Any, TypedDict
@@ -124,7 +125,53 @@ def _recover_eip712_signer(digest: bytes, signature: str) -> str:
     raise ValueError("x402 EIP-712 signature verification failed")
 
 
-def _verify_jws_compact_signature(signature: str) -> dict[str, Any]:
+def _jwk_thumbprint(jwk: dict[str, Any]) -> str:
+    """
+    RFC 7638 SHA-256 JWK thumbprint (base64url, no padding) over the required
+    members only. Used to pin a JWS receipt to an expected signing key, since
+    the signing key is embedded in the (attacker-controllable) JWS header.
+    """
+    kty = jwk.get("kty")
+    if kty == "OKP":
+        canonical = {"crv": str(jwk.get("crv", "")), "kty": "OKP", "x": str(jwk.get("x", ""))}
+    elif kty == "EC":
+        canonical = {
+            "crv": str(jwk.get("crv", "")),
+            "kty": "EC",
+            "x": str(jwk.get("x", "")),
+            "y": str(jwk.get("y", "")),
+        }
+    else:
+        raise ValueError("x402 JWS expected_signer check requires an OKP or EC jwk")
+    encoded = json.dumps(canonical, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    digest = hashlib.sha256(encoded).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def _assert_jws_expected_signer(jwk: dict[str, Any], expected_signer: str) -> None:
+    """
+    Enforce a caller-supplied ``expected_signer`` against the JWS header's
+    embedded key. A valid JWS signature alone proves only self-consistency (the
+    key travels with the token), not issuer authenticity. ``expected_signer``
+    must equal the RFC 7638 JWK thumbprint (base64url SHA-256) or, for OKP keys,
+    the raw base64url ``x`` coordinate.
+    """
+    expected = expected_signer.strip()
+    if not expected:
+        return
+    thumbprint = _jwk_thumbprint(jwk)
+    raw_x = jwk.get("x")
+    raw_x = raw_x.strip() if isinstance(raw_x, str) else ""
+    if expected == thumbprint or (raw_x and expected == raw_x):
+        return
+    raise ValueError("x402 JWS embedded key does not match expected signer")
+
+
+def _verify_jws_compact_signature(
+    signature: str,
+    *,
+    expected_signer: str | None = None,
+) -> dict[str, Any]:
     parts = signature.split(".")
     if len(parts) != 3:
         raise ValueError("x402 JWS signature must use compact serialization")
@@ -147,6 +194,8 @@ def _verify_jws_compact_signature(signature: str) -> dict[str, Any]:
             public_key.verify(signature_bytes, signing_input)
         except InvalidSignature as exc:
             raise ValueError("x402 JWS Ed25519 signature verification failed") from exc
+        if expected_signer:
+            _assert_jws_expected_signer(jwk, expected_signer)
         return payload
 
     if alg == "ES256":
@@ -164,6 +213,8 @@ def _verify_jws_compact_signature(signature: str) -> dict[str, Any]:
             public_key.verify(signature_bytes, signing_input, ECDSA(hashes.SHA256()))
         except InvalidSignature as exc:
             raise ValueError("x402 JWS ES256 signature verification failed") from exc
+        if expected_signer:
+            _assert_jws_expected_signer(jwk, expected_signer)
         return payload
 
     raise ValueError(f"unsupported x402 JWS alg {alg}")
@@ -215,15 +266,41 @@ def extract_signed_x402_receipt(input_record: dict[str, Any]) -> SignedX402Recei
 def verify_signed_x402_receipt(
     signed: SignedX402Receipt,
     *,
-    expected_signer: str | None = None,
+    expected_signer: str,
 ) -> dict[str, Any]:
+    """
+    Cryptographically verify an x402 signed receipt before digest mapping.
+
+    SECURITY: an x402 receipt carries its own verification key (the JWS embedded
+    ``jwk`` or the recoverable EIP-712 signer), so a structurally valid
+    signature proves only self-consistency, not issuer authenticity. This
+    function therefore **requires** ``expected_signer`` and fails closed when it
+    is missing or empty; a receipt can only be trusted once it is pinned to a
+    known issuer key:
+
+    - ``eip712``: a ``0x``-prefixed Ethereum address (checksum-insensitive).
+    - ``jws``: the RFC 7638 JWK thumbprint (base64url SHA-256) or, for OKP keys,
+      the raw base64url ``x`` coordinate.
+
+    :param signed: The extracted signed x402 receipt (JWS or EIP-712).
+    :param expected_signer: Non-empty issuer pin.
+    :returns: The verified receipt payload.
+    :raises ValueError: If ``expected_signer`` is missing/empty, the signature is
+        invalid, or the recovered/embedded key does not match ``expected_signer``.
+    """
+    pinned = expected_signer.strip() if isinstance(expected_signer, str) else ""
+    if not pinned:
+        raise ValueError(
+            "x402 receipt verification requires a non-empty expected_signer to authenticate the issuer"
+        )
+
     receipt_format = signed.get("format")
     signature = signed.get("signature")
     if not isinstance(signature, str) or not signature:
         raise ValueError("x402 signed receipt missing signature")
 
     if receipt_format == "jws":
-        return _verify_jws_compact_signature(signature)
+        return _verify_jws_compact_signature(signature, expected_signer=pinned)
 
     payload = signed.get("payload")
     if not isinstance(payload, dict):
@@ -231,6 +308,6 @@ def verify_signed_x402_receipt(
 
     digest = _eip712_receipt_digest(payload)
     recovered = _recover_eip712_signer(digest, signature)
-    if expected_signer and recovered.lower() != expected_signer.strip().lower():
+    if recovered.lower() != pinned.lower():
         raise ValueError("x402 EIP-712 recovered signer does not match expected signer")
     return payload

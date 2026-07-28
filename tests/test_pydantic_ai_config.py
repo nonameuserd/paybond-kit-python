@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -235,7 +236,7 @@ async def test_create_paybond_pydantic_ai_config_raises_model_retry_on_deny() ->
 async def test_create_paybond_pydantic_ai_config_preserves_real_tool_schema() -> None:
     """Wrapping must not collapse Tool JSON schema (Agent uses function_schema.call)."""
     pytest.importorskip("pydantic_ai")
-    from pydantic_ai import Tool
+    Tool = importlib.import_module("pydantic_ai").Tool
 
     host = _make_host()
     run = await PaybondAgentRun.bind(

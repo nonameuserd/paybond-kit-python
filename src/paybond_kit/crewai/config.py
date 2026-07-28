@@ -231,7 +231,7 @@ def _wrap_base_tool_method(
         setattr(tool, method_name, types.MethodType(guarded_method, tool))
         return
 
-    def guarded_method(self: Any, *args: Any, **kwargs: Any) -> Any:
+    def guarded_sync_method(self: Any, *args: Any, **kwargs: Any) -> Any:
         tool_call_id = str(uuid.uuid4())
         arguments = _arguments_from_callable(original, args, kwargs)
 
@@ -251,7 +251,7 @@ def _wrap_base_tool_method(
             )
         )
 
-    setattr(tool, method_name, types.MethodType(guarded_method, tool))
+    setattr(tool, method_name, types.MethodType(guarded_sync_method, tool))
 
 
 def _wrap_crewai_tool(run: PaybondAgentRun, tool: Any) -> Any:

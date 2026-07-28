@@ -1,6 +1,7 @@
 """Model-agnostic agent middleware core (registry, run binding, interceptor)."""
 
 from paybond_kit.agent.adapter import (
+    PaybondToolInputGuardAdapter,
     create_generic_tool_executor,
     create_tool_input_guard_adapter,
     paybond_generic_tool_executor_adapter,

@@ -215,7 +215,10 @@ class PaybondSpendGuard:
         """Finalize scope reservations after tool execution completes or is aborted."""
         complete = getattr(self.harbor, "complete_spend_decision", None)
         if complete is None:
-            return
+            raise RuntimeError(
+                "spend decision finalization required but harbor.complete_spend_decision "
+                "is unavailable"
+            )
         await complete(decision_id=decision_id, outcome=outcome)
 
     def guard_tool(

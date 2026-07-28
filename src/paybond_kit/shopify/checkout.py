@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from paybond_kit.commerce_binding import encode_commerce_binding_to_shopify_note_attributes
 from paybond_kit.shopify.types import (
     CreateCheckoutWithBindingParams,
     ShopifyCheckoutCreatePayload,
     ShopifyCheckoutLineItemInput,
+    ShopifyNoteAttribute,
 )
 
 PAYBOND_UCP_AGENT_PROFILE_URL = "https://paybond.ai/.well-known/ucp/profile.json"
@@ -83,8 +86,8 @@ def merge_binding_into_checkout_payload(
 ) -> dict[str, object]:
     """Merge binding metadata into an existing checkout mutation payload."""
     existing_attrs = checkout_payload.get("note_attributes")
-    attrs = (
-        [dict(item) for item in existing_attrs]
+    attrs: list[ShopifyNoteAttribute] | None = (
+        [cast(ShopifyNoteAttribute, dict(item)) for item in existing_attrs]
         if isinstance(existing_attrs, list)
         else None
     )

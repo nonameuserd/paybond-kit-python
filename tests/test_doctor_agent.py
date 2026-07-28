@@ -144,7 +144,7 @@ def test_run_agent_mcp_checks_initialize_succeeds_with_mock_gateway(tmp_path: Pa
             self.send_response(404)
             self.end_headers()
 
-        def log_message(self, *_args: object) -> None:
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
             return
 
     server = HTTPServer(("127.0.0.1", 0), PrincipalHandler)

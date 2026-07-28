@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,6 +17,11 @@ from paybond_kit.openai_agents.config import (
     map_paybond_decision_to_openai_tool_guardrail,
 )
 from paybond_kit.spend_guard import PaybondSpendApprovalRequiredError, PaybondSpendDeniedError
+
+# The `openai-agents` package is an optional extra (`paybond-kit[openai-agents]`)
+# and is not part of the `dev` extra installed in CI. Tests that exercise the real
+# guardrail path outside the `_require_openai_agents` patch need it installed.
+_OPENAI_AGENTS_AVAILABLE = importlib.util.find_spec("agents") is not None
 
 
 @dataclass
@@ -50,6 +56,12 @@ class MockFunctionTool:
 class MockToolInputGuardrail:
     guardrail_function: Any
     name: str | None = None
+
+    async def run(self, data: Any) -> Any:
+        result = self.guardrail_function(data)
+        if hasattr(result, "__await__"):
+            return await result
+        return result
 
 
 @dataclass
@@ -206,6 +218,10 @@ async def test_create_paybond_openai_agents_config_wraps_side_effecting_tools() 
     host.guardrails.submit_sandbox_evidence.assert_awaited_once()
 
 
+@pytest.mark.skipif(
+    not _OPENAI_AGENTS_AVAILABLE,
+    reason="requires the optional 'openai-agents' extra (paybond-kit[openai-agents])",
+)
 @pytest.mark.asyncio
 async def test_create_openai_agents_adapter_exposes_guardrails() -> None:
     host = _make_host()

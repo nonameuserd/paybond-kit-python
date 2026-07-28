@@ -6,6 +6,7 @@ import pytest
 
 from paybond_kit.shopify import (
     PAYBOND_UCP_AGENT_PROFILE_URL,
+    ShopifyCheckoutToolResult,
     create_checkout_with_binding,
     create_guarded_shopify_checkout_handler,
     map_shopify_tool_result_to_evidence,
@@ -44,7 +45,7 @@ def test_map_shopify_tool_result_to_evidence() -> None:
 async def test_guarded_shopify_checkout_injects_binding() -> None:
     binding = {"tenant_id": "tenant-a", "intent_id": "00000000-0000-0000-0000-000000000111"}
 
-    async def execute_checkout(input_payload):
+    async def execute_checkout(input_payload) -> ShopifyCheckoutToolResult:
         assert input_payload["checkout_payload"]["note_attributes"][-2:] == [
             {"name": "tenant_id", "value": "tenant-a"},
             {"name": "paybond_intent_id", "value": "00000000-0000-0000-0000-000000000111"},

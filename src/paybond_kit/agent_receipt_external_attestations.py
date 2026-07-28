@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Literal, TypedDict, cast
+from typing import Any, Literal, NotRequired, TypedDict, cast
 
 from paybond_kit.agent_mandate import verify_signed_agent_mandate_v1
 from paybond_kit.agent_receipt import AgentReceiptExternalAttestationV1
@@ -70,20 +70,20 @@ def sep2828_records_to_external_attestations(
             reference_id = strip_digest_prefix(digest)
     decision_digest = partner_record_digest_sha256_hex(_strip_sep2828_signature_fields(decision))
     outcome_digest = partner_record_digest_sha256_hex(_strip_sep2828_signature_fields(outcome))
-    return [
-        {
-            "source": AGENT_RECEIPT_EXTERNAL_SOURCE_SEP2828,
-            "kind": "decision_record",
-            "digest_sha256_hex": decision_digest,
-            **({"reference_id": reference_id} if reference_id else {}),
-        },
-        {
-            "source": AGENT_RECEIPT_EXTERNAL_SOURCE_SEP2828,
-            "kind": "outcome_record",
-            "digest_sha256_hex": outcome_digest,
-            **({"reference_id": reference_id} if reference_id else {}),
-        },
-    ]
+    decision_attestation: AgentReceiptExternalAttestationV1 = {
+        "source": AGENT_RECEIPT_EXTERNAL_SOURCE_SEP2828,
+        "kind": "decision_record",
+        "digest_sha256_hex": decision_digest,
+    }
+    outcome_attestation: AgentReceiptExternalAttestationV1 = {
+        "source": AGENT_RECEIPT_EXTERNAL_SOURCE_SEP2828,
+        "kind": "outcome_record",
+        "digest_sha256_hex": outcome_digest,
+    }
+    if reference_id:
+        decision_attestation["reference_id"] = reference_id
+        outcome_attestation["reference_id"] = reference_id
+    return [decision_attestation, outcome_attestation]
 
 
 def signed_mandate_to_external_attestations(
@@ -137,9 +137,26 @@ def protocol_settlement_receipt_to_external_attestations(
 
 def x402_receipt_to_external_attestations(
     receipt_input: dict[str, Any],
+    *,
+    expected_signer: str,
 ) -> list[AgentReceiptExternalAttestationV1]:
+    """
+    Convert a verified x402 signed delivery receipt into one external attestation entry.
+
+    SECURITY: ``expected_signer`` is **required** and pins the receipt to a known
+    issuer key. An x402 receipt embeds its own verification key, so a valid
+    signature only proves self-consistency; without a pin an attacker could forge
+    a self-consistent "delivery receipt" attestation. Fails closed when
+    ``expected_signer`` is missing or empty (see :func:`verify_signed_x402_receipt`).
+
+    :param receipt_input: Wire envelope or receipt containing the signed x402 artifact.
+    :param expected_signer: Non-empty issuer pin (EIP-712 address, or JWS RFC 7638
+        thumbprint / OKP raw ``x``).
+    :returns: One external attestation entry for the verified receipt.
+    :raises ValueError: If ``expected_signer`` is missing/empty or verification fails.
+    """
     signed = extract_signed_x402_receipt(receipt_input)
-    verified_payload = verify_signed_x402_receipt(signed)
+    verified_payload = verify_signed_x402_receipt(signed, expected_signer=expected_signer)
     payload = build_x402_receipt_digest_payload(verified_payload)
     digest = partner_record_digest_sha256_hex(cast(dict[str, Any], payload))
     return [
@@ -161,12 +178,13 @@ class Sep2828ExternalAttestationInput(TypedDict):
 class X402ExternalAttestationInput(TypedDict):
     kind: Literal["x402"]
     receipt: dict[str, Any]
+    expected_signer: str
 
 
-class Ap2MandateExternalAttestationInput(TypedDict, total=False):
+class Ap2MandateExternalAttestationInput(TypedDict):
     kind: Literal["ap2_mandate"]
     signed_mandate: dict[str, Any]
-    transport_binding: dict[str, Any]
+    transport_binding: NotRequired[dict[str, Any]]
 
 
 class Ap2AuthorizationReceiptExternalAttestationInput(TypedDict):
@@ -204,7 +222,11 @@ def resolve_external_attestations(
             continue
         if kind == "x402":
             x402 = cast(X402ExternalAttestationInput, item)
-            out.extend(x402_receipt_to_external_attestations(x402["receipt"]))
+            out.extend(
+                x402_receipt_to_external_attestations(
+                    x402["receipt"], expected_signer=x402["expected_signer"]
+                )
+            )
             continue
         if kind == "ap2_mandate":
             ap2_mandate = cast(Ap2MandateExternalAttestationInput, item)

@@ -45,6 +45,7 @@ from paybond_kit.cli.agent import handle_agent
 from paybond_kit.cli.adyen import handle_adyen
 from paybond_kit.cli.flutterwave import handle_flutterwave
 from paybond_kit.cli.paystack import handle_paystack
+from paybond_kit.cli.plaid import handle_plaid, handle_plaid_banks
 from paybond_kit.cli.dev import handle_dev
 from paybond_kit.cli.shopify import handle_shopify
 from paybond_kit.cli.suggest import format_unknown_command_message
@@ -114,6 +115,10 @@ async def _dispatch(ctx: CliContext, command: list[str]) -> tuple[str, dict[str,
         return f"flutterwave {second}", await handle_flutterwave(ctx, second, command[2:])
     if head == "paystack" and second:
         return f"paystack {second}", await handle_paystack(ctx, second, command[2:])
+    if head == "plaid" and second == "banks" and third:
+        return f"plaid banks {third}", await handle_plaid_banks(ctx, third, command[3:])
+    if head == "plaid" and second:
+        return f"plaid {second}", await handle_plaid(ctx, second, command[2:])
     if head == "dev" and second:
         return f"dev {second}", await handle_dev(ctx, second, command[2:])
     if head == "version":

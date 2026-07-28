@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlparse
 
-from paybond_kit.cli.color import colorize, should_use_color
+from paybond_kit.cli.color import _ColorGlobals, colorize, should_use_color
 from paybond_kit.cli.core import (
     CliContext,
     CliError,
@@ -309,7 +309,7 @@ def build_paystack_doctor_checks(
 
 def format_paystack_doctor_checklist(
     checks: list[dict[str, Any]],
-    globals_: object,
+    globals_: _ColorGlobals,
     label: str = "paystack doctor",
 ) -> list[str]:
     use_color = should_use_color(globals_)

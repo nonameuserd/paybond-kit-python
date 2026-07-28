@@ -351,6 +351,7 @@ async def test_agent_run_bind_production_attach_requires_evidence_flags(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PAYBOND_API_KEY", LIVE_RAW_KEY)
+    monkeypatch.setenv("PAYBOND_CAPABILITY_TOKEN", "cap-prod-1")
     install_agent_gateway_mock(monkeypatch, environment="live")
 
     stdout = io.StringIO()
@@ -364,8 +365,6 @@ async def test_agent_run_bind_production_attach_requires_evidence_flags(
             "--production",
             "--attach-intent-id",
             ATTACH_INTENT_ID,
-            "--capability-token",
-            "cap-prod-1",
         ],
         stdout=stdout,
     )
@@ -381,6 +380,12 @@ async def test_agent_run_bind_production_attach_persists_production_evidence(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PAYBOND_API_KEY", LIVE_RAW_KEY)
+    monkeypatch.setenv("PAYBOND_CAPABILITY_TOKEN", "cap-prod-1")
+    monkeypatch.setenv("APP_PAYEE_SEED_HEX", PRODUCTION_ATTACH_SEEDS["payee_signing_seed_hex"])
+    monkeypatch.setenv(
+        "APP_AGENT_RECOGNITION_SEED_HEX",
+        PRODUCTION_ATTACH_SEEDS["agent_recognition_signing_seed_hex"],
+    )
     install_agent_gateway_mock(monkeypatch, environment="live")
 
     stdout = io.StringIO()
@@ -394,16 +399,10 @@ async def test_agent_run_bind_production_attach_persists_production_evidence(
             "--production",
             "--attach-intent-id",
             ATTACH_INTENT_ID,
-            "--capability-token",
-            "cap-prod-1",
             "--payee-did",
             PRODUCTION_ATTACH_SEEDS["payee_did"],
-            "--payee-signing-seed-hex",
-            PRODUCTION_ATTACH_SEEDS["payee_signing_seed_hex"],
             "--agent-recognition-key-id",
             PRODUCTION_ATTACH_SEEDS["agent_recognition_key_id"],
-            "--agent-recognition-signing-seed-hex",
-            PRODUCTION_ATTACH_SEEDS["agent_recognition_signing_seed_hex"],
         ],
         stdout=stdout,
     )

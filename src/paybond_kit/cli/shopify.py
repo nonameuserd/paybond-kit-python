@@ -15,6 +15,7 @@ from paybond_kit.cli.color import colorize, should_use_color
 from paybond_kit.cli.core import (
     CliContext,
     CliError,
+    GlobalOptions,
     consume_boolean_flag,
     consume_flag,
     gateway_request,
@@ -228,7 +229,7 @@ async def run_shopify_doctor_checks(ctx: CliContext) -> list[dict[str, Any]]:
     return checks
 
 
-def _format_doctor_checklist(checks: list[dict[str, Any]], globals_: object) -> list[str]:
+def _format_doctor_checklist(checks: list[dict[str, Any]], globals_: GlobalOptions) -> list[str]:
     use_color = should_use_color(globals_)
     lines: list[str] = []
     for check in checks:
@@ -334,11 +335,11 @@ async def handle_shopify_checkout_smoke(ctx: CliContext, argv: list[str]) -> dic
         )
     defaults = get_solution_smoke_defaults("shopping")
     shop_domain = _resolve_shop_domain(shop, ctx.cwd) or "paybond-agent-commerce-dev.myshopify.com"
-    spend_cents = int(spend) if spend else defaults.requested_spend_cents
+    spend_cents = int(spend) if spend else defaults["requested_spend_cents"]
     if spend_cents <= 0:
         raise _shopify_cli_error("invalid --requested-spend-cents", code="cli.usage.invalid_spend", category="usage")
     result_body = {
-        **defaults.result_body,
+        **defaults["result_body"],
         "order_id": "gid://shopify/Order/123",
         "shop": shop_domain,
     }
@@ -346,11 +347,11 @@ async def handle_shopify_checkout_smoke(ctx: CliContext, argv: list[str]) -> dic
         "--preset",
         "shopping",
         "--operation",
-        defaults.operation,
+        defaults["operation"],
         "--requested-spend-cents",
         str(spend_cents),
         "--evidence-preset",
-        defaults.evidence_preset,
+        defaults["evidence_preset"],
         "--result-body",
         json.dumps(result_body),
     ]
@@ -397,7 +398,7 @@ async def handle_shopify_payments_doctor(ctx: CliContext, argv: list[str]) -> di
     }
 
 
-def _format_payments_doctor_checklist(checks: list[dict[str, Any]], globals_: object) -> list[str]:
+def _format_payments_doctor_checklist(checks: list[dict[str, Any]], globals_: GlobalOptions) -> list[str]:
     use_color = should_use_color(globals_)
     lines: list[str] = []
     for check in checks:

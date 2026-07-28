@@ -147,8 +147,13 @@ async def _guard_tool_execution(
         return _paybond_error_message(exc)
 
 
-def _build_paybond_input_guardrail(run: PaybondAgentRun, tool_name: str) -> Any:
-    agents = _require_openai_agents()
+def _build_paybond_input_guardrail(
+    run: PaybondAgentRun,
+    tool_name: str,
+    *,
+    agents: Any | None = None,
+) -> Any:
+    agents_mod = agents if agents is not None else _require_openai_agents()
     guard = create_tool_input_guard_adapter(run)
 
     async def _run_guard(data: Any) -> Any:
@@ -163,14 +168,16 @@ def _build_paybond_input_guardrail(run: PaybondAgentRun, tool_name: str) -> Any:
         )
         return map_paybond_decision_to_openai_tool_guardrail(decision)
 
-    return agents.ToolInputGuardrail(guardrail_function=_run_guard, name=f"paybond_spend_{tool_name}")
+    return agents_mod.ToolInputGuardrail(
+        guardrail_function=_run_guard, name=f"paybond_spend_{tool_name}"
+    )
 
 
 def _resolve_needs_approval(
     original: bool | Callable[..., Awaitable[bool] | bool],
     *,
     bridge: bool,
-) -> bool | Callable[..., Awaitable[bool]]:
+) -> bool | Callable[..., Awaitable[bool] | bool]:
     if not bridge:
         return original
 
@@ -196,12 +203,14 @@ def _guard_function_tool(
     run: PaybondAgentRun,
     fn_tool: Any,
     options: PaybondOpenAIAgentsAdapterOptions | None = None,
+    *,
+    agents: Any | None = None,
 ) -> Any:
     if not run.registry.is_side_effecting(fn_tool.name):
         return fn_tool
 
     opts = options or PaybondOpenAIAgentsAdapterOptions()
-    paybond_guardrail = _build_paybond_input_guardrail(run, fn_tool.name)
+    paybond_guardrail = _build_paybond_input_guardrail(run, fn_tool.name, agents=agents)
     existing_guardrails = list(fn_tool.tool_input_guardrails or [])
     original_invoke = fn_tool.on_invoke_tool
 
@@ -249,7 +258,7 @@ def create_openai_agents_adapter(
 ) -> Any:
     """Translate Paybond middleware into OpenAI Agents SDK tool input guardrails."""
 
-    _require_openai_agents()
+    agents = _require_openai_agents()
     guard = create_tool_input_guard_adapter(run)
 
     class _OpenAIAgentsAdapter:
@@ -260,11 +269,13 @@ def create_openai_agents_adapter(
         run_config = paybond_openai_agents_run_config()
 
         def input_guardrail_for(self, tool_name: str) -> Any:
-            return _build_paybond_input_guardrail(run, tool_name)
+            return _build_paybond_input_guardrail(run, tool_name, agents=agents)
 
         def guard_function_tools(self, tools: Sequence[Any]) -> list[Any]:
             normalized = _assert_openai_function_tools(tools)
-            return [_guard_function_tool(run, tool, options) for tool in normalized]
+            return [
+                _guard_function_tool(run, tool, options, agents=agents) for tool in normalized
+            ]
 
     return _OpenAIAgentsAdapter()
 

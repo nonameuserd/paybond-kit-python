@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from typing import cast
+from uuid import UUID
 
 import httpx
 import pytest

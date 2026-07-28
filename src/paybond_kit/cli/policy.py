@@ -543,6 +543,7 @@ def handle_policy_import_mcp_receipt(ctx: CliContext, argv: list[str]) -> dict[s
 
 def handle_policy_import_x402_receipt(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     _, receipt_file, rest = consume_flag(argv, "--receipt-file")
+    _, expected_signer_raw, rest = consume_flag(rest, "--expected-signer")
     _, write_file, rest = consume_flag(rest, "--write-evidence-file")
     if rest:
         raise CliError(f"unexpected arguments: {' '.join(rest)}", code="cli.usage.unexpected_args")
@@ -551,10 +552,17 @@ def handle_policy_import_x402_receipt(ctx: CliContext, argv: list[str]) -> dict[
             "policy import-x402-receipt requires --receipt-file",
             code="cli.usage.missing_args",
         )
+    expected_signer = expected_signer_raw.strip() if expected_signer_raw else ""
+    if not expected_signer:
+        raise CliError(
+            "policy import-x402-receipt requires --expected-signer to pin the receipt issuer "
+            "(EIP-712 address or JWS RFC 7638 thumbprint / OKP x)",
+            code="cli.usage.missing_args",
+        )
 
     receipt = _read_json_file(receipt_file)
     try:
-        evidence = map_x402_receipt_to_artifact_attested_evidence(receipt)
+        evidence = map_x402_receipt_to_artifact_attested_evidence(receipt, expected_signer=expected_signer)
     except ValueError as exc:
         raise CliError(str(exc), code="cli.usage.invalid_receipt") from exc
     delivery_preset = get_completion_preset("x402_delivery_receipt")

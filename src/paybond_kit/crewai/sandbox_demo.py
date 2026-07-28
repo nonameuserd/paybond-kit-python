@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from typing import Any
 
@@ -17,9 +18,8 @@ def _require_crewai_demo_deps() -> Any:
             "crewai is required for paybond_kit.crewai.sandbox_demo. "
             'Install with `pip install "paybond-kit[crewai]"`.'
         )
-    from crewai.tools import tool
-
-    return tool
+    # Optional dependency resolved dynamically (see paybond_kit.crewai._peer).
+    return importlib.import_module("crewai.tools").tool
 
 
 async def run_crewai_sandbox_demo(

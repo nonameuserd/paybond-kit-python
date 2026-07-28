@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-from collections.abc import Awaitable, Mapping
+from collections.abc import Coroutine, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
-def _run_async(coro: Awaitable[T]) -> T:
+def _run_async(coro: Coroutine[Any, Any, T]) -> T:
     """
     Run a coroutine from synchronous code.
 

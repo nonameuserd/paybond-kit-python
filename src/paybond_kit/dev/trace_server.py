@@ -13,8 +13,17 @@ from paybond_kit.dev.trace_buffer import (
     dev_trace_has_credentials,
     list_dev_trace_events,
 )
+from paybond_kit.dev.trace_host import is_allowed_dev_trace_host
 from paybond_kit.dev.trace_security_headers import dev_trace_response_headers
 from paybond_kit.dev.trace_ui import load_dev_trace_dashboard_html
+
+
+class _DevTraceServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer with the request-scoped context the handler reads."""
+
+    cwd: str
+    env_file: str | None
+    has_credentials: bool
 
 
 class _DevTraceHandler(BaseHTTPRequestHandler):
@@ -24,11 +33,28 @@ class _DevTraceHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
         return
 
+    def _bound_port(self) -> int:
+        port = self.server.server_address[1]
+        return int(port)
+
+    def _reject_forbidden_host(self) -> bool:
+        if is_allowed_dev_trace_host(self.headers.get("Host"), self._bound_port()):
+            return False
+        body = b"Forbidden host"
+        self.send_response(403)
+        self._send_security_headers("text/plain; charset=utf-8")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     def _send_security_headers(self, content_type: str) -> None:
         for name, value in dev_trace_response_headers(content_type).items():
             self.send_header(name, value)
 
     def do_GET(self) -> None:  # noqa: N802
+        if self._reject_forbidden_host():
+            return
         parsed_path = self.path.split("?", 1)[0]
         cwd = getattr(self.server, "cwd", None)
         events = list_dev_trace_events(cwd)
@@ -62,6 +88,17 @@ class _DevTraceHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Not found")
 
+    def do_POST(self) -> None:  # noqa: N802
+        if self._reject_forbidden_host():
+            return
+        body = b"Method not allowed"
+        self.send_response(405)
+        self._send_security_headers("text/plain; charset=utf-8")
+        self.send_header("allow", "GET, HEAD")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
 
 def start_dev_trace_server(
     *,
@@ -71,7 +108,7 @@ def start_dev_trace_server(
     env_file: str | None = None,
     has_credentials: bool | None = None,
 ) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer((host, port), _DevTraceHandler)
+    server = _DevTraceServer((host, port), _DevTraceHandler)
     resolved_cwd = str(cwd or Path.cwd())
     server.cwd = resolved_cwd
     server.env_file = env_file

@@ -27,7 +27,7 @@ async def test_verify_success_checks_tenant_echo() -> None:
             },
         )
     )
-    client = HarborClient("https://harbor.test", "tenant-a")
+    client = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
     try:
         out = await client.verify_capability(
             intent_id=intent_id,
@@ -38,6 +38,73 @@ async def test_verify_success_checks_tenant_echo() -> None:
         assert out.allow
         assert out.tenant == "tenant-a"
         assert out.intent_id == intent_id
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_submit_evidence_success_checks_tenant_and_intent_echo() -> None:
+    intent_id = uuid.uuid4()
+    respx.post(f"https://harbor.test/intents/{intent_id}/evidence").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "intent_id": str(intent_id),
+                "tenant": "tenant-a",
+                "state": "evidence_submitted",
+                "predicate_passed": True,
+            },
+        )
+    )
+    client = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
+    try:
+        out = await client.submit_evidence(intent_id, {"payload": {"ok": True}})
+        assert out["state"] == "evidence_submitted"
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_submit_evidence_rejects_tenant_mismatch() -> None:
+    intent_id = uuid.uuid4()
+    respx.post(f"https://harbor.test/intents/{intent_id}/evidence").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "intent_id": str(intent_id),
+                "tenant": "other-tenant",
+                "state": "evidence_submitted",
+            },
+        )
+    )
+    client = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
+    try:
+        with pytest.raises(ValueError, match="evidence tenant mismatch"):
+            await client.submit_evidence(intent_id, {"payload": {"ok": True}})
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_submit_evidence_rejects_intent_mismatch() -> None:
+    intent_id = uuid.uuid4()
+    respx.post(f"https://harbor.test/intents/{intent_id}/evidence").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "intent_id": str(uuid.uuid4()),
+                "tenant": "tenant-a",
+                "state": "evidence_submitted",
+            },
+        )
+    )
+    client = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
+    try:
+        with pytest.raises(ValueError, match="evidence intent mismatch"):
+            await client.submit_evidence(intent_id, {"payload": {"ok": True}})
     finally:
         await client.aclose()
 
@@ -60,7 +127,7 @@ async def test_verify_rejects_tenant_mismatch() -> None:
             },
         )
     )
-    client = HarborClient("https://harbor.test", "tenant-a")
+    client = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
     try:
         with pytest.raises(TenantBindingError):
             await client.verify_capability(
@@ -77,7 +144,7 @@ async def test_verify_rejects_tenant_mismatch() -> None:
 async def test_verify_http_error_surfaces_status() -> None:
     intent_id = uuid.uuid4()
     respx.post("https://harbor.test/verify").mock(return_value=httpx.Response(500, text="boom"))
-    client = HarborClient("https://harbor.test", "tenant-a")
+    client = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
     try:
         with pytest.raises(HarborHttpError):
             await client.verify_capability(
@@ -117,7 +184,7 @@ async def test_fund_intent_returns_x402_challenge() -> None:
             },
         )
     )
-    client = HarborClient("https://harbor.test", "tenant-a")
+    client = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
     try:
         out = await client.fund_intent(intent_id)
         assert out.status_code == 402
@@ -164,7 +231,7 @@ async def test_fund_intent_returns_stripe_ach_handoff() -> None:
             },
         )
     )
-    client = HarborClient("https://harbor.test", "tenant-a")
+    client = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
     try:
         out = await client.fund_intent(intent_id)
         assert out.status_code == 202
@@ -204,7 +271,7 @@ async def test_fund_intent_rejects_unknown_settlement_rail() -> None:
             },
         )
     )
-    client = HarborClient("https://harbor.test", "tenant-a")
+    client = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
     try:
         with pytest.raises(HarborHttpError, match="must be one of"):
             await client.fund_intent(intent_id)
@@ -227,7 +294,7 @@ async def test_ledger_tip_rejects_tenant_mismatch() -> None:
             },
         )
     )
-    client = HarborClient("https://harbor.test", "tenant-a")
+    client = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
     try:
         with pytest.raises(TenantBindingError):
             await client.get_ledger_tip()
@@ -256,7 +323,7 @@ async def test_ledger_events_query_and_limit_clamp() -> None:
     respx.get("https://harbor.test/ledger/v1/events?after_seq=0&limit=256").mock(
         return_value=_ledger_events_ok()
     )
-    client = HarborClient("https://harbor.test", "tenant-a")
+    client = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
     try:
         await client.get_ledger_events(after_seq=5, limit=10)
         await client.get_ledger_events(after_seq=0, limit=999)

@@ -52,6 +52,7 @@ class PolicyRemoteValidateClient(Protocol):
         options: PolicyRemoteValidateOptions | None = None,
     ) -> PolicyRemoteValidateResult:
         """POST the policy document to Gateway /v1/policy/validate."""
+        ...
 
 
 def policy_validate_query_string(*, options: PolicyRemoteValidateOptions | None = None) -> str:
@@ -77,6 +78,17 @@ def _parse_issue(value: object) -> PolicyRemoteValidateIssue | None:
     return PolicyRemoteValidateIssue(path=path, code=code, message=message)
 
 
+def _parse_issue_rows(rows: object) -> tuple[PolicyRemoteValidateIssue, ...]:
+    if not isinstance(rows, list):
+        return ()
+    parsed: list[PolicyRemoteValidateIssue] = []
+    for row in rows:
+        issue = _parse_issue(row)
+        if issue is not None:
+            parsed.append(issue)
+    return tuple(parsed)
+
+
 def _parse_check(value: object) -> PolicyRemoteValidateCheck | None:
     if not isinstance(value, dict):
         return None
@@ -92,16 +104,8 @@ def parse_policy_remote_validate_response(body: object) -> PolicyRemoteValidateR
     if not isinstance(body, dict):
         raise ValueError("policy validate response must be a JSON object")
 
-    errors = tuple(
-        issue
-        for row in body.get("errors", [])
-        if (issue := _parse_issue(row)) is not None
-    )
-    warnings = tuple(
-        issue
-        for row in body.get("warnings", [])
-        if (issue := _parse_issue(row)) is not None
-    )
+    errors = _parse_issue_rows(body.get("errors", []))
+    warnings = _parse_issue_rows(body.get("warnings", []))
     checks = tuple(
         check
         for row in body.get("checks", [])

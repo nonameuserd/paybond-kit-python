@@ -428,7 +428,8 @@ def _resolve_interactive_options(options: ProjectInitOptions) -> tuple[
     if solution is None:
         if interactive:
             labels = "  ".join(f"[{index + 1}] {label}" for index, (_, label, _) in enumerate(SOLUTION_CHOICES))
-            options.write_stdout and options.write_stdout(f"What are you building?  {labels}")
+            if options.write_stdout:
+                options.write_stdout(f"What are you building?  {labels}")
             answer = prompt("> ")
             index = int(answer) - 1 if answer.isdigit() else 1
             solution = SOLUTION_CHOICES[index][0]
@@ -444,7 +445,8 @@ def _resolve_interactive_options(options: ProjectInitOptions) -> tuple[
     framework = options.framework or _default_framework_for_solution(solution)
     if options.framework is None and solution != "mcp-server" and interactive:
         labels = "  ".join(f"[{index + 1}] {label}" for index, (_, label) in enumerate(FRAMEWORK_CHOICES))
-        options.write_stdout and options.write_stdout(f"Framework?  {labels}")
+        if options.write_stdout:
+            options.write_stdout(f"Framework?  {labels}")
         answer = prompt("> ")
         index = int(answer) - 1 if answer.isdigit() else 3
         framework = FRAMEWORK_CHOICES[index][0]

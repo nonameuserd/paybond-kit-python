@@ -8,6 +8,8 @@ from uuid import UUID
 
 import pytest
 
+from paybond_kit.agent.run import PaybondAgentRun
+from paybond_kit.agent.types import PaybondAgentRunBindConfig
 from paybond_kit.microsoft_agent_framework.sandbox_demo import (
     run_microsoft_agent_framework_sandbox_demo,
 )
@@ -42,9 +44,7 @@ def _make_host() -> MagicMock:
     )
     host.spend_guard = MagicMock(return_value=guard)
 
-    async def bind(config: dict[str, Any]) -> MagicMock:
-        from paybond_kit.agent.run import PaybondAgentRun
-
+    async def bind(config: PaybondAgentRunBindConfig) -> PaybondAgentRun:
         return await PaybondAgentRun.bind(host, config)
 
     host.agent_run.bind = bind

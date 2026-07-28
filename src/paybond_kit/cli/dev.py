@@ -15,6 +15,7 @@ from paybond_kit.cli.commands import handle_login
 from paybond_kit.cli.core import (
     CliContext,
     CliError,
+    GlobalOptions,
     consume_boolean_flag,
     consume_flag,
     describe_credential_source,
@@ -52,7 +53,7 @@ def _dev_cli_error(
 def _append_dev_loop_trace_line(
     checklist_lines: list[str],
     trace_url: str,
-    globals_: object,
+    globals_: GlobalOptions,
 ) -> list[str]:
     use_color = should_use_color(globals_)
     return [*checklist_lines, colorize(f"✓ Trace → {trace_url}", "green", use_color)]

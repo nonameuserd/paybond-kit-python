@@ -62,7 +62,9 @@ def _load_pdf_export_manifest_schema() -> dict[str, Any]:
     if _PDF_EXPORT_MANIFEST_SCHEMA is None:
         raw = (_AGENT_RECEIPT_DIR / "pdf-export-manifest-schema.json").read_text(encoding="utf-8")
         _PDF_EXPORT_MANIFEST_SCHEMA = json.loads(raw)
-    return _PDF_EXPORT_MANIFEST_SCHEMA
+    schema = _PDF_EXPORT_MANIFEST_SCHEMA
+    assert schema is not None
+    return schema
 
 
 def _reject_forbidden_pdf_export_manifest_fields(value: Any) -> None:

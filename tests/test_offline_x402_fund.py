@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from paybond_kit.dev.offline_gateway import OFFLINE_DEV_TENANT_ID, create_offline_dev_gateway_transport
+from paybond_kit.harbor import FundIntentResult
 from paybond_kit.dev.x402_fund_mock import (
     X402FundStateMachine,
     X402_DEV_CAPABILITY_TOKEN,
@@ -83,7 +84,7 @@ async def test_offline_gateway_supports_fund_with_x402() -> None:
     transport = create_offline_dev_gateway_transport()
     call_count = 0
 
-    async def fund(**kwargs: object) -> object:
+    async def fund(**kwargs: object) -> FundIntentResult:
         nonlocal call_count
         call_count += 1
         payment_signature = kwargs.get("payment_signature")

@@ -78,11 +78,15 @@ def _has_receipt_shape(record: dict[str, Any]) -> bool:
     )
 
 
-def _unwrap_receipt_record(input_record: dict[str, Any]) -> dict[str, Any]:
+def _unwrap_receipt_record(
+    input_record: dict[str, Any],
+    *,
+    expected_signer: str,
+) -> dict[str, Any]:
     assert_not_x402_funding_artifact(input_record)
 
     signed = extract_signed_x402_receipt(input_record)
-    verified_payload = verify_signed_x402_receipt(signed)
+    verified_payload = verify_signed_x402_receipt(signed, expected_signer=expected_signer)
     if _has_receipt_shape(verified_payload):
         return verified_payload
 
@@ -120,8 +124,27 @@ def x402_receipt_payload_digest_hex(payload: X402ReceiptPayloadV1) -> str:
 
 def map_x402_receipt_to_artifact_attested_evidence(
     receipt_input: dict[str, Any],
+    *,
+    expected_signer: str,
 ) -> ArtifactAttestedEvidence:
-    raw = _unwrap_receipt_record(receipt_input)
+    """
+    Map an x402 signed receipt into ``artifact_attested`` evidence fields.
+
+    SECURITY: ``expected_signer`` is **required** and pins the receipt to a known
+    issuer key. Because an x402 receipt embeds (or lets you recover) its own
+    verification key, a valid signature alone proves only self-consistency, not
+    issuer authenticity. Submitting attacker-forged "attested" evidence would let
+    an untrusted party satisfy completion predicates, so this mapper fails closed
+    when ``expected_signer`` is missing or empty (see
+    :func:`verify_signed_x402_receipt`).
+
+    :param receipt_input: Wire envelope or receipt containing the signed x402 artifact.
+    :param expected_signer: Non-empty issuer pin (EIP-712 address, or JWS RFC 7638
+        thumbprint / OKP raw ``x``).
+    :returns: Artifact-attested evidence fields for the verified receipt.
+    :raises ValueError: If ``expected_signer`` is missing/empty or verification fails.
+    """
+    raw = _unwrap_receipt_record(receipt_input, expected_signer=expected_signer)
     payload = build_x402_receipt_digest_payload(raw)
     return {
         "artifact_blake3_hex": [x402_receipt_payload_digest_hex(payload)],

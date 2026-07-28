@@ -1,4 +1,12 @@
-"""Console-minted production attach bundle helpers."""
+"""Console-minted production attach bundle helpers.
+
+SECURITY: An attach bundle (the ``ab1.`` string) embeds its AES-256-GCM key next
+to the ciphertext, so the whole string is a bearer secret equivalent to the
+cleartext payee/recognition signing seeds. Treat it like an API key or private
+key: never log it, never place it in a URL or error message, and store it only in
+a secrets manager. Use :func:`redact_attach_bundle` before writing anything
+derived from a bundle to logs or telemetry.
+"""
 
 from __future__ import annotations
 
@@ -21,6 +29,22 @@ PAYBOND_ATTACH_BUNDLE_ENV = "PAYBOND_ATTACH_BUNDLE"
 _SEED_HEX_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
+def redact_attach_bundle(bundle: str) -> str:
+    """Redact an attach bundle for safe logging.
+
+    Returns a non-secret placeholder that preserves only the ``ab1.`` prefix so
+    log lines stay identifiable without leaking the embedded key/ciphertext. Use
+    this anywhere a bundle value might otherwise reach logs, telemetry, or error
+    strings; the raw ``ab1.`` string must never be emitted.
+
+    :param bundle: A raw attach bundle string (or any value that may contain one).
+    :returns: ``"ab1.<redacted>"`` for bundle-shaped input, else ``"<redacted>"``.
+    """
+    if isinstance(bundle, str) and bundle.strip().startswith(PAYBOND_ATTACH_BUNDLE_PREFIX):
+        return f"{PAYBOND_ATTACH_BUNDLE_PREFIX}<redacted>"
+    return "<redacted>"
+
+
 @dataclass(frozen=True)
 class AttachBundlePayloadV1:
     payee_did: str
@@ -37,6 +61,13 @@ def _parse_seed32_hex(raw: str, field: str) -> bytes:
 
 
 def seal_attach_bundle(payload: AttachBundlePayloadV1) -> str:
+    """Seal production signing material into an opaque attach bundle.
+
+    SECURITY: The returned ``ab1.`` string embeds the AES-256-GCM key next to the
+    ciphertext, so it is a bearer secret equivalent to the cleartext signing
+    seeds. Deliver it only over a secure channel, store it in a secrets manager,
+    and never log it (use :func:`redact_attach_bundle` for diagnostics).
+    """
     bundle_key = os.urandom(32)
     nonce = os.urandom(12)
     plaintext = json.dumps(
@@ -132,6 +163,12 @@ def resolve_attach_context_from_env(
 
 
 def format_attach_env_snippet(*, intent_id: str, capability_token: str, attach_bundle: str) -> str:
+    """Format the console one-time env snippet for a secrets manager.
+
+    SECURITY: The ``PAYBOND_ATTACH_BUNDLE`` line contains the bearer secret
+    bundle. Treat the whole snippet as sensitive: paste it directly into a secrets
+    manager, never echo it to shared logs, CI output, chat, or shell history.
+    """
     return "\n".join(
         [
             f"{PAYBOND_ATTACH_INTENT_ID_ENV}={intent_id.strip()}",

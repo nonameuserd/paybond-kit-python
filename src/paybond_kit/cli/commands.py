@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any, Callable, IO
 from urllib.parse import quote
 
@@ -647,7 +648,7 @@ async def _handle_intents_create(ctx: CliContext, argv: list[str]) -> dict[str, 
     from paybond_kit.cli.agent_paybond import with_paybond_cli
     from paybond_kit.cli.intents_harbor_mutation import parse_harbor_mutation_flags, resolve_harbor_recognition
 
-    flags = parse_harbor_mutation_flags(argv)
+    flags = parse_harbor_mutation_flags(argv, cwd=ctx.cwd)
     payload, _ = resolve_json_body(
         flags.rest_argv,
         stdin=ctx.stdin,
@@ -695,7 +696,7 @@ async def _handle_intents_fund(
         resolve_harbor_recognition,
     )
 
-    flags = parse_harbor_mutation_flags(argv)
+    flags = parse_harbor_mutation_flags(argv, cwd=ctx.cwd)
     _, payment_signature, rest = consume_flag(flags.rest_argv, "--payment-signature")
     payment_signature = payment_signature.strip() if payment_signature else None
     body_shim_used = fund_body_shim_used(rest)
@@ -753,7 +754,7 @@ async def _handle_intents_evidence(
     from paybond_kit.cli.agent_paybond import with_paybond_cli
     from paybond_kit.cli.intents_harbor_mutation import parse_harbor_mutation_flags, resolve_harbor_recognition
 
-    flags = parse_harbor_mutation_flags(argv)
+    flags = parse_harbor_mutation_flags(argv, cwd=ctx.cwd)
     payload, _ = resolve_json_body(
         flags.rest_argv,
         stdin=ctx.stdin,
@@ -795,7 +796,7 @@ async def _handle_intents_settlement_confirm(
     from paybond_kit.cli.agent_paybond import with_paybond_cli
     from paybond_kit.cli.intents_harbor_mutation import parse_harbor_mutation_flags, resolve_harbor_recognition
 
-    flags = parse_harbor_mutation_flags(argv)
+    flags = parse_harbor_mutation_flags(argv, cwd=ctx.cwd)
     payload, _ = resolve_json_body(flags.rest_argv, stdin=ctx.stdin, required=False)
     body = dict(payload or {})
 
@@ -1065,6 +1066,8 @@ def handle_receipts(ctx: CliContext, subcommand: str, argv: list[str]) -> dict[s
         if receipt_id:
             path = f"/protocol/v2/agent-receipts/{receipt_id}"
         else:
+            # Guaranteed by the "<receipt_id> or --intent-id" guard above.
+            assert intent_id
             path = f"/protocol/v2/agent-receipts?intent_id={quote(intent_id, safe='')}"
             if tool_call_id:
                 path += f"&tool_call_id={quote(tool_call_id, safe='')}"
@@ -1115,6 +1118,9 @@ def _cli_audit_exports_gateway(ctx: CliContext) -> PaybondAuditExports:
     class _Gateway:
         async def get_json(self, path: str) -> dict[str, Any]:
             return gateway_request(ctx, "GET", path)
+
+        async def post_json(self, path: str, body: Mapping[str, Any]) -> dict[str, Any]:
+            return gateway_request(ctx, "POST", path, dict(body))
 
         async def delete_json(self, path: str) -> dict[str, Any]:
             return gateway_request(ctx, "DELETE", path)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol
 from uuid import UUID, uuid4
@@ -121,9 +122,19 @@ class PaybondAgentRunHost(Protocol):
     def spend_guard(self, intent_id: UUID, capability_token: str) -> Any: ...
 
 
+_AGENT_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
 def _new_run_id(explicit: str | None = None) -> str:
     trimmed = (explicit or "").strip()
-    return trimmed or str(uuid4())
+    if not trimmed:
+        return str(uuid4())
+    if not _AGENT_RUN_ID_RE.fullmatch(trimmed) or trimmed in {".", ".."}:
+        raise ValueError(
+            f"invalid run_id {explicit!r}; expected a UUID or slug matching "
+            "[A-Za-z0-9][A-Za-z0-9._-]{0,127}"
+        )
+    return trimmed
 
 
 def _read_allowed_tools(intent: dict[str, Any]) -> list[str]:

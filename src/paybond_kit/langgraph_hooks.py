@@ -231,7 +231,11 @@ def paybond_awrap_tool_call_capability(
         stacklevel=2,
     )
     ToolMessage = _require_tool_message()
-    guard = PaybondSpendGuard(binding)
+    guard = PaybondSpendGuard(
+        harbor=binding.harbor,
+        intent_id=binding.intent_id,
+        capability_token=binding.capability_token,
+    )
 
     async def _awrap(
         request: Any,

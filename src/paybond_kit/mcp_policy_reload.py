@@ -15,6 +15,7 @@ from paybond_kit.policy.load_effective import parse_policy_effective_resolve_res
 from paybond_kit.policy.reload import (
     PaybondPolicyReloadBindConfig,
     PaybondPolicyReloadOptions,
+    PaybondPolicyReloadPollConfig,
     PaybondPolicyReloadResult,
     load_policy_snapshot_from_file,
     reload_policy_on_handle,
@@ -188,14 +189,14 @@ class McpPolicyReloadGate:
         elif config.reload_mode == "poll":
             gate._reload_defaults["remote"] = True
             gate._reload_defaults["resolve_inheritance"] = True
-            bind = {
-                "poll": {
-                    "interval_ms": config.poll_interval_ms,
-                    "remote": True,
-                    "resolve_inheritance": True,
-                    "gateway": gateway,
-                },
+            poll_config: PaybondPolicyReloadPollConfig = {
+                "remote": True,
+                "resolve_inheritance": True,
+                "gateway": gateway,
             }
+            if config.poll_interval_ms is not None:
+                poll_config["interval_ms"] = config.poll_interval_ms
+            bind = {"poll": poll_config}
             gate._controller = PaybondPolicyReloadController.start(
                 gate,
                 bind,
@@ -229,7 +230,7 @@ class McpPolicyReloadGate:
         options: PaybondPolicyReloadOptions | None = None,
     ) -> PaybondPolicyReloadResult:
         try:
-            merged = {**self._reload_defaults, **(options or {})}
+            merged: PaybondPolicyReloadOptions = {**self._reload_defaults, **(options or {})}
             result = await reload_policy_on_handle(
                 self,
                 merged,

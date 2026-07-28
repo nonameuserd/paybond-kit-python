@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import functools
+import importlib
 import inspect
 import json
 import uuid
@@ -162,9 +163,9 @@ def _attach_tool_context_signature(
 
     annotation: Any = Any
     try:
-        from google.adk.tools.tool_context import ToolContext
-
-        annotation = ToolContext | None
+        # Optional dependency resolved dynamically (see paybond_kit.google_adk._peer).
+        tool_context_cls = importlib.import_module("google.adk.tools.tool_context").ToolContext
+        annotation = tool_context_cls | None
     except ImportError:
         pass
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from paybond_kit.cli.agent_production_evidence import resolve_agent_recognition_from_cli
 from paybond_kit.cli.core import CliContext, consume_flag
+from paybond_kit.cli.secret_argv import resolve_secret_from_file_or_env
 
 
 @dataclass(frozen=True)
@@ -17,10 +19,17 @@ class HarborMutationFlags:
     rest_argv: list[str]
 
 
-def parse_harbor_mutation_flags(argv: list[str]) -> HarborMutationFlags:
+def parse_harbor_mutation_flags(argv: list[str], *, cwd: Path) -> HarborMutationFlags:
     """Extract shared Harbor mutation flags from argv, leaving body and positional args in rest_argv."""
     _, recognition_key_id, argv = consume_flag(argv, "--agent-recognition-key-id")
-    _, recognition_seed_hex, argv = consume_flag(argv, "--agent-recognition-signing-seed-hex")
+    recognition_seed_hex, argv = resolve_secret_from_file_or_env(
+        argv=argv,
+        cwd=cwd,
+        rejected_flag="--agent-recognition-signing-seed-hex",
+        file_flag="--agent-recognition-signing-seed-file",
+        env_name="APP_AGENT_RECOGNITION_SEED_HEX",
+        alternatives="--agent-recognition-signing-seed-file or APP_AGENT_RECOGNITION_SEED_HEX",
+    )
     _, idempotency_key, argv = consume_flag(argv, "--idempotency-key")
     return HarborMutationFlags(
         recognition_key_id=recognition_key_id,

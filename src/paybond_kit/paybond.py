@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
@@ -30,7 +31,14 @@ if TYPE_CHECKING:
         CreateGuardedAgentResult,
         GuardedAgentFramework,
     )
+    from paybond_kit.agent.instrument import (
+        PaybondInstrumentBuilder,
+        PaybondInstrumented,
+        PaybondInstrumentRuntime,
+    )
+    from paybond_kit.agent.receipt_client import PaybondAgentFacade
     from paybond_kit.agent.run import PaybondAgentRun
+    from paybond_kit.mpp_funding import MppFundPollOptions
     from paybond_kit.policy.load import PaybondPolicyLoadSource
     from paybond_kit.x402_funding import FundRequestEnvelope, X402FundPollOptions
 
@@ -465,8 +473,11 @@ class Paybond:
         await self.fraud.aclose()
         await self.signal.aclose()
         exports_gateway = self.audit.exports._gateway
-        if hasattr(exports_gateway, "aclose"):
-            await exports_gateway.aclose()
+        exports_aclose = getattr(exports_gateway, "aclose", None)
+        if callable(exports_aclose):
+            maybe_awaitable = exports_aclose()
+            if inspect.isawaitable(maybe_awaitable):
+                await maybe_awaitable
 
     def spend_guard(self, intent_id: UUID, capability_token: str):
         from paybond_kit.spend_guard import PaybondSpendGuard

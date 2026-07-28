@@ -11,7 +11,7 @@ import pytest
 
 from paybond_kit.agent import PaybondAgentRun, create_paybond_tool_registry
 from paybond_kit.crewai.config import create_paybond_crewai_config
-from paybond_kit.spend_guard import PaybondSpendApprovalRequiredError
+from paybond_kit.spend_guard import PaybondSpendApprovalRequiredError, PaybondSpendDeniedError
 
 
 def _make_registry() -> Any:

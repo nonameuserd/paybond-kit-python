@@ -25,18 +25,21 @@ def _make_ctx(tmp_path: Path) -> CliContext:
     )
 
 
-def test_parse_harbor_mutation_flags_extracts_recognition_and_idempotency() -> None:
+def test_parse_harbor_mutation_flags_extracts_recognition_and_idempotency(tmp_path: Path) -> None:
+    seed_path = tmp_path / "seed.hex"
+    seed_path.write_text(AGENT_SEED_HEX, encoding="utf-8")
     flags = parse_harbor_mutation_flags(
         [
             "--agent-recognition-key-id",
             "kid-1",
-            "--agent-recognition-signing-seed-hex",
-            AGENT_SEED_HEX,
+            "--agent-recognition-signing-seed-file",
+            str(seed_path),
             "--idempotency-key",
             "idem-1",
             "--body",
             "payload.json",
-        ]
+        ],
+        cwd=tmp_path,
     )
     assert flags.recognition_key_id == "kid-1"
     assert flags.recognition_seed_hex == AGENT_SEED_HEX
@@ -44,8 +47,20 @@ def test_parse_harbor_mutation_flags_extracts_recognition_and_idempotency() -> N
     assert flags.rest_argv == ["--body", "payload.json"]
 
 
-def test_parse_harbor_mutation_flags_leaves_unrecognized_args_in_rest_argv() -> None:
-    flags = parse_harbor_mutation_flags(["intent-123", "--body", "payload.json"])
+def test_parse_harbor_mutation_flags_rejects_secret_argv(tmp_path: Path) -> None:
+    with pytest.raises(CliError, match="rejected") as exc_info:
+        parse_harbor_mutation_flags(
+            [
+                "--agent-recognition-signing-seed-hex",
+                AGENT_SEED_HEX,
+            ],
+            cwd=tmp_path,
+        )
+    assert exc_info.value.code == "cli.secret.argv_rejected"
+
+
+def test_parse_harbor_mutation_flags_leaves_unrecognized_args_in_rest_argv(tmp_path: Path) -> None:
+    flags = parse_harbor_mutation_flags(["intent-123", "--body", "payload.json"], cwd=tmp_path)
     assert flags.recognition_key_id is None
     assert flags.recognition_seed_hex is None
     assert flags.idempotency_key is None

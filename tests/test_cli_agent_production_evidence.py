@@ -80,7 +80,7 @@ def test_resolve_production_evidence_for_reattach_requires_fresh_seeds(tmp_path:
         "payee_did": "did:web:vendor.example",
         "agent_recognition_key_id": "kid-1",
     }
-    with pytest.raises(CliError, match="requires --payee-signing-seed-hex") as exc_info:
+    with pytest.raises(CliError, match="requires --payee-signing-seed-file") as exc_info:
         resolve_production_evidence_for_reattach(
             cwd=tmp_path,
             env_file=".env.local",

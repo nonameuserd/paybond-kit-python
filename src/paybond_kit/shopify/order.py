@@ -7,7 +7,12 @@ from typing import Any, Awaitable, Callable
 
 from paybond_kit.commerce_binding import decode_commerce_binding_from_shopify_note_attributes
 from paybond_kit.shopify.checkout import PAYBOND_SHOPIFY_UCP_VERSION, PAYBOND_UCP_AGENT_PROFILE_URL
-from paybond_kit.shopify.types import GetShopifyOrderParams, ShopifyOrderSummary
+from paybond_kit.shopify.types import (
+    GetShopifyOrderParams,
+    ShopifyNoteAttribute,
+    ShopifyOrderBinding,
+    ShopifyOrderSummary,
+)
 
 UcpFetch = Callable[[str, dict[str, Any]], Awaitable[Any]]
 
@@ -37,10 +42,10 @@ def _shop_origin(shop_domain: str) -> str:
     return f"https://{host}.myshopify.com"
 
 
-def _read_note_attributes(value: object) -> list[dict[str, str]]:
+def _read_note_attributes(value: object) -> list[ShopifyNoteAttribute]:
     if not isinstance(value, list):
         return []
-    attrs: list[dict[str, str]] = []
+    attrs: list[ShopifyNoteAttribute] = []
     for entry in value:
         if not isinstance(entry, dict):
             continue
@@ -113,13 +118,15 @@ async def get_order(
     binding = decode_commerce_binding_from_shopify_note_attributes(note_attributes)
     order_value = result.get("id") or result.get("order_id") or result.get("admin_graphql_api_id")
     financial_status = result.get("financial_status")
-    return {
+    order_binding: ShopifyOrderBinding = {
+        "tenant_id": binding["tenant_id"] if binding else None,
+        "paybond_intent_id": binding["intent_id"] if binding else None,
+    }
+    summary: ShopifyOrderSummary = {
         "order_id": str(order_value) if order_value is not None else order_id,
         "shop": shop,
         "financial_status": str(financial_status) if isinstance(financial_status, str) else None,
         "note_attributes": note_attributes,
-        "binding": {
-            "tenant_id": binding["tenant_id"] if binding else None,
-            "paybond_intent_id": binding["intent_id"] if binding else None,
-        },
+        "binding": order_binding,
     }
+    return summary

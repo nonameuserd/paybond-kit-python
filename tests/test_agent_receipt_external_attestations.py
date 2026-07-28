@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from paybond_kit.agent_receipt import AgentReceiptExternalAttestationV1
 from paybond_kit.agent_mandate import agent_mandate_digest_sha256_hex, normalize_agent_mandate_v1
 from paybond_kit.agent_receipt_external_attestations import (
     AGENT_RECEIPT_EXTERNAL_SOURCE_AP2,
@@ -13,13 +14,23 @@ from paybond_kit.agent_receipt_external_attestations import (
     protocol_settlement_receipt_to_external_attestations,
     resolve_external_attestations,
     signed_mandate_to_external_attestations,
+    x402_receipt_to_external_attestations,
 )
 from tests.helpers.evidence_fixtures import (
     AP2_TEST_INTENT_ID,
+    X402_FIXTURE_EXPECTED_SIGNER,
     signed_ap2_mandate,
+    signed_jws_x402_receipt,
     signed_protocol_authorization_receipt,
     signed_protocol_settlement_receipt,
 )
+
+_X402_SAMPLE_RECEIPT = {
+    "resourceUrl": "https://api.vendor.example/job/999",
+    "payer": "0xabc123",
+    "network": "eip155:84532",
+    "issuedAt": 1710000000,
+}
 
 
 def test_partner_record_digest_sha256_hex_is_stable() -> None:
@@ -45,7 +56,7 @@ def test_resolve_external_attestations_accepts_prebuilt_entries() -> None:
 
 
 def test_resolve_external_attestations_accepts_prebuilt_ap2_entries() -> None:
-    prebuilt = {
+    prebuilt: AgentReceiptExternalAttestationV1 = {
         "source": AGENT_RECEIPT_EXTERNAL_SOURCE_AP2,
         "kind": "agent_mandate_v1",
         "digest_sha256_hex": "b" * 64,
@@ -53,6 +64,48 @@ def test_resolve_external_attestations_accepts_prebuilt_ap2_entries() -> None:
     }
     built = resolve_external_attestations([prebuilt])
     assert built == [prebuilt]
+
+
+def test_x402_receipt_to_external_attestations_maps_when_pin_matches() -> None:
+    attestations = x402_receipt_to_external_attestations(
+        signed_jws_x402_receipt(_X402_SAMPLE_RECEIPT),
+        expected_signer=X402_FIXTURE_EXPECTED_SIGNER,
+    )
+    assert len(attestations) == 1
+    assert attestations[0]["source"] == AGENT_RECEIPT_EXTERNAL_SOURCE_X402
+    assert attestations[0].get("reference_id") == _X402_SAMPLE_RECEIPT["resourceUrl"]
+
+
+def test_x402_receipt_to_external_attestations_fails_closed_without_pin() -> None:
+    with pytest.raises(ValueError, match="requires a non-empty expected_signer"):
+        x402_receipt_to_external_attestations(
+            signed_jws_x402_receipt(_X402_SAMPLE_RECEIPT), expected_signer=""
+        )
+
+
+def test_resolve_external_attestations_enforces_x402_pin() -> None:
+    built = resolve_external_attestations(
+        [
+            {
+                "kind": "x402",
+                "receipt": signed_jws_x402_receipt(_X402_SAMPLE_RECEIPT),
+                "expected_signer": X402_FIXTURE_EXPECTED_SIGNER,
+            }
+        ]
+    )
+    assert len(built) == 1
+    assert built[0]["source"] == AGENT_RECEIPT_EXTERNAL_SOURCE_X402
+
+    with pytest.raises(ValueError, match="does not match expected signer"):
+        resolve_external_attestations(
+            [
+                {
+                    "kind": "x402",
+                    "receipt": signed_jws_x402_receipt(_X402_SAMPLE_RECEIPT),
+                    "expected_signer": "not-the-real-signer",
+                }
+            ]
+        )
 
 
 def test_resolve_external_attestations_throws_when_sep2828_verification_fails() -> None:

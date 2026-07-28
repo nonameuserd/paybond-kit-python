@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from paybond_kit.agent.attach_bundle import redact_attach_bundle
 from paybond_kit.login import mask_api_key
 
 _SENSITIVE_EXACT_FIELDS = frozenset(
@@ -12,6 +13,8 @@ _SENSITIVE_EXACT_FIELDS = frozenset(
     }
 )
 
+_ATTACH_BUNDLE_FIELDS = frozenset({"attach_bundle", "paybond_attach_bundle"})
+
 _SENSITIVE_CONFIG_KEY_EXACT = frozenset(
     {
         "api_key",
@@ -19,6 +22,8 @@ _SENSITIVE_CONFIG_KEY_EXACT = frozenset(
         "secret",
         "client_secret",
         "password",
+        "attach_bundle",
+        "paybond_attach_bundle",
     }
 )
 
@@ -37,6 +42,10 @@ def _is_sensitive_seed_key(key: str) -> bool:
     if lowered in _SENSITIVE_SEED_EXACT_FIELDS:
         return True
     return lowered.endswith("_seed") or lowered.endswith("_seed_hex")
+
+
+def _is_attach_bundle_key(key: str) -> bool:
+    return key.lower() in _ATTACH_BUNDLE_FIELDS
 
 
 def _has_redactable_scalar_content(value: Any) -> bool:
@@ -61,7 +70,11 @@ def is_sensitive_config_key(key: str) -> bool:
 def redact_config_value(key: str, value: str) -> str:
     if not is_sensitive_config_key(key):
         return value
-    return mask_api_key(value) if value.strip() else ""
+    if not value.strip():
+        return ""
+    if _is_attach_bundle_key(key) or value.strip().startswith("ab1."):
+        return redact_attach_bundle(value)
+    return mask_api_key(value)
 
 
 def _redact_sensitive_scalar(key: str, value: Any) -> Any:
@@ -72,6 +85,12 @@ def _redact_sensitive_scalar(key: str, value: Any) -> Any:
         return "[redacted]" if _has_redactable_scalar_content(value) else value
     if lowered == "api_key" or lowered.endswith("_api_key"):
         return mask_api_key(value) if isinstance(value, str) else value
+    if _is_attach_bundle_key(key):
+        if isinstance(value, str):
+            return redact_attach_bundle(value) if value.strip() else value
+        return "[redacted]" if _has_redactable_scalar_content(value) else value
+    if isinstance(value, str) and value.strip().startswith("ab1."):
+        return redact_attach_bundle(value)
     if _is_sensitive_seed_key(key):
         return "[redacted]" if _has_redactable_scalar_content(value) else value
     return value

@@ -195,10 +195,11 @@ async def _resolve_reload_snapshot_for_handle(
             "reload requires a policy file path (pass file or bind with reload.watch/poll)",
         )
 
-    if options.get("resolve_inheritance") and options.get("gateway") is not None:
+    reload_gateway = options.get("gateway")
+    if options.get("resolve_inheritance") and reload_gateway is not None:
         snapshot, unchanged = await load_policy_snapshot_from_effective_poll(
             overlay_path=file_path,
-            gateway=options["gateway"],
+            gateway=reload_gateway,
             current_digest=handle.policy_digest,
         )
         if unchanged:

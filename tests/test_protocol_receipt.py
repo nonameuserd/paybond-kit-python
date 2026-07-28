@@ -57,7 +57,9 @@ def _test_agent_mandate(expires_at: str) -> dict:
 
 
 def _signed_test_agent_mandate(expires_at: str) -> dict:
-    return sign_agent_mandate_v1(_ed25519_seed("protocol-signed-agent-mandate"), _test_agent_mandate(expires_at))
+    return dict(
+        sign_agent_mandate_v1(_ed25519_seed("protocol-signed-agent-mandate"), _test_agent_mandate(expires_at))
+    )
 
 
 def _authorization_receipt_input(signed: dict, transport: dict) -> dict:

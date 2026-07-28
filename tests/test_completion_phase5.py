@@ -15,7 +15,11 @@ from paybond_kit.x402_receipt_evidence import (
     map_x402_receipt_to_artifact_attested_evidence,
     x402_receipt_payload_digest_hex,
 )
-from tests.helpers.evidence_fixtures import signed_jws_x402_receipt, signed_sep2828_pair
+from tests.helpers.evidence_fixtures import (
+    X402_FIXTURE_EXPECTED_SIGNER,
+    signed_jws_x402_receipt,
+    signed_sep2828_pair,
+)
 
 
 def test_stripe_charge_resolves_to_api_response_archetype() -> None:
@@ -160,7 +164,9 @@ def test_x402_receipt_import_maps_to_artifact_attested() -> None:
     digest = x402_receipt_payload_digest_hex(payload)
     assert len(digest) == 64
 
-    evidence = map_x402_receipt_to_artifact_attested_evidence(signed_jws_x402_receipt(SAMPLE_X402_RECEIPT))
+    evidence = map_x402_receipt_to_artifact_attested_evidence(
+        signed_jws_x402_receipt(SAMPLE_X402_RECEIPT), expected_signer=X402_FIXTURE_EXPECTED_SIGNER
+    )
     assert evidence == {
         "artifact_blake3_hex": [digest],
         "operation": "attested",
@@ -170,7 +176,9 @@ def test_x402_receipt_import_maps_to_artifact_attested() -> None:
 
 def test_x402_receipt_import_rejects_unsigned_payload() -> None:
     with pytest.raises(ValueError, match="signed offer-receipt artifact"):
-        map_x402_receipt_to_artifact_attested_evidence(SAMPLE_X402_RECEIPT)
+        map_x402_receipt_to_artifact_attested_evidence(
+            SAMPLE_X402_RECEIPT, expected_signer=X402_FIXTURE_EXPECTED_SIGNER
+        )
 
 
 def test_x402_receipt_import_rejects_funding_webhook() -> None:

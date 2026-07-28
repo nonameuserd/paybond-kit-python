@@ -20,7 +20,7 @@ from uuid import UUID
 
 import httpx
 
-from paybond_kit.credentials import normalize_gateway_base_url
+from paybond_kit.credentials import is_loopback_gateway_host, normalize_gateway_base_url
 from paybond_kit.gateway_retry import httpx_with_gateway_retries
 from paybond_kit.payment_transport import (
     append_direct_harbor_payment_authorization,
@@ -81,6 +81,15 @@ class VerifyCapabilityResult:
         )
 
 
+def _require_json_bool(body: Mapping[str, Any], field: str) -> bool:
+    if field not in body:
+        raise ValueError(f"{field} must be a JSON boolean")
+    value = body[field]
+    if not isinstance(value, bool):
+        raise ValueError(f"{field} must be a JSON boolean")
+    return value
+
+
 def _parse_verify_capability_result(
     body: dict[str, Any],
     *,
@@ -117,7 +126,7 @@ def _parse_verify_capability_result(
     )
     retry_after = int(body["retry_after"]) if body.get("retry_after") is not None else None
     return VerifyCapabilityResult(
-        allow=bool(body["allow"]),
+        allow=_require_json_bool(body, "allow"),
         audit_id=UUID(str(body["audit_id"])),
         tenant=tenant,
         intent_id=rid,
@@ -177,7 +186,7 @@ def _verify_capability_payload(
     if idempotency_key and idempotency_key.strip():
         payload["idempotency_key"] = idempotency_key.strip()
     # Agent Receipt Standard context (Phase 1): forwarded to Gateway `/verify` on every call
-    # for spend-decision audit correlation. See `go/gateway/internal/spendauth/types.go` `VerifyRequest`.
+    # for spend-decision audit correlation. See `go/gateway/internal/spend/spendauth/types.go` `VerifyRequest`.
     if model_family and model_family.strip():
         payload["model_family"] = model_family.strip()
     if config_hash_hex and config_hash_hex.strip():
@@ -291,7 +300,7 @@ class HarborClient:
 
     Every request sends ``x-tenant-id`` using the configured tenant. Verify responses must echo the
     same tenant and the requested ``intent_id`` or :class:`TenantBindingError` is raised (confused
-    deputy hardening).
+    deputy hardening). ``x-tenant-id`` is never authorization — non-local Harbor requires a bearer.
 
     When ``harbor_bearer_supplier`` is set, each request awaits it and sends a non-empty value as
     ``Authorization: Bearer …`` (gateway-minted Harbor JWTs for authenticated upstream Harbor).
@@ -307,6 +316,7 @@ class HarborClient:
         *,
         harbor_bearer_supplier: HarborBearerSupplier | None = None,
         static_harbor_bearer_token: str | None = None,
+        allow_unauthenticated_local: bool = False,
         max_retries: int = 3,
         request_timeout_sec: float = 30.0,
     ) -> None:
@@ -314,7 +324,7 @@ class HarborClient:
             raise ValueError(
                 "pass at most one of harbor_bearer_supplier or static_harbor_bearer_token"
             )
-        base = harbor_base.strip().rstrip("/")
+        base = normalize_gateway_base_url(harbor_base.strip())
         self._base = f"{base}/"
         self._tenant = tenant_id.strip()
         self._bearer_supplier = harbor_bearer_supplier
@@ -323,8 +333,25 @@ class HarborClient:
             if static_harbor_bearer_token
             else None
         )
+        self._allow_unauthenticated_local = bool(allow_unauthenticated_local)
         self._max_retries = max(1, int(max_retries))
         self._client = httpx.AsyncClient(timeout=request_timeout_sec)
+
+        has_bearer_config = bool(self._static_bearer or self._bearer_supplier)
+        if not has_bearer_config:
+            hostname = ""
+            try:
+                from urllib.parse import urlparse
+
+                hostname = (urlparse(self._base).hostname or "").lower()
+            except Exception:
+                hostname = ""
+            if not (self._allow_unauthenticated_local and is_loopback_gateway_host(hostname)):
+                raise ValueError(
+                    "HarborClient requires harbor_bearer_supplier or static_harbor_bearer_token; "
+                    "x-tenant-id is not authorization. For loopback only, pass "
+                    "allow_unauthenticated_local=True"
+                )
 
     @property
     def tenant_id(self) -> str:
@@ -337,6 +364,7 @@ class HarborClient:
             tok = await self._bearer_supplier()
             if tok and tok.strip():
                 return {"authorization": f"Bearer {tok.strip()}"}
+            raise ValueError("harbor_bearer_supplier returned an empty Harbor bearer token")
         return {}
 
     async def _post_json_with_retries(
@@ -655,7 +683,7 @@ class HarborClient:
             settlement_rail=settlement_rail,
             currency=currency,
             amount_cents=amount_cents,
-            funded=bool(body.get("funded")),
+            funded=_require_json_bool(body, "funded"),
             capability_token=capability_token if isinstance(capability_token, str) else None,
             funding=funding,
         )
@@ -699,7 +727,20 @@ class HarborClient:
                 url=url,
                 body_text=response.text,
             )
-        return response.json()
+        body = response.json()
+        # Defense in depth: reject a response that binds evidence to a different
+        # tenant or intent than this client is scoped to (parity with fund_intent).
+        tenant = str(body.get("tenant", ""))
+        if tenant != self._tenant:
+            raise ValueError(
+                f"evidence tenant mismatch: client={self._tenant!r} harbor={tenant!r}"
+            )
+        echoed_intent_id = str(body.get("intent_id", ""))
+        if echoed_intent_id != str(intent_id):
+            raise ValueError(
+                f"evidence intent mismatch: requested={intent_id} harbor={echoed_intent_id}"
+            )
+        return body
 
     async def confirm_settlement(
         self,
@@ -1317,6 +1358,18 @@ class GatewayHarborClient:
                 url=url,
                 body_text=response.text,
             )
+        # Defense in depth: reject a response that binds evidence to a different
+        # tenant or intent than this client is scoped to (parity with fund_intent).
+        tenant = str(payload.get("tenant", ""))
+        if tenant != self._tenant:
+            raise ValueError(
+                f"evidence tenant mismatch: client={self._tenant!r} gateway={tenant!r}"
+            )
+        echoed_intent_id = str(payload.get("intent_id", ""))
+        if echoed_intent_id != str(intent_id):
+            raise ValueError(
+                f"evidence intent mismatch: requested={intent_id} gateway={echoed_intent_id}"
+            )
         return payload
 
     async def confirm_settlement(
@@ -1468,7 +1521,7 @@ def _parse_fund_intent_response(
         settlement_rail=settlement_rail,
         currency=currency,
         amount_cents=amount_cents,
-        funded=bool(body.get("funded")),
+        funded=_require_json_bool(body, "funded"),
         capability_token=capability_token if isinstance(capability_token, str) else None,
         funding=funding,
     )

@@ -43,6 +43,26 @@ from paybond_kit.harbor import (
 )
 from paybond_kit.audit.exports import PaybondAudit, PaybondAuditExports
 from paybond_kit.paybond import Paybond, PaybondIntents
+
+# Operator/backend-only Plaid bank helpers (H5). Intentionally absent from
+# `paybond_kit.agent`, agent templates, and the MCP tool surface: operators link
+# banks and fund intents; agents spend only on already funded intents.
+from paybond_kit.plaid import (
+    PLAID_READINESS_REASONS,
+    OperatorPlaidBankClient,
+    PlaidAchFundingResult,
+    PlaidBankAccount,
+    PlaidBankInventory,
+    PlaidBankNotFoundError,
+    PlaidBankNotReadyError,
+    PlaidOperatorError,
+    PlaidOperatorHttpError,
+    PlaidSecretMaterialError,
+    ServiceAccountPlaidSession,
+    fund_ach_with_plaid_bank,
+    list_plaid_banks,
+    plaid_readiness_message,
+)
 from paybond_kit.protocol import (
     AgentRecognitionProofV1,
     AgentMandateV1,
@@ -134,6 +154,7 @@ from paybond_kit.spend_guard import (
     paybond_mcp_tool_spend_guard,
     paybond_runtime_neutral_tool_spend_guard,
 )
+from paybond_kit.signing import sign_payee_evidence_binding
 
 __all__ = [
     "A2AHttpError",
@@ -158,6 +179,20 @@ __all__ = [
     "PaybondAuditExports",
     "PaybondCapabilityBinding",
     "PaybondIntents",
+    "PLAID_READINESS_REASONS",
+    "OperatorPlaidBankClient",
+    "PlaidAchFundingResult",
+    "PlaidBankAccount",
+    "PlaidBankInventory",
+    "PlaidBankNotFoundError",
+    "PlaidBankNotReadyError",
+    "PlaidOperatorError",
+    "PlaidOperatorHttpError",
+    "PlaidSecretMaterialError",
+    "ServiceAccountPlaidSession",
+    "fund_ach_with_plaid_bank",
+    "list_plaid_banks",
+    "plaid_readiness_message",
     "PaybondX402FundingFailedError",
     "PaybondX402FundingPendingError",
     "FundRequestEnvelope",

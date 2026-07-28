@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -53,6 +54,9 @@ class _FakeAuditGateway:
                 }
             }
         raise AssertionError(path)
+
+    async def post_json(self, path: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        raise AssertionError(f"unexpected post: {path}")
 
     async def delete_json(self, path: str) -> dict[str, Any]:
         raise AssertionError(f"unexpected delete: {path}")
@@ -134,7 +138,7 @@ def test_paybond_sync_get_reputation_receipt() -> None:
 
     receipt = sync.get_reputation_receipt("did:example:operator")
     assert receipt is not None
-    assert receipt["receipt"]["operator_did"] == "did:example:operator"
+    assert receipt["receipt"].get("operator_did") == "did:example:operator"
 
 
 @pytest.mark.asyncio

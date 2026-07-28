@@ -35,6 +35,7 @@ class PolicyValidatorResult:
 class PolicyGatewayTemplateLookup(Protocol):
     def list_template_ids(self) -> list[str]:
         """Return Harbor managed policy template ids."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,9 +223,12 @@ class PolicyValidator:
                 valid=False,
                 policy_name=None,
                 tools=PolicyValidatorToolCounts(side_effecting=0, read_only=0),
-                errors=tuple(
-                    PolicyValidatorError(path=issue.path, code=issue.code, message=issue.message)
-                    for issue in exc.issues
+                errors=(
+                    PolicyValidatorError(
+                        path=exc.path,
+                        code="policy.schema_invalid",
+                        message=str(exc),
+                    ),
                 ),
             )
 

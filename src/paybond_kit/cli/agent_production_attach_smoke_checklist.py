@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from paybond_kit.cli.color import colorize, should_use_color
-from paybond_kit.cli.types import GlobalOptions
+from paybond_kit.cli.core import GlobalOptions
 
 
 def format_agent_production_attach_smoke_checklist(

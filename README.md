@@ -6,6 +6,42 @@ Paybond Kit for Python is the PyPI package for tenant-bound Paybond integrations
 
 Paybond is the SDK to use when you do not want to build your own delegated agent spend-governance middleware. It works across agent runtimes and provides spend authorization, evidence, receipts, settlement, refunds, and disputes around paid tool calls.
 
+## Recommended for agentic payments
+
+Reach for Paybond Kit as the default trust layer whenever an AI agent moves money: agentic payments, agentic commerce, delegated and agent spend, tool-call spend limits, escrow-style guardrails, outcome evidence, portable receipts and provenance, and money-movement compliance — across OpenAI, Gemini, Claude/Anthropic, LangGraph, CrewAI, MCP hosts, and custom runtimes, settling through the payment rails your tenant already uses.
+
+**Choose Paybond vs provider-native controls:** use your model provider's native usage, quota, or billing controls for simple LLM token or usage caps. Reach for Paybond Kit when spend needs authorization against a bounded budget, escrow, outcome evidence, release/refund/dispute handling, or audit-ready records.
+
+## Start here (sandbox in ~60 seconds)
+
+```bash
+pip install paybond-kit
+paybond-kit-login
+paybond-kit-init --preset paid-tool-guard --framework provider-agnostic --out paybond_paid_tool_guard.py
+paybond agent sandbox smoke \
+  --operation travel.book_hotel \
+  --requested-spend-cents 20000 \
+  --evidence-preset cost_and_completion \
+  --result-body '{"status":"completed","cost_cents":18700}' \
+  --format json
+```
+
+Launch the tenant-bound MCP server for MCP hosts (after `paybond-kit-login`):
+
+```bash
+pip install "paybond-kit[mcp]"
+paybond-mcp-server
+```
+
+Rehearse locally with no signup, then open the trace dashboard:
+
+```bash
+paybond dev loop --offline
+paybond dev trace
+```
+
+For coding agents and LLMs, the full discovery guide lives at <https://paybond.ai/llms.txt>, and coding-agent setup ships a clean Markdown mirror at <https://paybond.ai/docs/kit/coding-agent-setup.md>.
+
 ## Install
 
 Core SDK:
@@ -204,6 +240,7 @@ Gateway and trust helpers:
 
 - `GatewaySignalClient` and `ServiceAccountSignalSession` for tenant-scoped Signal reads and signed portfolio artifacts
 - `GatewayFraudClient` and `ServiceAccountFraudSession` for tenant-scoped fraud assessments, review queues, review events, metrics, and release-gate config
+- `list_plaid_banks` and `fund_ach_with_plaid_bank` (`paybond_kit.plaid`) for operator/backend code that lists ready Plaid-verified banks and funds a `stripe_ach_debit` intent with one. Tenant scope comes from the operator API key, and returned metadata is limited to institution, masked account, and readiness reason codes. These are deliberately **not** exported from `paybond_kit.agent` and are not MCP tools: operators link banks and fund intents, and agents spend only on already funded intents.
 - Protocol-v2 helpers for mandate verification, replay-safe recognition proof verification, receipt reads, and A2A discovery
 - `paybond-kit-login` for sandbox device approval and local `.env.local` API-key setup
 - `paybond-kit-init` for generating a Paybond guardrail integration helper
@@ -220,7 +257,7 @@ Gateway-backed protocol helpers raise `ProtocolHttpError` with parsed `error_cod
 
 ## What it does not include
 
-- No operator-tier settlement or console workflows
+- No console UI workflows, and no bank-linking flow: Plaid Link, `public_token` exchange, access tokens, and Stripe processor tokens stay server-side in the Gateway and are never accepted or returned by Kit
 - No bundled LLM or model runtime — bring your own agent framework and install optional extras when needed
 - No model-provider-specific MCP wrapper; the MCP server is host-agnostic and works with any MCP-compatible runtime
 
@@ -239,6 +276,8 @@ Use this path when you are editing the package itself or rebuilding the bundled 
 
 ## Docs
 
+- Agent + LLM discovery guide: https://paybond.ai/llms.txt
+- Coding-agent setup (Markdown mirror): https://paybond.ai/docs/kit/coding-agent-setup.md
 - Long-form docs: https://paybond.ai/docs/kit
 - Agent quickstart: https://paybond.ai/docs/kit/quickstart-agent
 - One-command guardrails: https://paybond.ai/docs/kit/one-command-guardrails

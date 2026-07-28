@@ -132,6 +132,7 @@ def test_policy_to_intent_create_input_builds_native_create_body() -> None:
     kwargs = _base_kwargs()
     kwargs["intent_id"] = "00000000-0000-4000-8000-000000000001"
     input_ = policy.to_intent_create_input(**kwargs)
+    assert input_.intent_id is not None
 
     wire = build_signed_create_intent_with_policy_binding_json(
         "tenant-1",

@@ -20,6 +20,7 @@ def _entry(
     tool_name: str = "travel.book_hotel",
     cached_at: float = 100.0,
     policy_digest: str | None = None,
+    authorized_at_ms: int = 100_000,
 ) -> CachedAuthorizationEntry:
     return {
         "auth": auth if auth is not None else {"audit_id": "audit-1"},
@@ -28,6 +29,7 @@ def _entry(
         "tool_name": tool_name,
         "cached_at": cached_at,
         "policy_digest": policy_digest,
+        "authorized_at_ms": authorized_at_ms,
     }
 
 

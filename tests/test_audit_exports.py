@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -13,7 +14,7 @@ from paybond_kit.mcp_policy import parse_mcp_tool_policy, tool_allowed_by_policy
 class _FakeGateway:
     def __init__(self) -> None:
         self.paths: list[str] = []
-        self.post_bodies: list[dict[str, Any]] = []
+        self.post_bodies: list[Mapping[str, Any]] = []
 
     async def get_json(self, path: str) -> dict[str, Any]:
         self.paths.append(path)
@@ -51,7 +52,7 @@ class _FakeGateway:
             }
         raise AssertionError(path)
 
-    async def post_json(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+    async def post_json(self, path: str, body: Mapping[str, Any]) -> dict[str, Any]:
         self.paths.append(path)
         self.post_bodies.append(body)
         return {

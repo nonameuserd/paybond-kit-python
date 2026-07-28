@@ -94,9 +94,19 @@ def _base64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
 
+# Stable per-process signing key so fixtures can expose the matching issuer pin.
+_X402_FIXTURE_PRIVATE_KEY = Ed25519PrivateKey.generate()
+_X402_FIXTURE_PUBLIC_BYTES = _X402_FIXTURE_PRIVATE_KEY.public_key().public_bytes_raw()
+
+#: The ``expected_signer`` pin (raw base64url OKP ``x``) matching
+#: :func:`signed_jws_x402_receipt`. Pass to x402 verify/map entry points to
+#: authenticate the fixture issuer.
+X402_FIXTURE_EXPECTED_SIGNER = _base64url(_X402_FIXTURE_PUBLIC_BYTES)
+
+
 def signed_jws_x402_receipt(payload: dict[str, Any]) -> dict[str, Any]:
-    private_key = Ed25519PrivateKey.generate()
-    public_bytes = private_key.public_key().public_bytes_raw()
+    private_key = _X402_FIXTURE_PRIVATE_KEY
+    public_bytes = _X402_FIXTURE_PUBLIC_BYTES
     header = {"alg": "EdDSA", "jwk": {"kty": "OKP", "crv": "Ed25519", "x": _base64url(public_bytes)}}
     header_b64 = _base64url(json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8"))
     payload_b64 = _base64url(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
@@ -188,51 +198,55 @@ def _authorization_receipt_input(
 
 def signed_ap2_mandate() -> dict[str, Any]:
     """Far-future signed AP2 agent mandate for external attestation tests."""
-    return sign_agent_mandate_v1(AP2_MANDATE_SEED, _test_ap2_agent_mandate("2030-01-02T03:04:05Z"))
+    return dict(sign_agent_mandate_v1(AP2_MANDATE_SEED, _test_ap2_agent_mandate("2030-01-02T03:04:05Z")))
 
 
 def signed_protocol_authorization_receipt() -> dict[str, Any]:
     """Signed AP2 protocol authorization receipt derived from signed_ap2_mandate."""
     signed_mandate = signed_ap2_mandate()
-    return sign_protocol_authorization_receipt_v1(
-        AP2_AUTHORIZATION_RECEIPT_SEED,
-        _authorization_receipt_input(
-            signed_mandate,
-            {
-                "source_protocol": PROTOCOL_SOURCE_AP2,
-                "partner_platform": "Partner Travel Hub",
-                "external_authorization_id": "authz-123",
-                "request_id": "req-123",
-            },
-        ),
+    return dict(
+        sign_protocol_authorization_receipt_v1(
+            AP2_AUTHORIZATION_RECEIPT_SEED,
+            _authorization_receipt_input(
+                signed_mandate,
+                {
+                    "source_protocol": PROTOCOL_SOURCE_AP2,
+                    "partner_platform": "Partner Travel Hub",
+                    "external_authorization_id": "authz-123",
+                    "request_id": "req-123",
+                },
+            ),
+        )
     )
 
 
 def signed_protocol_settlement_receipt() -> dict[str, Any]:
     """Signed AP2 protocol settlement receipt for external attestation tests."""
     signed_mandate = signed_ap2_mandate()
-    return sign_protocol_settlement_receipt_v1(
-        AP2_SETTLEMENT_RECEIPT_SEED,
-        {
-            "receipt_id": AP2_TEST_INTENT_ID,
-            "issued_at": "2026-05-17T18:05:00.000Z",
-            "intent_id": AP2_TEST_INTENT_ID,
-            "tenant_id": signed_mandate["authorization"]["tenant_id"],
-            "verifier_id": "paybond-gateway",
-            "transport_binding": {
-                "source_protocol": PROTOCOL_SOURCE_AP2,
-                "partner_platform": "Partner Travel Hub",
+    return dict(
+        sign_protocol_settlement_receipt_v1(
+            AP2_SETTLEMENT_RECEIPT_SEED,
+            {
+                "receipt_id": AP2_TEST_INTENT_ID,
+                "issued_at": "2026-05-17T18:05:00.000Z",
+                "intent_id": AP2_TEST_INTENT_ID,
+                "tenant_id": signed_mandate["authorization"]["tenant_id"],
+                "verifier_id": "paybond-gateway",
+                "transport_binding": {
+                    "source_protocol": PROTOCOL_SOURCE_AP2,
+                    "partner_platform": "Partner Travel Hub",
+                },
+                "authorization_receipt_id": AP2_TEST_AUTHORIZATION_RECEIPT_ID,
+                "mandate_digest_sha256_hex": signed_mandate["message_digest_sha256_hex"],
+                "harbor_state": "released",
+                "predicate_passed": True,
+                "settlement_rail": "stripe_connect",
+                "settlement_mode": "managed",
+                "principal_did": "did:principal:alice",
+                "payee_did": "did:payee:hotel",
+                "currency": "usd",
+                "amount_cents": 250000,
+                "terminal_observed_at": "2026-05-17T18:04:00.000Z",
             },
-            "authorization_receipt_id": AP2_TEST_AUTHORIZATION_RECEIPT_ID,
-            "mandate_digest_sha256_hex": signed_mandate["message_digest_sha256_hex"],
-            "harbor_state": "released",
-            "predicate_passed": True,
-            "settlement_rail": "stripe_connect",
-            "settlement_mode": "managed",
-            "principal_did": "did:principal:alice",
-            "payee_did": "did:payee:hotel",
-            "currency": "usd",
-            "amount_cents": 250000,
-            "terminal_observed_at": "2026-05-17T18:04:00.000Z",
-        },
+        )
     )

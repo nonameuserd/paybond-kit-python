@@ -10,6 +10,7 @@ from typing import Any
 
 from paybond_kit.cli.automation import write_atomic_file
 from paybond_kit.cli.agent_production_evidence import PersistedProductionEvidence
+from paybond_kit.cli.agent_run_id import assert_path_inside_dir, assert_valid_agent_run_id
 from paybond_kit.cli.core import CliError
 
 
@@ -43,7 +44,9 @@ def agent_runs_dir(cwd: Path) -> Path:
 
 
 def agent_run_file_path(cwd: Path, run_id: str) -> Path:
-    return agent_runs_dir(cwd) / f"{run_id.strip()}.json"
+    safe_id = assert_valid_agent_run_id(run_id)
+    runs_dir = agent_runs_dir(cwd)
+    return assert_path_inside_dir(runs_dir, runs_dir / f"{safe_id}.json")
 
 
 def persist_agent_run_context(cwd: Path, context: PersistedAgentRunContext) -> Path:

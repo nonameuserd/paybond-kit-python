@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from paybond_kit.cli.color import colorize, should_use_color
-from paybond_kit.cli.types import GlobalOptions
+from paybond_kit.cli.core import GlobalOptions
 
 
 def format_agent_harbor_evidence_smoke_checklist(

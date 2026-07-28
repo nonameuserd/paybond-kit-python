@@ -84,7 +84,7 @@ async def test_langgraph_awrap_allows_then_executes() -> None:
             },
         )
     )
-    harbor = HarborClient("https://harbor.test", "tenant-a")
+    harbor = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
     binding = PaybondCapabilityBinding(
         harbor=harbor,
         intent_id=intent_id,
@@ -122,7 +122,7 @@ async def test_langgraph_awrap_resolves_spend_from_request() -> None:
             },
         )
     )
-    harbor = HarborClient("https://harbor.test", "tenant-a")
+    harbor = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
     binding = PaybondCapabilityBinding(
         harbor=harbor,
         intent_id=intent_id,
@@ -164,7 +164,7 @@ async def test_langgraph_awrap_denies_without_execute() -> None:
             },
         )
     )
-    harbor = HarborClient("https://harbor.test", "tenant-a")
+    harbor = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
     binding = PaybondCapabilityBinding(
         harbor=harbor,
         intent_id=intent_id,
@@ -216,7 +216,7 @@ async def test_langgraph_awrap_tool_call_resolves_spend_from_registry() -> None:
         return_value=httpx.Response(200, json={})
     )
 
-    harbor_client = HarborClient("https://harbor.test", "tenant-a")
+    harbor_client = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
 
     @dataclass
     class _FakeHarborRun:

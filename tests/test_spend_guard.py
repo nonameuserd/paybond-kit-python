@@ -35,7 +35,7 @@ async def test_spend_guard_calls_handler_after_allow() -> None:
             },
         )
     )
-    harbor = HarborClient("https://harbor.test", "tenant-a")
+    harbor = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
     called: list[str] = []
 
     async def tool(city: str) -> dict[str, str]:
@@ -77,7 +77,7 @@ async def test_spend_guard_rejects_before_handler_on_deny() -> None:
             },
         )
     )
-    harbor = HarborClient("https://harbor.test", "tenant-a")
+    harbor = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
     called = False
 
     async def tool() -> str:
@@ -119,7 +119,7 @@ async def test_spend_guard_raises_approval_required_separately() -> None:
             },
         )
     )
-    harbor = HarborClient("https://harbor.test", "tenant-a")
+    harbor = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
     called = False
 
     async def tool() -> str:
@@ -163,7 +163,7 @@ async def test_spend_guard_forwards_metadata_to_verify() -> None:
             },
         )
     )
-    harbor = HarborClient("https://harbor.test", "tenant-a")
+    harbor = HarborClient("https://harbor.test", "tenant-a", static_harbor_bearer_token="test-bearer")
 
     async def tool() -> str:
         return "ok"

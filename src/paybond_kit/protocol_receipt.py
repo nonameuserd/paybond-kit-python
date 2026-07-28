@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 from datetime import UTC, datetime
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
@@ -64,14 +64,14 @@ SCOPE_TOKEN_RE = re.compile(r"^[a-z0-9][a-z0-9._:/-]{0,127}$")
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 
 
-class ProtocolTransportBindingV1(TypedDict, total=False):
+class ProtocolTransportBindingV1(TypedDict):
     source_protocol: str
-    partner_platform: str
-    external_authorization_id: str
-    request_id: str
+    partner_platform: NotRequired[str]
+    external_authorization_id: NotRequired[str]
+    request_id: NotRequired[str]
 
 
-class ProtocolAuthorizationReceiptV1(TypedDict, total=False):
+class ProtocolAuthorizationReceiptV1(TypedDict):
     schema_version: int
     kind: str
     receipt_version: str
@@ -100,7 +100,7 @@ class ProtocolAuthorizationReceiptV1(TypedDict, total=False):
     ed25519_signature_hex: str
 
 
-class ProtocolSettlementReceiptV1(TypedDict, total=False):
+class ProtocolSettlementReceiptV1(TypedDict):
     schema_version: int
     kind: str
     receipt_version: str
@@ -113,7 +113,7 @@ class ProtocolSettlementReceiptV1(TypedDict, total=False):
     authorization_receipt_id: str
     mandate_digest_sha256_hex: str
     harbor_state: str
-    predicate_passed: bool
+    predicate_passed: NotRequired[bool]
     settlement_rail: str
     settlement_mode: str
     principal_did: str
@@ -178,12 +178,15 @@ def _normalize_transport_binding(raw: dict[str, Any], label: str) -> ProtocolTra
 
 def _canonical_transport_binding(binding: ProtocolTransportBindingV1) -> dict[str, Any]:
     out: dict[str, Any] = {"source_protocol": binding["source_protocol"]}
-    if binding.get("partner_platform"):
-        out["partner_platform"] = binding["partner_platform"]
-    if binding.get("external_authorization_id"):
-        out["external_authorization_id"] = binding["external_authorization_id"]
-    if binding.get("request_id"):
-        out["request_id"] = binding["request_id"]
+    partner_platform = binding.get("partner_platform")
+    if partner_platform:
+        out["partner_platform"] = partner_platform
+    external_authorization_id = binding.get("external_authorization_id")
+    if external_authorization_id:
+        out["external_authorization_id"] = external_authorization_id
+    request_id = binding.get("request_id")
+    if request_id:
+        out["request_id"] = request_id
     return out
 
 

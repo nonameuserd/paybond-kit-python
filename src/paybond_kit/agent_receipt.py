@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence, TypedDict
+from typing import Any, Mapping, NotRequired, Sequence, TypedDict
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.exceptions import InvalidSignature
@@ -50,13 +50,13 @@ _UUID_RE = re.compile(
 )
 
 
-class AgentReceiptExternalAttestationV1(TypedDict, total=False):
+class AgentReceiptExternalAttestationV1(TypedDict):
     """Partner or protocol attestation digest attached to an agent receipt."""
 
     source: str
     kind: str
     digest_sha256_hex: str
-    reference_id: str
+    reference_id: NotRequired[str]
 
 
 @dataclass(frozen=True, slots=True)

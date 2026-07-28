@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from typing import Any
 
 from paybond_kit import Paybond
@@ -16,15 +17,12 @@ def _require_pydantic_ai_demo_deps() -> Any:
             "pydantic-ai is required for paybond_kit.pydantic_ai.sandbox_demo. "
             'Install with `pip install "paybond-kit[pydantic-ai]"`.'
         )
-    from pydantic_ai import Tool
-
-    return Tool
+    # Optional dependency resolved dynamically (see paybond_kit.pydantic_ai._peer).
+    return importlib.import_module("pydantic_ai").Tool
 
 
 def _model_retry_cls() -> Any:
-    from pydantic_ai import ModelRetry
-
-    return ModelRetry
+    return importlib.import_module("pydantic_ai").ModelRetry
 
 
 async def run_pydantic_ai_sandbox_demo(
