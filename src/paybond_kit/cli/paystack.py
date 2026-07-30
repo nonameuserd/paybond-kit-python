@@ -402,7 +402,7 @@ async def handle_paystack_doctor(ctx: CliContext, argv: list[str]) -> dict[str, 
         "checklist_lines": format_paystack_doctor_checklist(checks, ctx.globals, "paystack doctor"),
         "next_steps": [
             "Console destination upsert: https://paybond.ai/console/configuration/settlement",
-            "Docs: https://docs.paybond.ai/guides/configure-paystack-settlement",
+            "Docs: https://paybond.ai/guides/configure-paystack-settlement",
             "Ready: paybond paystack ready",
         ],
     }

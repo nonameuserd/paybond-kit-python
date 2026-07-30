@@ -316,7 +316,7 @@ def test_to_paybond_agent_result_exposes_microsoft_agent_framework_middleware() 
 @pytest.mark.parametrize(
     ("framework", "docs_path"),
     [
-        ("vercel-ai", "https://docs.paybond.ai/kit/vercel-ai"),
+        ("vercel-ai", "https://paybond.ai/docs/kit/vercel-ai"),
     ],
 )
 def test_wrap_paybond_tools_rejects_typescript_only_frameworks(

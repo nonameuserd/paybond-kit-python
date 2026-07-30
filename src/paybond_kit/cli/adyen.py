@@ -441,7 +441,7 @@ async def handle_adyen_doctor(ctx: CliContext, argv: list[str]) -> dict[str, Any
         "checklist_lines": format_adyen_doctor_checklist(checks, ctx.globals, "adyen doctor"),
         "next_steps": [
             "Console destination upsert: https://paybond.ai/console/configuration/settlement",
-            "Docs: https://docs.paybond.ai/guides/configure-adyen-settlement",
+            "Docs: https://paybond.ai/guides/configure-adyen-settlement",
             "Ready: paybond adyen ready",
         ],
     }

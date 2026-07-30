@@ -536,7 +536,7 @@ async def test_create_guarded_agent_openai_agents_framework() -> None:
 async def test_create_guarded_agent_rejects_vercel_framework() -> None:
     host = _make_host()
 
-    with pytest.raises(ValueError, match="https://docs.paybond.ai/kit/vercel-ai"):
+    with pytest.raises(ValueError, match="https://paybond.ai/docs/kit/vercel-ai"):
         await create_guarded_agent(
             host,  # type: ignore[arg-type]
             CreateGuardedAgentInput(

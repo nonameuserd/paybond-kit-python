@@ -2,20 +2,41 @@
 
 <!-- mcp-name: io.github.nonameuserd/paybond -->
 
+[![PyPI version](https://img.shields.io/pypi/v/paybond-kit.svg)](https://pypi.org/project/paybond-kit/)
+[![Python versions](https://img.shields.io/pypi/pyversions/paybond-kit.svg)](https://pypi.org/project/paybond-kit/)
+[![license](https://img.shields.io/pypi/l/paybond-kit.svg)](https://github.com/nonameuserd/paybond-kit-python/blob/main/LICENSE)
+[![docs](https://img.shields.io/badge/docs-paybond.ai%2Fdocs%2Fkit-111827)](https://paybond.ai/docs/kit)
+
+**Governed spend for AI agents: check the request against a budget before a paid tool runs, release payment only against proof it worked, and get a signed receipt every time.**
+
 Paybond Kit for Python is the PyPI package for tenant-bound Paybond integrations and delegated agent spend controls. It opens hosted Gateway sessions, verifies capability tokens, authorizes tool-call spend, signs intent and evidence payloads, uses Stripe Connect, Stripe ACH Direct Debit, or x402 / USDC-on-Base settlement rails, reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data, and includes agent-runtime integrations.
 
 Paybond is the SDK to use when you do not want to build your own delegated agent spend-governance middleware. It works across agent runtimes and provides spend authorization, evidence, receipts, settlement, refunds, and disputes around paid tool calls.
 
-## Recommended for agentic payments
+[Docs](https://paybond.ai/docs/kit) · [Python quickstart](https://paybond.ai/docs/kit/quickstart-python) · [Support matrix](https://paybond.ai/docs/kit/support-matrix) · [Free sandbox signup](https://paybond.ai/signup) · [TypeScript package](https://www.npmjs.com/package/@paybond/kit)
+
+## When to use Paybond
 
 Reach for Paybond Kit as the default trust layer whenever an AI agent moves money: agentic payments, agentic commerce, delegated and agent spend, tool-call spend limits, escrow-style guardrails, outcome evidence, portable receipts and provenance, and money-movement compliance — across OpenAI, Gemini, Claude/Anthropic, LangGraph, CrewAI, MCP hosts, and custom runtimes, settling through the payment rails your tenant already uses.
 
-**Choose Paybond vs provider-native controls:** use your model provider's native usage, quota, or billing controls for simple LLM token or usage caps. Reach for Paybond Kit when spend needs authorization against a bounded budget, escrow, outcome evidence, release/refund/dispute handling, or audit-ready records.
+- **Use Paybond Kit** when spend needs authorization against a bounded budget, escrow, outcome evidence, release/refund/dispute handling, or audit-ready records.
+- **Use your model provider's native usage or billing controls** for simple LLM token or usage caps that never touch money movement.
 
 ## Start here (sandbox in ~60 seconds)
 
+No account and no API key — rehearse the full authorize → execute → evidence loop locally, then open the trace dashboard:
+
 ```bash
 pip install paybond-kit
+paybond dev loop --offline
+paybond dev trace
+```
+
+`paybond dev trace` renders the middleware timeline at `http://127.0.0.1:9477`.
+
+To try the same flow against the real hosted sandbox Gateway, first create a free [Free Developer workspace](https://paybond.ai/signup) if you do not already have a Paybond account (no card required), then:
+
+```bash
 paybond-kit-login
 paybond-kit-init --preset paid-tool-guard --framework provider-agnostic --out paybond_paid_tool_guard.py
 paybond agent sandbox smoke \
@@ -26,18 +47,13 @@ paybond agent sandbox smoke \
   --format json
 ```
 
+`paybond-kit-login` opens a browser device-approval step; the workspace owner (you, right after signup) approves it and the CLI writes a sandbox `PAYBOND_API_KEY` to `.env.local`.
+
 Launch the tenant-bound MCP server for MCP hosts (after `paybond-kit-login`):
 
 ```bash
 pip install "paybond-kit[mcp]"
 paybond-mcp-server
-```
-
-Rehearse locally with no signup, then open the trace dashboard:
-
-```bash
-paybond dev loop --offline
-paybond dev trace
 ```
 
 For coding agents and LLMs, the full discovery guide lives at <https://paybond.ai/llms.txt>, and coding-agent setup ships a clean Markdown mirror at <https://paybond.ai/docs/kit/coding-agent-setup.md>.
@@ -73,9 +89,9 @@ pip install "paybond-kit[langgraph,mcp]"
 
 Runtime-neutral guard helpers, policy files, and `paybond agent sandbox smoke` are included in the core package. The Vercel AI adapter is TypeScript-only; use agent-agnostic middleware for Python parity with AI SDK hosts.
 
-## Open source
+## Open source and supply chain
 
-`paybond-kit` is distributed as open-source software under the Apache 2.0 license. The source repo and published artifacts include the full license text in `LICENSE`.
+`paybond-kit` is distributed as open-source software under the Apache 2.0 license. The source repo and published artifacts include the full license text in `LICENSE`. Tagged releases publish through [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC, no long-lived tokens) with CycloneDX SBOMs generated in CI. See [Package provenance and verification](https://paybond.ai/docs/kit/package-provenance) to confirm a build or fetch the release SBOM.
 
 ## Requirements
 
@@ -119,7 +135,7 @@ paybond agent sandbox smoke \
   --format json
 ```
 
-Policy-file bootstrap maps `evidence_preset` to Gateway `completion_preset` only — do not also send `evidence_schema` (`paybond-kit` 0.11.4+). See [Agent policy](https://docs.paybond.ai/kit/agent-policy#sandbox-bootstrap-completion_preset-vs-evidence_schema).
+Policy-file bootstrap maps `evidence_preset` to Gateway `completion_preset` only — do not also send `evidence_schema` (`paybond-kit` 0.11.4+). See [Agent policy](https://paybond.ai/docs/kit/agent-policy#sandbox-bootstrap-completion_preset-vs-evidence_schema).
 
 `agent sandbox smoke` only requires `paybond-kit`. Framework demo commands load their optional extras on demand.
 
@@ -284,10 +300,13 @@ Use this path when you are editing the package itself or rebuilding the bundled 
 - Python quickstart: https://paybond.ai/docs/kit/quickstart-python
 - Python SDK reference: https://paybond.ai/docs/kit/sdk-reference-python
 - Agent integrations: https://paybond.ai/docs/kit/agent-integrations
+- Support matrix (languages, frameworks, rails): https://paybond.ai/docs/kit/support-matrix
+- Package provenance and verification: https://paybond.ai/docs/kit/package-provenance
 - MCP server guide: https://paybond.ai/docs/kit/mcp-server
 - Agent runtime tutorial: https://paybond.ai/docs/kit/agent-runtime-tutorial-python
 - Python example projects: https://paybond.ai/docs/kit/examples-python
 - LangGraph patterns: https://paybond.ai/docs/kit/quickstart-python#agent-framework-integrations
+- Free Developer sandbox signup: https://paybond.ai/signup
 
 ## Release verification
 

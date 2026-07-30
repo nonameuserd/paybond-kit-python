@@ -271,7 +271,7 @@ def run_mcp_serve_command_sync(
     stdout: IO[str],
     stderr: IO[str],
 ) -> int:
-    """Run the blocking MCP stdio server. Must not run inside asyncio.run()."""
+    """Run the blocking MCP server (stdio or Streamable HTTP). Must not run inside asyncio.run()."""
 
     from paybond_kit.cli.help_text import help_for_command
     from paybond_kit.mcp_server import run_mcp_stdio
@@ -288,9 +288,23 @@ def run_mcp_serve_command_sync(
         return 0
 
     rest = command[2:]
+    transport_present, transport_value, rest = consume_flag(rest, "--transport")
+    transport = "stdio"
+    if transport_present:
+        transport = (transport_value or "").strip().lower()
+        if transport not in ("stdio", "http"):
+            stderr.write(f"invalid --transport (expected stdio|http): {transport_value or ''}\n")
+            return 2
+
     if rest and rest[0] not in ("--help", "-h"):
         stderr.write(f"unexpected arguments: {' '.join(rest)}\n")
         return 2
+
+    if transport == "http":
+        from paybond_kit.mcp_http_server import run_mcp_http_server
+
+        stderr.write("Starting Paybond MCP Streamable HTTP server (POST /mcp; see PAYBOND_MCP_HTTP_* env vars).\n")
+        return run_mcp_http_server([])
 
     stderr.write("Starting Paybond MCP stdio server (stdout is reserved for MCP JSON-RPC).\n")
     return run_mcp_stdio([])

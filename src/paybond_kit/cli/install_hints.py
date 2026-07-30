@@ -12,7 +12,7 @@ from paybond_kit.cli.doctor_agent import DoctorCheck
 
 InstallMethod = Literal["pipx", "venv", "system"]
 
-PIPX_QUICKSTART_DOCS_URL = "https://docs.paybond.ai/kit/quickstart-python#pipx-global-cli"
+PIPX_QUICKSTART_DOCS_URL = "https://paybond.ai/docs/kit/quickstart-python#pipx-global-cli"
 
 
 @dataclass(frozen=True, slots=True)

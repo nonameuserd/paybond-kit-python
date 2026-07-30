@@ -702,7 +702,9 @@ class HarborClient:
 
         Args:
             idempotency_key: Optional Harbor ``idempotency-key`` header (1–256 chars) for
-                duplicate-safe retries; scoped per tenant. See ``docs/api/harbor-idempotency-openapi.yaml``.
+                duplicate-safe retries. Keys are scoped per authenticated tenant and HTTP
+                operation: the same key with the same body replays the original response,
+                and the same key with a different body returns ``409 Conflict``.
         """
         path = f"intents/{intent_id}/evidence"
         url = f"{self._base}{path}"

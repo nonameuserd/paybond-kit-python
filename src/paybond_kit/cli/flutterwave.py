@@ -407,7 +407,7 @@ async def handle_flutterwave_doctor(ctx: CliContext, argv: list[str]) -> dict[st
         "checklist_lines": format_flutterwave_doctor_checklist(checks, ctx.globals, "flutterwave doctor"),
         "next_steps": [
             "Console destination upsert: https://paybond.ai/console/configuration/settlement",
-            "Docs: https://docs.paybond.ai/guides/configure-flutterwave-settlement",
+            "Docs: https://paybond.ai/guides/configure-flutterwave-settlement",
             "Ready: paybond flutterwave ready",
         ],
     }

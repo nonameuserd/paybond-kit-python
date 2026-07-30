@@ -226,7 +226,7 @@ def paybond_awrap_tool_call_capability(
     warnings.warn(
         "paybond_awrap_tool_call_capability(binding) is deprecated; use "
         "paybond_awrap_tool_call(run) with PaybondAgentRun.bind(...) and a tool registry. "
-        "See https://docs.paybond.ai/kit/agent-integrations#langgraph",
+        "See https://paybond.ai/docs/kit/agent-integrations#langgraph",
         DeprecationWarning,
         stacklevel=2,
     )

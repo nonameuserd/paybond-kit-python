@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Final
 
 TYPESCRIPT_ONLY_FRAMEWORK_DOCS: Final[dict[str, str]] = {
-    "vercel-ai": "https://docs.paybond.ai/kit/vercel-ai",
+    "vercel-ai": "https://paybond.ai/docs/kit/vercel-ai",
 }
 
 

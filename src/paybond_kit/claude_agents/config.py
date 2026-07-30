@@ -192,7 +192,7 @@ def warn_on_unguarded_claude_builtin_tools(
     _LOGGER.warning(
         "Unguarded Claude Agent SDK built-in tools remain enabled (%s). "
         "Paybond governs only custom tools registered via tool() in the Paybond MCP server. "
-        "See https://docs.paybond.ai/kit/claude-agents#built-in-sdk-tools-unguarded",
+        "See https://paybond.ai/docs/kit/claude-agents#built-in-sdk-tools-unguarded",
         ", ".join(unguarded),
     )
 
