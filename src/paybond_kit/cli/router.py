@@ -118,6 +118,8 @@ async def _dispatch(ctx: CliContext, command: list[str]) -> tuple[str, dict[str,
         return "mcp install", commands.handle_mcp_install(ctx, command[2:])
     if head == "mcp" and second == "tools":
         return "mcp tools", commands.handle_mcp_tools(ctx)
+    if head == "mcp" and second == "scopes" and third == "list":
+        return "mcp scopes list", commands.handle_mcp_scopes_list(ctx)
     if head == "mcp" and second == "verify-config":
         return "mcp verify-config", commands.handle_mcp_verify_config(ctx, command[2:])
     if head == "doctor":

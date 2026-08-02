@@ -17,7 +17,11 @@ from uuid import UUID
 
 import httpx
 
-from paybond_kit.credentials import DEFAULT_PAYBOND_GATEWAY_BASE_URL, normalize_gateway_base_url
+from paybond_kit.credentials import (
+    DEFAULT_PAYBOND_GATEWAY_BASE_URL,
+    is_local_gateway_host,
+    normalize_gateway_base_url,
+)
 from paybond_kit.gateway_retry import httpx_with_gateway_retries
 from paybond_kit.mcp_capability_token_cache import (
     McpCapabilityTokenCache,
@@ -43,6 +47,15 @@ from paybond_kit.mcp_policy import (
     parse_mcp_tool_policy,
     resolve_mcp_tool_policy,
     tool_allowed_by_policy,
+)
+from paybond_kit.mcp_scope_catalog import (
+    RESTRICTED_API_KEY_PREFIX,
+    McpScope,
+    classify_paybond_api_key,
+    format_mcp_scope,
+    parse_mcp_scopes,
+    required_scope_for_tool,
+    tool_allowed_by_scope,
 )
 from paybond_kit.mcp_policy_reload import (
     McpPolicyReloadConfig,
@@ -72,6 +85,53 @@ DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway"
 DEFAULT_ENV_FILE = ".env.local"
 
 logger = logging.getLogger(__name__)
+
+_standard_key_warning_emitted = False
+
+
+@dataclass(frozen=True)
+class McpScopeContext:
+    """Effective credential permission model for one MCP server instance."""
+
+    restricted: bool
+    scopes: tuple[McpScope, ...]
+    unresolved_reason: str | None
+
+
+def mcp_standard_key_warning(gateway_base_url: str, api_key: str) -> str | None:
+    """Stripe-parity nudge when a standard key targets a remote gateway.
+
+    Returns warning text, or ``None`` when the credential/target combination
+    needs no warning. Never includes key material.
+    """
+
+    if classify_paybond_api_key(api_key) != "standard":
+        return None
+    try:
+        from urllib.parse import urlparse
+
+        hostname = (urlparse(gateway_base_url).hostname or "").strip().lower()
+    except ValueError:
+        return None
+    if not hostname or is_local_gateway_host(hostname):
+        return None
+    return (
+        f"Paybond MCP: using a standard paybond_sk_ key against {hostname}. "
+        f"Create a restricted {RESTRICTED_API_KEY_PREFIX} key "
+        "(paybond keys create --kind restricted --preset mcp-readonly) so the "
+        "credential itself limits the exposed MCP tools."
+    )
+
+
+def _emit_standard_key_warning_once(warning: str | None) -> None:
+    global _standard_key_warning_emitted
+    if _standard_key_warning_emitted or warning is None:
+        return
+    _standard_key_warning_emitted = True
+    # stderr only: stdout is reserved for the MCP JSON-RPC stream.
+    import sys
+
+    sys.stderr.write(f"{warning}\n")
 
 
 def _read_env_file_value(env_file: str, key: str) -> str:
@@ -319,6 +379,13 @@ class PaybondMCPRuntime:
         self._policy_reload_config = settings.policy_reload
         self._opened_policy_gate: McpPolicyReloadGate | None = None
         self._policy_gate_lock = asyncio.Lock()
+        self._api_key_kind = classify_paybond_api_key(settings.api_key)
+        self._standard_key_warning = mcp_standard_key_warning(
+            settings.gateway_base_url,
+            settings.api_key,
+        )
+        self._scope_context: McpScopeContext | None = None
+        self._scope_context_lock = asyncio.Lock()
 
     async def _policy_gate(self) -> McpPolicyReloadGate | None:
         if self._policy_reload_config is None:
@@ -468,6 +535,68 @@ class PaybondMCPRuntime:
             if self._principal is None:
                 self._principal = await self._gateway.get_json(self._settings.principal_path)
             return dict(self._principal)
+
+    async def scope_context(self) -> McpScopeContext:
+        """Resolve (and cache) the credential permission model from the principal.
+
+        A principal failure is fatal only for restricted credentials: standard keys
+        keep working exactly as before so a transient gateway error never silently
+        empties an existing host's tool list.
+        """
+
+        _emit_standard_key_warning_once(self._standard_key_warning)
+        async with self._scope_context_lock:
+            if self._scope_context is not None:
+                return self._scope_context
+            try:
+                principal = await self.principal()
+            except Exception as exc:  # noqa: BLE001 - fail closed only for restricted keys
+                if self._api_key_kind == "restricted":
+                    context = McpScopeContext(
+                        restricted=True,
+                        scopes=(),
+                        unresolved_reason=str(exc),
+                    )
+                else:
+                    context = McpScopeContext(restricted=False, scopes=(), unresolved_reason=None)
+                self._scope_context = context
+                return context
+            principal_key_kind = str(principal.get("key_kind", "")).strip().lower()
+            restricted = (
+                principal_key_kind == "restricted" or self._api_key_kind == "restricted"
+            )
+            context = McpScopeContext(
+                restricted=restricted,
+                scopes=tuple(parse_mcp_scopes(principal.get("mcp_scopes"))),
+                unresolved_reason=None,
+            )
+            self._scope_context = context
+            return context
+
+    async def scope_denial_for(self, name: str) -> str | None:
+        """Return an actionable denial message for a scope-gated tool, or None."""
+
+        context = await self.scope_context()
+        if not context.restricted:
+            return None
+        if context.unresolved_reason is not None:
+            return (
+                "Restricted key scopes could not be resolved from the Paybond gateway "
+                f"principal: {context.unresolved_reason}. Refusing to run {name} until "
+                "the scope grant is readable."
+            )
+        if tool_allowed_by_scope(name, context.scopes):
+            return None
+        required = required_scope_for_tool(name)
+        if required is None:
+            return (
+                f"Tool blocked by restricted key scopes: {name} is not mapped to an MCP "
+                "scope. Use a standard key or upgrade paybond-kit."
+            )
+        return (
+            f"Tool blocked by restricted key scopes: {name} requires "
+            f"{format_mcp_scope(required)}"
+        )
 
     async def tenant_id(self) -> str:
         body = await self.principal()
@@ -2003,6 +2132,9 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         def register_tool(func: Any) -> Any:
             @wraps(func)
             async def wrapped(*args: Any, **kwargs: Any):
+                denial = await runtime.scope_denial_for(name)
+                if denial is not None:
+                    raise RuntimeError(denial)
                 await runtime.begin_policy_tool_call()
                 try:
                     result = await func(*args, **kwargs)
@@ -2742,6 +2874,30 @@ def build_mcp_server(settings: PaybondMCPSettings | None = None) -> Any:
         )
 
     _apply_fastmcp_output_schemas(server, tool_metadata)
+
+    original_list_tools = server.list_tools
+
+    async def list_tools_for_principal() -> list[Any]:
+        """Credential-aware tool surface used by ``tools/list``.
+
+        Standard keys keep the env-policy surface unchanged. Restricted keys get
+        ``env policy ∩ principal.mcp_scopes``, and an empty list when the principal
+        (and therefore the scope grant) cannot be resolved.
+        """
+
+        tools = await original_list_tools()
+        context = await runtime.scope_context()
+        if not context.restricted:
+            return tools
+        if context.unresolved_reason is not None:
+            return []
+        return [
+            tool
+            for tool in tools
+            if tool_allowed_by_scope(getattr(tool, "name", ""), context.scopes)
+        ]
+
+    server.list_tools = list_tools_for_principal  # type: ignore[method-assign]
     setattr(server, "_paybond_runtime", runtime)
     return server
 

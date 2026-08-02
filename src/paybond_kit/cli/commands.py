@@ -361,10 +361,55 @@ def handle_mcp_tools(ctx: CliContext) -> dict[str, Any]:
     return {"tools": _list_mcp_tools()}
 
 
+def handle_mcp_scopes_list(ctx: CliContext) -> dict[str, Any]:
+    """Print the canonical MCP scope catalog for restricted-key authors."""
+
+    from paybond_kit.mcp_scope_catalog import (
+        MCP_SCOPE_CATALOG_VERSION,
+        MCP_SCOPE_DEFINITIONS,
+        MCP_SCOPE_PRESETS,
+        MCP_TOOL_SCOPES,
+        format_mcp_scope,
+        tools_for_mcp_scope,
+    )
+
+    scopes = [
+        {
+            "id": definition.id,
+            "title": definition.title,
+            "max_level": definition.max_level,
+            "description": definition.description,
+            "tools": tools_for_mcp_scope(definition.id),
+        }
+        for definition in MCP_SCOPE_DEFINITIONS
+    ]
+    presets = [
+        {
+            "id": preset.id,
+            "title": preset.title,
+            "description": preset.description,
+            "scopes": [format_mcp_scope(scope) for scope in preset.scopes],
+        }
+        for preset in MCP_SCOPE_PRESETS
+    ]
+    tools = [
+        {"name": name, "scope": format_mcp_scope(required)}
+        for name, required in sorted(MCP_TOOL_SCOPES.items(), key=lambda item: item[0])
+    ]
+    return {
+        "version": MCP_SCOPE_CATALOG_VERSION,
+        "scopes": scopes,
+        "presets": presets,
+        "tools": tools,
+    }
+
+
 def handle_mcp_install(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     from pathlib import Path
 
     from paybond_kit.cli.mcp_install import (
+        assert_tool_policy_allowed_for_key_kind,
+        detect_env_file_api_key_kind,
         parse_mcp_install_format,
         parse_mcp_install_host,
         parse_mcp_install_scope,
@@ -379,10 +424,16 @@ def handle_mcp_install(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     _, env_file, rest = consume_flag(rest, "--env-file")
     _, tool_policy_raw, rest = consume_flag(rest, "--tool-policy")
     _, tool_allowlist_raw, _ = consume_flag(rest, "--tool-allowlist")
+    resolved_env_file = env_file or ctx.globals.env_file
+    key_kind = detect_env_file_api_key_kind(resolved_env_file, ctx.cwd)
     try:
         install_host = parse_mcp_install_host(host)
         install_format = parse_mcp_install_format(fmt, host=install_host)
         install_scope = parse_mcp_install_scope(scope)
+        assert_tool_policy_allowed_for_key_kind(
+            key_kind,
+            bool((tool_policy_raw or "").strip() or (tool_allowlist_raw or "").strip()),
+        )
         tool_policy = merge_mcp_tool_policy(
             parse_mcp_tool_policy(tool_policy_raw),
             allowlist=parse_mcp_tool_allowlist(tool_allowlist_raw) or None,
@@ -393,11 +444,12 @@ def handle_mcp_install(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
         host=install_host,
         scope=install_scope,
         fmt=install_format,
-        env_file=env_file or ctx.globals.env_file,
+        env_file=resolved_env_file,
         out=out,
         cwd=ctx.cwd,
         home=Path.home(),
         tool_policy=resolve_mcp_tool_policy(tool_policy),
+        key_kind=key_kind,
     )
     if plan.printed:
         if ctx.globals.format != "json":
@@ -415,6 +467,7 @@ def handle_mcp_install(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
         "config_path": plan.config_path,
         "server_command": " ".join(plan.server_command),
         "printed": plan.printed,
+        "key_kind": plan.key_kind,
     }
     if plan.tool_policy and plan.tool_policy.policy:
         result["tool_policy"] = plan.tool_policy.policy
@@ -467,8 +520,10 @@ def handle_mcp_verify_config(ctx: CliContext, argv: list[str]) -> dict[str, Any]
 
 async def handle_doctor(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     agent, rest = consume_boolean_flag(argv, "--agent")
+    mcp, rest = consume_boolean_flag(rest, "--mcp")
     shopify, rest = consume_boolean_flag(rest, "--shopify")
-    _, host, _ = consume_flag(rest, "--host")
+    _, host, rest = consume_flag(rest, "--host")
+    _, mcp_config_path, _ = consume_flag(rest, "--config")
     checks: list[dict[str, Any]] = [
         {"name": "runtime", "ok": True, "message": f"python {sys.version.split()[0]}"},
         {
@@ -541,6 +596,26 @@ async def handle_doctor(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
                     "message": "skipped (missing API key)",
                 }
             )
+
+    if mcp:
+        from paybond_kit.cli.doctor_mcp import run_mcp_doctor_checks
+        from paybond_kit.cli.mcp_install import parse_mcp_install_host
+
+        try:
+            mcp_host = parse_mcp_install_host(host or "generic")
+        except ValueError as exc:
+            raise CliError(str(exc), code="cli.usage.invalid_doctor_mcp_host") from exc
+        for item in run_mcp_doctor_checks(
+            env_file=ctx.globals.env_file,
+            cwd=ctx.cwd,
+            home=Path.home(),
+            host=mcp_host,
+            config_path=mcp_config_path,
+        ):
+            entry = {"name": item.name, "ok": item.ok, "message": item.message}
+            if item.details:
+                entry["details"] = item.details
+            checks.append(entry)
 
     gateway_get = None
     if api_key:
@@ -619,21 +694,93 @@ def handle_diagnose(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     }
 
 
+def _consume_all_flags(argv: list[str], flag: str) -> tuple[list[str], list[str]]:
+    values: list[str] = []
+    rest = argv
+    while True:
+        present, value, rest = consume_flag(rest, flag)
+        if not present:
+            return values, rest
+        if value and value.strip():
+            values.append(value.strip())
+
+
+def resolve_restricted_key_scopes(
+    *,
+    kind: str,
+    preset: str | None,
+    scope_tokens: list[str],
+) -> list[dict[str, str]]:
+    """Resolve the MCP scope grant for ``keys create --kind restricted``."""
+
+    from paybond_kit.mcp_scope_catalog import (
+        MCP_SCOPE_PRESETS,
+        normalize_mcp_scopes,
+        parse_mcp_scope_token,
+        preset_scopes,
+    )
+
+    normalized_kind = (kind or "standard").strip().lower()
+    if normalized_kind not in ("standard", "restricted"):
+        raise CliError("invalid --kind (expected standard|restricted)", code="cli.usage.invalid_key_kind")
+    preset_id = (preset or "").strip()
+    tokens = [
+        part.strip()
+        for token in scope_tokens
+        for part in token.split(",")
+        if part.strip()
+    ]
+    if normalized_kind == "standard":
+        if preset_id or tokens:
+            raise CliError("--preset/--scope require --kind restricted", code="cli.usage.scopes_require_restricted")
+        return []
+    if preset_id and tokens:
+        raise CliError("use either --preset or --scope, not both", code="cli.usage.conflicting_scope_flags")
+    if preset_id:
+        scopes = preset_scopes(preset_id)
+        if scopes is None:
+            known = ", ".join(entry.id for entry in MCP_SCOPE_PRESETS)
+            raise CliError(
+                f"unknown --preset {preset_id} (expected one of {known})",
+                code="cli.usage.unknown_mcp_preset",
+            )
+        return [{"scope": scope.scope, "level": scope.level} for scope in scopes]
+    if not tokens:
+        raise CliError(
+            "keys create --kind restricted requires --preset <id> or --scope <scope:level>",
+            code="cli.usage.missing_mcp_scopes",
+        )
+    try:
+        parsed = normalize_mcp_scopes([parse_mcp_scope_token(token) for token in tokens])
+    except ValueError as exc:
+        raise CliError(str(exc), code="cli.usage.invalid_mcp_scope") from exc
+    return [{"scope": scope.scope, "level": scope.level} for scope in parsed]
+
+
 def handle_keys(ctx: CliContext, subcommand: str, argv: list[str]) -> dict[str, Any]:
     if subcommand == "list":
         _, limit, rest = consume_flag(argv, "--limit")
         _, cursor, _ = consume_flag(rest, "--cursor")
         params = build_list_query_params(limit, cursor, default_limit="50")
         body = gateway_request(ctx, "GET", f"/v1/admin/api-keys?{params}")
+        from paybond_kit.mcp_scope_catalog import format_mcp_scope, parse_mcp_scopes
+
         keys = []
         for item in body.get("items", []):
             if not isinstance(item, dict):
                 continue
+            key_kind = str(item.get("key_kind") or "standard").strip().lower() or "standard"
+            prefix = "paybond_rk" if key_kind == "restricted" else "paybond_sk"
+            scopes = [format_mcp_scope(scope) for scope in parse_mcp_scopes(item.get("mcp_scopes"))]
             keys.append(
                 {
                     "key_id": str(item.get("key_id") or item.get("id") or ""),
-                    "key_masked": mask_api_key(f"paybond_sk_{item.get('environment', 'sandbox')}_{item.get('key_id', 'redacted')}_redacted"),
+                    "key_masked": mask_api_key(
+                        f"{prefix}_{item.get('environment', 'sandbox')}_{item.get('key_id', 'redacted')}_redacted"
+                    ),
                     "role": str(item.get("service_account_role", "")),
+                    "key_kind": key_kind,
+                    "mcp_scopes": scopes,
                     "created_at": str(item.get("created_at", "")),
                     "expires_at": item.get("expires_at"),
                     "status": "revoked" if item.get("revoked_at") else "active",
@@ -647,21 +794,47 @@ def handle_keys(ctx: CliContext, subcommand: str, argv: list[str]) -> dict[str, 
     if subcommand == "create":
         _, name, rest = consume_flag(argv, "--name")
         _, role, rest = consume_flag(rest, "--role")
-        _, label, _ = consume_flag(rest, "--label")
+        _, label, rest = consume_flag(rest, "--label")
+        _, kind, rest = consume_flag(rest, "--kind")
+        _, preset, rest = consume_flag(rest, "--preset")
+        scope_tokens, rest = _consume_all_flags(rest, "--scope")
         if not name or not role:
             raise CliError("keys create requires --name and --role", code="cli.usage.missing_args")
+        if rest:
+            raise CliError(f"unexpected arguments: {' '.join(rest)}", code="cli.usage.unexpected_args")
+        key_kind = (kind or "standard").strip().lower() or "standard"
+        mcp_scopes = resolve_restricted_key_scopes(
+            kind=key_kind,
+            preset=preset,
+            scope_tokens=scope_tokens,
+        )
         body = gateway_request(
             ctx,
             "POST",
             "/v1/admin/api-keys",
-            {"service_account_name": name, "service_account_role": role, "label": label or ""},
+            {
+                "service_account_name": name,
+                "service_account_role": role,
+                "label": label or "",
+                "key_kind": key_kind,
+                "mcp_scopes": mcp_scopes,
+            },
         )
-        item = body.get("item", {})
+        item = body.get("item", {}) if isinstance(body.get("item"), dict) else {}
         raw_api_key = str(body.get("api_key", "")) if body.get("api_key") else ""
+        from paybond_kit.mcp_scope_catalog import format_mcp_scope, parse_mcp_scopes
+
+        response_kind = str(item.get("key_kind") or key_kind).strip().lower() or key_kind
+        response_scopes = [
+            format_mcp_scope(scope)
+            for scope in parse_mcp_scopes(item.get("mcp_scopes") or mcp_scopes)
+        ]
         created: dict[str, Any] = {
             "key_id": str(item.get("key_id") or item.get("id") or ""),
             "key_masked": mask_api_key(raw_api_key) if raw_api_key else mask_api_key(""),
             "role": str(item.get("service_account_role", role)),
+            "key_kind": response_kind,
+            "mcp_scopes": response_scopes,
             "created_at": str(item.get("created_at", "")),
             "status": "active",
         }

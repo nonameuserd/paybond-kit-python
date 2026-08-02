@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "paybond-kit"
-version = "0.12.15"
+version = "0.12.16"
 description = "Paybond Kit for Python: agent spend governance for paid tool calls with spend authorization, evidence receipts, refunds, disputes, hosted Gateway sessions, and settlement."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -81,14 +81,16 @@ paybond-mcp-server = "paybond_kit.mcp_server:main"
 langgraph = ["langgraph>=0.2.50", "langchain-core>=0.3.0"]
 claude-agents = ["claude-agent-sdk>=0.2.100"]
 openai-agents = ["openai-agents>=0.17.0"]
-crewai = ["crewai>=0.80.0"]
+crewai = ["crewai>=1.6.0,<1.7"]
 pydantic-ai = ["pydantic-ai>=2.0,<3"]
 google-adk = ["google-adk>=1.0,<2"]
 microsoft-agent-framework = ["agent-framework-core>=1.0,<2"]
-mcp = ["mcp>=1.27,<2"]
+# 1.27.2 patches task-handler highs. 1.28.1 (WebSocket Host/Origin) cannot co-resolve
+# with google-adk + crewai in one lock (otel + mcp range clashes); see osv-scanner.toml.
+mcp = ["mcp>=1.27.2,<1.28"]
 dev = [
   "maturin>=1.7,<2",
-  "mcp>=1.27,<2",
+  "mcp>=1.27.2,<1.28",
   "pytest>=8",
   "pytest-asyncio>=0.24",
   "respx>=0.21",
@@ -119,6 +121,13 @@ include = [
 exclude = [
   "src/paybond_kit/data/templates/**/node_modules/**",
   "src/paybond_kit/data/templates/**/dist/**",
+]
+
+[tool.uv]
+# Override crewai's exact json-repair==0.25.2 pin (GHSA-xf7x-x43h-rpqh).
+# Note: starlette>=1.3.1 conflicts with google-adk (requires starlette<1); tracked in osv-scanner.toml.
+override-dependencies = [
+  "json-repair>=0.60.1",
 ]
 
 [tool.pytest.ini_options]
