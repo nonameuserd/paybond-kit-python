@@ -17,7 +17,7 @@ async def test_cli_root_help_lists_canonical_commands() -> None:
     assert "login" in output
     assert "init guardrail" in output
     assert "mcp serve|install|verify-config|tools" in output
-    assert "audit exports list|get|verify|delete" in output
+    assert "audit exports create|list|get|verify|delete" in output
     assert "paybond help <command>" in output
 
 
