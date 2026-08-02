@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from collections.abc import Mapping
 from typing import Any, Callable, IO
@@ -98,6 +99,7 @@ def _list_mcp_tools() -> list[dict[str, str]]:
 def _login_result_data(result: LoginResult) -> dict[str, Any]:
     data: dict[str, Any] = {
         "env_file": str(result.env_path),
+        "credentials_path": str(result.env_path),
         "key_masked": result.key_masked,
         "key_written": result.key_written,
         "environment": result.environment,
@@ -105,10 +107,47 @@ def _login_result_data(result: LoginResult) -> dict[str, Any]:
         "tenant_uuid": result.tenant_uuid,
         "verification_uri": result.verification_uri,
         "user_code": result.user_code,
+        "next_commands": list(result.next_commands),
     }
     if result.expires_at:
         data["expires_at"] = result.expires_at
     return data
+
+
+def _login_failure_error(exc: Exception) -> CliError:
+    from paybond_kit.cli.next_actions import with_next_actions
+
+    message = str(exc)
+    lowered = message.lower()
+    if "denied" in lowered:
+        return CliError(
+            message,
+            category="auth",
+            code="cli.login.access_denied",
+            exit_code=2,
+            details=with_next_actions(None, what="device login denied", why="the verification page rejected this device code", next="paybond login --no-open"),
+        )
+    if "expired" in lowered:
+        return CliError(
+            message,
+            category="auth",
+            code="cli.login.expired",
+            exit_code=2,
+            details=with_next_actions(None, what="device login expired", why="approval was not completed before the device code timed out", next="paybond login"),
+        )
+    if "already exists" in lowered:
+        return CliError(
+            message,
+            category="validation",
+            code="cli.login.key_exists",
+            details=with_next_actions(None, what="credentials already present", why="the env file already has PAYBOND_API_KEY", next="paybond login --force"),
+        )
+    return CliError(
+        message,
+        category="validation",
+        code="cli.login.failed",
+        details=with_next_actions(None, what="device login failed", why=message, next="paybond login --no-open"),
+    )
 
 
 async def handle_login(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
@@ -131,7 +170,7 @@ async def handle_login(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
             human_output=ctx.globals.format != "json",
         )
     except PaybondLoginError as exc:
-        raise CliError(str(exc), category="validation", code="cli.login.failed") from exc
+        raise _login_failure_error(exc) from exc
     return _login_result_data(result)
 
 
@@ -1177,6 +1216,128 @@ def handle_audit_exports(ctx: CliContext, subcommand: str, argv: list[str]) -> d
         if page.next_cursor:
             result["next_cursor"] = page.next_cursor
         return result
+    if subcommand == "create":
+        from paybond_kit.cli.next_actions import with_next_actions
+
+        _, time_start, rest = consume_flag(argv, "--time-start")
+        _, time_end, rest = consume_flag(rest, "--time-end")
+        _, intent_id, rest = consume_flag(rest, "--intent-id")
+        _, case_id, rest = consume_flag(rest, "--case-id")
+        _, operator_did, rest = consume_flag(rest, "--operator-did")
+        _, includes_raw, rest = consume_flag(rest, "--includes")
+        _, disclosure_tier, rest = consume_flag(rest, "--disclosure-tier")
+        _, retention_hours_raw, rest = consume_flag(rest, "--retention-hours")
+        wait = "--wait" in rest
+        rest = [part for part in rest if part != "--wait"]
+        _, output_path, rest = consume_flag(rest, "--output")
+        _, timeout_raw, rest = consume_flag(rest, "--timeout-seconds")
+        if rest:
+            raise CliError(f"unexpected arguments: {' '.join(rest)}", code="cli.usage.unexpected_args")
+
+        filter_body: dict[str, Any] = {}
+        if time_start:
+            filter_body["time_start"] = time_start
+        if time_end:
+            filter_body["time_end"] = time_end
+        if intent_id:
+            filter_body["intent_id"] = intent_id
+        if case_id:
+            filter_body["case_id"] = case_id
+        if operator_did:
+            filter_body["operator_did"] = operator_did
+        if includes_raw:
+            filter_body["includes"] = [part.strip() for part in includes_raw.split(",") if part.strip()]
+
+        tier = (disclosure_tier or "standard").strip().lower()
+        if tier not in {"standard", "extended"}:
+            raise CliError(
+                "audit exports create --disclosure-tier must be standard|extended",
+                code="cli.usage.invalid_disclosure_tier",
+            )
+        retention_hours = int(retention_hours_raw) if retention_hours_raw else None
+        human_progress = ctx.globals.format != "json"
+        if human_progress:
+            ctx.stderr.write("Creating compliance audit export (tenant-scoped from credentials)...\n")
+        created = asyncio.run(
+            exports.create(
+                filter=filter_body,
+                disclosure_tier=tier,
+                retention_hours=retention_hours,
+            )
+        )
+        job_id = created.job.id
+        job_payload: dict[str, Any] = {"job": created.job.__dict__}
+        if wait or output_path:
+            timeout_seconds = int(timeout_raw) if timeout_raw else 120
+            deadline = time.time() + timeout_seconds
+            last_status = ""
+            while time.time() < deadline:
+                body = asyncio.run(exports.get(job_id))
+                status = str(body.job.status or "")
+                if human_progress and status != last_status:
+                    ctx.stderr.write(f"audit export {job_id}: {status}\n")
+                    last_status = status
+                if status in {"ready", "failed", "expired", "deleted"}:
+                    job_payload = {"job": body.job.__dict__}
+                    break
+                time.sleep(2)
+            else:
+                raise CliError(
+                    f"audit export {job_id} did not become ready before timeout",
+                    category="gateway",
+                    code="cli.audit.export_timeout",
+                    exit_code=5,
+                    details=with_next_actions(
+                        {"job_id": job_id},
+                        what="export still processing",
+                        why="gateway job did not reach a terminal status in time",
+                        next=f"paybond audit exports get {job_id} --format json",
+                    ),
+                )
+        if output_path:
+            ready = asyncio.run(exports.get(job_id, issue_download=True))
+            token = str(ready.job.download_token or "")
+            if not token:
+                raise CliError(
+                    "audit exports create --output requires a ready export download token",
+                    category="validation",
+                    code="cli.audit.missing_download_token",
+                )
+            if human_progress:
+                ctx.stderr.write(f"Downloading bundle to {output_path}...\n")
+            url = gateway_url(ctx.globals.gateway, f"/v1/compliance/audit-exports/{job_id}/bundle")
+            client = ctx.client or httpx.Client(timeout=30.0)
+            owns_client = ctx.client is None
+            try:
+                response = client.post(
+                    url,
+                    headers={
+                        "authorization": f"Bearer {token}",
+                        "x-request-id": ctx.globals.request_id,
+                    },
+                )
+                response.raise_for_status()
+                content = response.content
+                write_atomic_file(output_path, content, mode=0o600)
+            finally:
+                if owns_client:
+                    client.close()
+            return {
+                "job": ready.job.__dict__,
+                "job_id": job_id,
+                "output": output_path,
+                "bytes_written": len(content),
+                "waited": True,
+            }
+        return {
+            **job_payload,
+            "waited": wait,
+            "next_commands": [
+                f"paybond audit exports get {job_id} --format json",
+                f"paybond audit exports get {job_id} --issue-download --output ./paybond-audit-bundle.zip",
+                f"paybond audit exports verify ./paybond-audit-bundle.zip",
+            ],
+        }
     job_id = argv[0] if argv else ""
     if not job_id:
         raise CliError(f"audit exports {subcommand} requires <job_id>", code="cli.usage.missing_job_id")

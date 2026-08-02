@@ -33,6 +33,7 @@ from paybond_kit.dev.trace_buffer import (
     build_dev_startup_banner_lines,
     dev_trace_url,
     finalize_dev_trace_collector,
+    list_dev_trace_events,
     record_smoke_trace_event,
 )
 from paybond_kit.dev.trace_server import start_dev_trace_server
@@ -165,6 +166,9 @@ async def handle_dev_trace(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     if argv and argv[0] in ("--help", "-h"):
         raise CliError("help", category="usage", code="cli.help")
     _, port_raw, argv = consume_flag(argv, "--port")
+    watch = "--watch" in argv
+    once = "--once" in argv
+    argv = [part for part in argv if part not in {"--watch", "--once"}]
     if argv:
         raise _dev_cli_error(
             f"unexpected arguments: {' '.join(argv)}",
@@ -174,6 +178,43 @@ async def handle_dev_trace(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     port = int(port_raw) if port_raw else 9477
     if port <= 0 or port > 65535:
         raise _dev_cli_error("dev trace --port must be a valid TCP port", code="cli.usage.invalid_port", category="usage")
+
+    if watch or once or ctx.globals.format == "json":
+        events = list_dev_trace_events(ctx.cwd)
+        if once or ctx.globals.format == "json":
+            return {
+                "mode": "snapshot",
+                "trace_url": dev_trace_url(port),
+                "port": str(port),
+                "events": events[-50:],
+                "event_count": len(events),
+            }
+        ctx.stderr.write(f"Watching local trace events (Ctrl+C to stop). Dashboard: {dev_trace_url(port)}\n")
+        seen = len(events)
+        for event in events[-20:]:
+            status = "allow" if event.get("authorized") else "deny"
+            ctx.stdout.write(
+                f"{event.get('recorded_at')}  {status}  {event.get('operation')}  run={event.get('run_id') or '-'}\n"
+            )
+        try:
+            while True:
+                await asyncio.sleep(1)
+                latest = list_dev_trace_events(ctx.cwd)
+                if len(latest) > seen:
+                    for event in latest[seen:]:
+                        status = "allow" if event.get("authorized") else "deny"
+                        ctx.stdout.write(
+                            f"{event.get('recorded_at')}  {status}  {event.get('operation')}  run={event.get('run_id') or '-'}\n"
+                        )
+                    seen = len(latest)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            pass
+        return {
+            "mode": "watch",
+            "trace_url": dev_trace_url(port),
+            "port": str(port),
+            "events": list_dev_trace_events(ctx.cwd)[-50:],
+        }
 
     credentials = describe_credential_source(ctx.globals, ctx.cwd)
     if credentials["source"] == "missing":
@@ -189,7 +230,7 @@ async def handle_dev_trace(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
     )
     trace_url = dev_trace_url(port)
     ctx.stderr.write(f"Paybond dev trace dashboard listening on {trace_url}\n")
-    ctx.stderr.write("Press Ctrl+C to stop.\n")
+    ctx.stderr.write("Press Ctrl+C to stop. Tip: paybond dev trace --watch for terminal-native streaming.\n")
 
     loop = asyncio.get_running_loop()
     shutdown_started = False

@@ -3477,7 +3477,7 @@ wheels = [
 
 [[package]]
 name = "paybond-kit"
-version = "0.12.14"
+version = "0.12.15"
 source = { editable = "." }
 dependencies = [
     { name = "blake3" },

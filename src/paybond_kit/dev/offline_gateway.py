@@ -137,6 +137,63 @@ def create_offline_dev_gateway_transport(
                 }
             elif "/v1/spend/decisions/" in url and url.endswith("/complete"):
                 payload = {"settlement_mode": "simulated"}
+            elif "/harbor/operator/v1/intents" in url and request.method.upper() == "GET":
+                payload = {
+                    "intents": [
+                        {
+                            "intent_id": OFFLINE_DEV_INTENT_ID,
+                            "status": "funded",
+                            "amount_cents": 100,
+                            "created_at": "2026-01-01T00:00:00Z",
+                        }
+                    ]
+                }
+            elif "/protocol/v2/agent-receipts" in url and "verify" not in url and request.method.upper() == "GET":
+                payload = {
+                    "items": [
+                        {
+                            "receipt_id": "rcpt_offline_1",
+                            "scope": "intent_terminal",
+                            "intent_id": OFFLINE_DEV_INTENT_ID,
+                            "message_digest_sha256_hex": "00" * 32,
+                            "created_at": "2026-01-01T00:00:00Z",
+                        }
+                    ],
+                    "limit": 10,
+                }
+            elif "/v1/admin/spend-controls/decisions" in url and request.method.upper() == "GET":
+                payload = {
+                    "items": [
+                        {
+                            "id": "00000000-0000-4000-8000-000000000010",
+                            "intent_id": OFFLINE_DEV_INTENT_ID,
+                            "operation": "paid-tool",
+                            "amount_cents": 100,
+                            "currency": "USD",
+                            "outcome": "allow",
+                            "remaining_cents": 9900,
+                            "reason_codes": [],
+                            "created_at": "2026-01-01T00:00:00Z",
+                        },
+                        {
+                            "id": "00000000-0000-4000-8000-000000000011",
+                            "intent_id": OFFLINE_DEV_INTENT_ID,
+                            "operation": "paid-tool",
+                            "amount_cents": 50000,
+                            "currency": "USD",
+                            "outcome": "deny",
+                            "remaining_cents": 9900,
+                            "reason_codes": ["max_spend_exceeded"],
+                            "created_at": "2026-01-01T00:01:00Z",
+                        },
+                    ],
+                    "limit": 10,
+                    "offset": 0,
+                }
+            elif "/v1/admin/spend-controls/policy" in url and request.method.upper() == "GET":
+                payload = {"source": "offline", "configured": True, "mode": "enforce", "policy_version": 1}
+            elif "/v1/admin/spend-controls/reservations" in url and request.method.upper() == "GET":
+                payload = {"items": [], "limit": 10, "offset": 0, "status": "active"}
             else:
                 payload = {}
 
@@ -242,6 +299,48 @@ def offline_dev_http_context() -> Any:
                 }
             elif "/v1/spend/decisions/" in url and url.endswith("/complete"):
                 payload = {"settlement_mode": "simulated"}
+            elif "/harbor/operator/v1/intents" in url and method.upper() == "GET":
+                payload = {
+                    "intents": [
+                        {
+                            "intent_id": OFFLINE_DEV_INTENT_ID,
+                            "status": "funded",
+                            "amount_cents": 100,
+                            "created_at": "2026-01-01T00:00:00Z",
+                        }
+                    ]
+                }
+            elif "/protocol/v2/agent-receipts" in url and "verify" not in url and method.upper() == "GET":
+                payload = {
+                    "items": [
+                        {
+                            "receipt_id": "rcpt_offline_1",
+                            "scope": "intent_terminal",
+                            "intent_id": OFFLINE_DEV_INTENT_ID,
+                            "message_digest_sha256_hex": "00" * 32,
+                            "created_at": "2026-01-01T00:00:00Z",
+                        }
+                    ],
+                    "limit": 10,
+                }
+            elif "/v1/admin/spend-controls/decisions" in url and method.upper() == "GET":
+                payload = {
+                    "items": [
+                        {
+                            "id": "00000000-0000-4000-8000-000000000010",
+                            "operation": "paid-tool",
+                            "amount_cents": 100,
+                            "outcome": "allow",
+                            "remaining_cents": 9900,
+                            "reason_codes": [],
+                            "created_at": "2026-01-01T00:00:00Z",
+                        }
+                    ]
+                }
+            elif "/v1/admin/spend-controls/policy" in url and method.upper() == "GET":
+                payload = {"source": "offline", "configured": True, "mode": "enforce", "policy_version": 1}
+            elif "/v1/admin/spend-controls/reservations" in url and method.upper() == "GET":
+                payload = {"items": [], "limit": 10, "offset": 0, "status": "active"}
             else:
                 return _FakeResponse({}, status_code=404)
             return _FakeResponse(payload)

@@ -85,6 +85,11 @@ class LoginResult:
     verification_uri: str
     user_code: str
     expires_at: str = ""
+    next_commands: tuple[str, ...] = (
+        "paybond init",
+        "paybond doctor",
+        "paybond status",
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -442,14 +447,23 @@ async def _run_login_with_client(
     write_env_file(env_path, token.access_token, force=options.force)
 
     key_masked = mask_api_key(token.access_token)
+    next_commands = (
+        "paybond init",
+        "paybond doctor",
+        "paybond status",
+    )
     if human_output:
         stdout.write(f"Wrote PAYBOND_API_KEY to {env_path}\n")
+        stdout.write(f"Credentials written: {env_path}\n")
         stdout.write(f"Key: {key_masked}\n")
         stdout.write(f"Target {token.environment} tenant: {token.tenant_id} ({token.tenant_uuid})\n")
         if token.expires_at:
             stdout.write(
                 f"This key auto-expires at {token.expires_at}; re-run paybond login to mint a new one.\n"
             )
+        stdout.write("Next:\n")
+        for index, command in enumerate(next_commands, start=1):
+            stdout.write(f"  {index}. {command}\n")
     return LoginResult(
         env_path=env_path,
         key_masked=key_masked,
@@ -460,6 +474,7 @@ async def _run_login_with_client(
         verification_uri=verification_url,
         user_code=start.user_code,
         expires_at=token.expires_at,
+        next_commands=next_commands,
     )
 
 

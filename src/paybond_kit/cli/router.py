@@ -63,6 +63,13 @@ from paybond_kit.cli.ux import (
     handle_help_command,
     handle_onboarding,
 )
+from paybond_kit.cli.control_plane import (
+    handle_control,
+    handle_open,
+    handle_shell,
+    handle_status,
+)
+from paybond_kit.cli.next_actions import format_human_error_lines
 
 
 def _is_help(command: list[str]) -> bool:
@@ -89,6 +96,14 @@ async def _dispatch(ctx: CliContext, command: list[str]) -> tuple[str, dict[str,
         return "onboarding", await handle_onboarding(ctx, command[1:])
     if head == "login":
         return "login", await commands.handle_login(ctx, command[1:])
+    if head == "status":
+        return "status", await handle_status(ctx, command[1:])
+    if head == "open":
+        return "open", await handle_open(ctx, command[1:])
+    if head == "shell":
+        return "shell", await handle_shell(ctx, command[1:])
+    if head == "control":
+        return "control", await handle_control(ctx, command[1:])
     if head == "init" and second == "guardrail":
         return "init guardrail", commands.handle_init_guardrail(ctx, command[2:])
     if head == "init" and second == "agent-middleware":
@@ -274,7 +289,8 @@ async def run_cli(argv: list[str] | None = None, *, stdout: Any = None, stderr: 
             globals_.request_id = request_id_from_argv(argv)
             stdout.write(f"{json.dumps(failure_envelope('paybond', globals_, exc), indent=2)}\n")
         else:
-            stderr.write(f"{exc.message}\n")
+            for line in format_human_error_lines(exc.message, exc.details):
+                stderr.write(f"{line}\n")
         return exc.exit_code
     ctx = CliContext(
         globals=globals_,
@@ -303,7 +319,8 @@ async def run_cli(argv: list[str] | None = None, *, stdout: Any = None, stderr: 
         if globals_.format == "json":
             ctx.stdout.write(f"{json.dumps(failure_envelope(canonical, globals_, exc), indent=2)}\n")
         else:
-            ctx.stderr.write(f"{exc.message}\n")
+            for line in format_human_error_lines(exc.message, exc.details):
+                ctx.stderr.write(f"{line}\n")
         return exc.exit_code
     except HarborHttpError as exc:
         _write_debug_traceback(ctx.stderr, globals_.debug)

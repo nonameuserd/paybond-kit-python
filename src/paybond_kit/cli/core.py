@@ -482,12 +482,19 @@ def resolve_api_key_with_meta(globals_: GlobalOptions, cwd: Path) -> tuple[str, 
     from_file = read_env_file_value(body, "PAYBOND_API_KEY")
     if from_file:
         return from_file, warnings
+    from paybond_kit.cli.next_actions import with_next_actions
+
     raise CliError(
         "missing PAYBOND_API_KEY; run paybond login or set PAYBOND_API_KEY",
         category="auth",
         code="cli.auth.missing_api_key",
         exit_code=EXIT_AUTH,
-        details={"env_file": str(env_path.resolve())},
+        details=with_next_actions(
+            {"env_file": str(env_path.resolve())},
+            what="missing API key",
+            why="no PAYBOND_API_KEY in the process environment or env file",
+            next="paybond login",
+        ),
     )
 
 
@@ -593,6 +600,11 @@ def require_confirmation(globals_: GlobalOptions, action: str) -> None:
             category="confirmation_required",
             code="cli.confirmation.required",
             exit_code=EXIT_CONFIRMATION,
+            details={
+                "what": "confirmation required",
+                "why": f'destructive action "{action}" needs an explicit --yes in non-interactive mode',
+                "next": f"re-run with --yes to {action}",
+            },
         )
 
 
@@ -725,6 +737,8 @@ def write_success_output(
             ctx.stdout.write(f"{line}\n")
         for warning in merged_warnings:
             ctx.stderr.write(f"{warning}\n")
+    elif canonical in ("shell", "control") and data.get("mode") == "tui":
+        return
     elif canonical not in ("login", "mcp serve", "dev trace"):
         table_data = output if isinstance(output, dict) else {"value": output}
         for line in render_table(canonical, table_data, ctx.globals, ctx.stdout):
