@@ -23,7 +23,11 @@ TemplateId = Literal[
     "microsoft-agent-framework-procurement-agent",
     "aws-operator",
     "shopify-shopping-agent",
+    "commerce-checkout-agent",
+    "commerce-checkout-agent-python",
 ]
+
+TemplateLanguage = Literal["typescript", "python"]
 
 TEMPLATE_ALIASES: dict[str, TemplateId] = {
     "travel-agent": "travel-agent",
@@ -51,6 +55,23 @@ TEMPLATE_ALIASES: dict[str, TemplateId] = {
     "paybond-aws-operator": "aws-operator",
     "shopify-shopping-agent": "shopify-shopping-agent",
     "paybond-shopify-shopping-agent": "shopify-shopping-agent",
+    "commerce-checkout-agent": "commerce-checkout-agent",
+    "paybond-commerce-checkout-agent": "commerce-checkout-agent",
+    "commerce-checkout-agent-python": "commerce-checkout-agent-python",
+    "paybond-commerce-checkout-agent-python": "commerce-checkout-agent-python",
+}
+
+# Language twins share a product surface under different repos.
+# Python Kit defaults to the Python twin when ``--language`` is omitted.
+TEMPLATE_LANGUAGE_TWINS: dict[TemplateId, dict[TemplateLanguage, TemplateId]] = {
+    "commerce-checkout-agent": {
+        "typescript": "commerce-checkout-agent",
+        "python": "commerce-checkout-agent-python",
+    },
+    "commerce-checkout-agent-python": {
+        "typescript": "commerce-checkout-agent",
+        "python": "commerce-checkout-agent-python",
+    },
 }
 
 
@@ -105,6 +126,9 @@ class CopyTemplateOptions:
     cwd: str | Path
     template_id: TemplateId
     framework: str | None = None
+    language: TemplateLanguage | None = None
+    # Python Kit defaults to python for language twins.
+    default_language: TemplateLanguage = "python"
     force: bool = False
     write_stdout: Callable[[str], None] | None = None
 
@@ -142,6 +166,17 @@ def normalize_template_id(raw: str) -> TemplateId:
     return normalized
 
 
+def resolve_template_id_for_language(
+    template_id: TemplateId,
+    language: TemplateLanguage | None = None,
+    default_language: TemplateLanguage = "python",
+) -> TemplateId:
+    twins = TEMPLATE_LANGUAGE_TWINS.get(template_id)
+    if not twins:
+        return template_id
+    return twins.get(language or default_language, template_id)
+
+
 def list_template_entries() -> list[TemplateManifestEntry]:
     return list(load_template_manifest()["templates"])
 
@@ -153,8 +188,14 @@ def resolve_template_entry(template_id: TemplateId) -> TemplateManifestEntry:
     raise ValueError(f"unknown template: {template_id}")
 
 
-def resolve_template_for_init(template_id: TemplateId, framework: str | None = None) -> TemplateManifestEntry:
-    entry = resolve_template_entry(template_id)
+def resolve_template_for_init(
+    template_id: TemplateId,
+    framework: str | None = None,
+    language: TemplateLanguage | None = None,
+    default_language: TemplateLanguage = "python",
+) -> TemplateManifestEntry:
+    resolved_id = resolve_template_id_for_language(template_id, language, default_language)
+    entry = resolve_template_entry(resolved_id)
     if framework:
         normalized = normalize_template_framework(framework)
         if _framework_for_entry(entry) != normalized:
@@ -181,7 +222,12 @@ def _smoke_command_for_entry(entry: TemplateManifestEntry) -> str:
 
 
 def copy_template_to_directory(options: CopyTemplateOptions) -> dict[str, object]:
-    entry = resolve_template_for_init(options.template_id, options.framework)
+    entry = resolve_template_for_init(
+        options.template_id,
+        options.framework,
+        options.language,
+        options.default_language,
+    )
     templates_root = _first_existing_dir(_templates_roots())
     source_dir = templates_root / entry["repo"]
     if not source_dir.is_dir():
@@ -209,7 +255,10 @@ def copy_template_to_directory(options: CopyTemplateOptions) -> dict[str, object
         write_stdout("Ready to run:")
         write_stdout("  paybond login")
         if entry["language"] == "python":
-            write_stdout("  pip install -r requirements.txt")
+            if (cwd / "pyproject.toml").exists():
+                write_stdout("  pip install -e .")
+            else:
+                write_stdout("  pip install -r requirements.txt")
         else:
             write_stdout("  npm install")
         write_stdout(
@@ -233,16 +282,19 @@ def copy_template_to_directory(options: CopyTemplateOptions) -> dict[str, object
 def template_init_usage() -> str:
     return "\n".join(
         [
-            "Usage: paybond init [--template <id>|--repo <slug>] [--framework <name>] [--force]",
+            "Usage: paybond init [--template <id>|--repo <slug>] [--framework <name>] [--language typescript|python] [--force]",
             "       paybond init [--solution ...] [--framework ...]  (wizard scaffold)",
             "",
             "Templates:",
             "  travel-agent, mastra-travel-agent, vercel-shopping-agent, openai-agents-demo, openai-shopping-agent,",
             "  claude-agents-demo, mcp-coding-agent, procurement-agent, invoice-agent, crewai-procurement-agent,",
-            "  microsoft-agent-framework-procurement-agent, aws-operator",
+            "  microsoft-agent-framework-procurement-agent, aws-operator,",
+            "  shopify-shopping-agent, commerce-checkout-agent, commerce-checkout-agent-python",
             "",
             "Examples:",
             "  paybond init --template travel-agent --framework langgraph",
+            "  paybond init --template commerce-checkout-agent",
+            "  paybond init --template commerce-checkout-agent --language typescript",
             "  paybond init --template paybond-invoice-agent --force",
             "  paybond init --solution travel --framework langgraph --non-interactive",
         ]

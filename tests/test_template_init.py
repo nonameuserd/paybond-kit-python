@@ -27,6 +27,11 @@ def test_normalize_template_id_accepts_repo_slug() -> None:
         normalize_template_id("paybond-microsoft-agent-framework-procurement-agent")
         == "microsoft-agent-framework-procurement-agent"
     )
+    assert normalize_template_id("commerce-checkout-agent") == "commerce-checkout-agent"
+    assert (
+        normalize_template_id("paybond-commerce-checkout-agent-python")
+        == "commerce-checkout-agent-python"
+    )
 
 
 def test_copy_travel_agent_template(tmp_path: Path) -> None:
@@ -59,9 +64,56 @@ def test_copy_invoice_agent_python_template(tmp_path: Path) -> None:
         )
     )
     assert result["language"] == "python"
+    assert result["repo"] == "paybond-invoice-agent"
     assert (tmp_path / "app.py").exists()
     assert (tmp_path / "paybond_config.py").exists()
-    assert (tmp_path / "requirements.txt").exists()
+    assert (tmp_path / "pyproject.toml").exists()
+    assert (tmp_path / "paybond.policy.yaml").exists()
+    assert not (tmp_path / "requirements.txt").exists()
+    pyproject = (tmp_path / "pyproject.toml").read_text(encoding="utf-8")
+    assert "paybond-kit>=" in pyproject
+
+
+def test_copy_commerce_checkout_agent_defaults_to_python_twin(tmp_path: Path) -> None:
+    result = copy_template_to_directory(
+        CopyTemplateOptions(
+            cwd=tmp_path,
+            template_id="commerce-checkout-agent",
+            force=True,
+        )
+    )
+    assert result["template_id"] == "commerce-checkout-agent-python"
+    assert result["repo"] == "paybond-commerce-checkout-agent-python"
+    assert result["language"] == "python"
+    assert result["preset"] == "shopping"
+    assert "commerce.checkout" in str(result["smoke_command"])
+    assert (tmp_path / "app.py").exists()
+    assert (tmp_path / "paybond_config.py").exists()
+    assert (tmp_path / "pyproject.toml").exists()
+    assert (tmp_path / "paybond.policy.yaml").exists()
+    assert not (tmp_path / "requirements.txt").exists()
+    assert not (tmp_path / "package.json").exists()
+    pyproject = (tmp_path / "pyproject.toml").read_text(encoding="utf-8")
+    assert "paybond-kit>=" in pyproject
+    assert "commerce-checkout-demo" in pyproject
+    app = (tmp_path / "app.py").read_text(encoding="utf-8")
+    assert "instrument_commerce_checkout" in app
+    assert "paybond_kit.commerce" in app
+    assert "def cli_main" in app
+
+
+def test_copy_commerce_checkout_agent_typescript_via_language(tmp_path: Path) -> None:
+    result = copy_template_to_directory(
+        CopyTemplateOptions(
+            cwd=tmp_path,
+            template_id="commerce-checkout-agent",
+            language="typescript",
+            force=True,
+        )
+    )
+    assert result["template_id"] == "commerce-checkout-agent"
+    assert result["language"] == "typescript"
+    assert (tmp_path / "src/index.ts").exists()
 
 
 def test_copy_crewai_procurement_agent_template(tmp_path: Path) -> None:

@@ -181,6 +181,15 @@ def handle_init_wizard(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
         raise CliError("invalid init arguments", category="usage", code="cli.usage.invalid_init", exit_code=int(exc.code or 2)) from exc
     if args.help:
         raise CliError(template_init_usage(), category="usage", code="cli.help")
+    language: ProjectInitLanguage | None = None
+    if args.language:
+        value = args.language.strip().lower()
+        if value in {"typescript", "ts"}:
+            language = "typescript"
+        elif value in {"python", "py"}:
+            language = "python"
+        else:
+            raise CliError(f"invalid --language: {args.language}", category="usage", code="cli.usage.invalid_init")
     if args.template:
         try:
             return copy_template_to_directory(
@@ -188,6 +197,8 @@ def handle_init_wizard(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
                     cwd=ctx.cwd,
                     template_id=normalize_template_id(args.template),
                     framework=args.framework,
+                    language=language,
+                    default_language="python",
                     force=args.force,
                     write_stdout=(
                         _stdout_line_writer(ctx.stdout)
@@ -210,15 +221,6 @@ def handle_init_wizard(ctx: CliContext, argv: list[str]) -> dict[str, Any]:
         if not normalized:
             raise CliError(f"invalid --framework: {args.framework}", category="usage", code="cli.usage.invalid_init")
         framework = normalized
-    language: ProjectInitLanguage | None = None
-    if args.language:
-        value = args.language.strip().lower()
-        if value in {"typescript", "ts"}:
-            language = "typescript"
-        elif value in {"python", "py"}:
-            language = "python"
-        else:
-            raise CliError(f"invalid --language: {args.language}", category="usage", code="cli.usage.invalid_init")
     try:
         return run_project_init(
             ProjectInitOptions(

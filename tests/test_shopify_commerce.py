@@ -13,6 +13,51 @@ from paybond_kit.shopify import (
 )
 
 
+def test_shopify_typeddicts_optional_keys_under_future_annotations() -> None:
+    """Python 3.11 + postponed annotations: optional keys must use total=False inheritance."""
+    from paybond_kit.shopify.types import (
+        CreateCheckoutWithBindingParams,
+        ShopifyCheckoutCreatePayload,
+        ShopifyCheckoutExecuteInput,
+        ShopifyCheckoutToolArgs,
+        ShopifyCheckoutToolResult,
+    )
+
+    assert ShopifyCheckoutToolResult.__required_keys__ == frozenset(
+        {"status", "cost_cents", "shop"}
+    )
+    assert ShopifyCheckoutToolResult.__optional_keys__ == frozenset(
+        {"order_id", "continue_url"}
+    )
+    assert ShopifyCheckoutToolArgs.__required_keys__ == frozenset({"line_items"})
+    assert ShopifyCheckoutToolArgs.__optional_keys__ == frozenset(
+        {"shop_domain", "amount_cents", "cart_id", "note_attributes"}
+    )
+    assert ShopifyCheckoutExecuteInput.__required_keys__ == frozenset({"line_items"})
+    assert ShopifyCheckoutExecuteInput.__optional_keys__ == frozenset(
+        {
+            "shop_domain",
+            "amount_cents",
+            "cart_id",
+            "note_attributes",
+            "tenant_id",
+            "intent_id",
+            "checkout_payload",
+            "agent_profile_url",
+        }
+    )
+    assert CreateCheckoutWithBindingParams.__required_keys__ == frozenset(
+        {"tenant_id", "intent_id", "line_items"}
+    )
+    assert CreateCheckoutWithBindingParams.__optional_keys__ == frozenset(
+        {"existing_note_attributes", "cart_id", "agent_profile_url"}
+    )
+    assert ShopifyCheckoutCreatePayload.__required_keys__ == frozenset(
+        {"line_items", "note_attributes", "meta"}
+    )
+    assert ShopifyCheckoutCreatePayload.__optional_keys__ == frozenset({"cart_id"})
+
+
 def test_create_checkout_with_binding_injects_note_attributes() -> None:
     payload = create_checkout_with_binding(
         {
